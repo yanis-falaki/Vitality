@@ -92,3 +92,44 @@ def test_new_interaction_after_resume_gets_fresh_id():
     P = fresh()
     p = P(); p.on_activity(100.0); p.pause(101.0); p.resume()
     assert p.on_activity(200.0) == [SnapshotRequest("before", "i2", 200.0)]
+
+
+def test_pause_on_max_gap_boundary_emits_single_after():
+    P = fresh()
+    p = P()
+    for t in range(100, 110): p.on_activity(float(t))   # 1/s; never settles
+    assert p.pause(110.0) == [SnapshotRequest("after", "i1", 110.0)]
+    assert p.state == "paused"
+
+
+def test_max_gap_fires_via_tick_and_stays_active():
+    P = fresh()
+    p = P()
+    for t in range(100, 110): p.on_activity(float(t))   # 1/s; never settles
+    assert p.on_tick(110.0) == [SnapshotRequest("after", "i1", 110.0)]
+    assert p.state == "active"
+
+
+def test_settle_and_max_gap_due_together_emit_single_after_and_idle():
+    P = fresh()
+    p = P(); p.on_activity(100.0)
+    assert p.on_tick(120.0) == [SnapshotRequest("after", "i1", 120.0)]
+    assert p.state == "idle"
+
+
+def test_backwards_clock_rebases_deadlines():
+    P = fresh()
+    p = P(); p.on_activity(100.0)
+    assert p.on_tick(50.0) == []
+    assert p.next_deadline() >= 50.0
+    out = []
+    for t in range(51, 63): out += p.on_activity(float(t))
+    assert [(r.kind, r.ts) for r in out] == [("after", 60.0)]
+    assert {r.interaction_id for r in out} == {"i1"}
+
+
+def test_pause_with_backwards_clock_emits_exactly_one_final_after():
+    P = fresh()
+    p = P(); p.on_activity(100.0)
+    assert p.pause(50.0) == [SnapshotRequest("after", "i1", 50.0)]
+    assert p.state == "paused"

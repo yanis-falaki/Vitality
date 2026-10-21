@@ -60,7 +60,7 @@ class CapturePolicy:
             self._paused_until = until
             return []
         out = self._process_due(now)
-        if self._state == "active":
+        if self._state == "active" and not out:
             out.append(SnapshotRequest("after", self._interaction_id, now))
         self._state = "paused"
         self._paused_until = until
@@ -86,7 +86,12 @@ class CapturePolicy:
             if self._paused_until is not None and now >= self._paused_until:
                 self.resume()
             return []
-        if self._state != "active" or now < self._last_snapshot:
+        if self._state != "active":
+            return []
+        if now < self._last_snapshot:
+            # Clock stepped backwards: rebase so deadlines proceed from here.
+            self._last_snapshot = now
+            self._last_activity = now
             return []
         if now - self._last_activity >= self._settle:
             self._state = "idle"
