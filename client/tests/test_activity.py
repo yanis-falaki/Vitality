@@ -133,3 +133,43 @@ async def test_unplugged_device_dropped_and_reopened():          # Review Focus 
     await run_briefly(w, seconds=0.1)
     assert seen.count(1.0) >= 2 and opens.count("/a") >= 2     # /b kept working; /a re-opened on rescan
     assert opens.count("/b") == 1                               # healthy device not re-opened
+
+
+async def test_list_devices_oserror_does_not_kill_watcher():
+    seen = []
+    dev = FakeDevice(KEYBOARD_CAPS, events=[ev(EV_KEY, KEY_A, 1)])
+    calls = []
+    def list_():
+        calls.append(1)
+        if len(calls) == 1:
+            raise FileNotFoundError("/dev/input/event9")
+        return ["/e"]
+    w = ActivityWatcher(seen.append, list_, lambda p: dev, clock=lambda: 1.0, rescan_seconds=0.01)
+    task = asyncio.create_task(w.run())
+    await asyncio.sleep(0.1)
+    still_running = not task.done()
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert still_running and len(calls) >= 2 and seen == [1.0]
+
+
+async def test_list_devices_oserror_keeps_open_devices():
+    dev = FakeDevice(KEYBOARD_CAPS)
+    calls = []
+    def list_():
+        calls.append(1)
+        if len(calls) > 1:
+            raise FileNotFoundError("gone")
+        return ["/e"]
+    w = ActivityWatcher(lambda t: None, list_, lambda p: dev, rescan_seconds=0.01)
+    task = asyncio.create_task(w.run())
+    await asyncio.sleep(0.1)
+    assert not task.done() and w.available is True and not dev.closed
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass

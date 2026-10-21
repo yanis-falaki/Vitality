@@ -63,7 +63,13 @@ class ActivityWatcher:
             await self._shutdown()
 
     def _scan(self) -> None:
-        for path in self._list_devices():
+        try:
+            paths = self._list_devices()
+        except OSError as exc:
+            # A device unplugged mid-listing must not end the watcher; skip this round.
+            log.debug("cannot list input devices: %s", exc.strerror or type(exc).__name__)
+            return
+        for path in paths:
             if path in self._devices:
                 continue
             try:
