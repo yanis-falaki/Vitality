@@ -1,7 +1,10 @@
+import asyncio
+
 from PIL import Image
 
-from vitality_client.frames.base import composite
+from vitality_client.frames.base import composite, layout_frames
 from vitality_client.frames.portal import (
+    PortalFrameSource,
     PortalError,
     PortalResponseError,
     backoff_delay,
@@ -70,3 +73,70 @@ def test_other_failures_keep_retrying():
     assert should_retry(PortalResponseError("Start", 2)) is True
     assert should_retry(PortalError("pipeline error")) is True
     assert should_retry(OSError("bus gone")) is True
+
+
+def test_layout_single_monitor_is_noop():
+    a = Image.new("RGB", (20, 10), "red")
+    assert layout_frames([(a, (0, 0), (20, 10))]) == [(a, (0, 0))]
+
+
+def test_layout_hidpi_frame_alone_keeps_physical_pixels():
+    a = Image.new("RGB", (40, 20), "red")        # scale 2: logical 20x10
+    out = layout_frames([(a, (0, 0), (20, 10))])
+    assert out[0][0] is a and out[0][1] == (0, 0)
+
+
+def test_layout_mixed_scales_side_by_side_do_not_overlap():
+    a = Image.new("RGB", (40, 20), "red")        # scale 2, logical 20x10 at (0, 0)
+    b = Image.new("RGB", (20, 10), "blue")       # scale 1, logical 20x10 at (20, 0)
+    laid = layout_frames([(a, (0, 0), (20, 10)), (b, (20, 0), (20, 10))])
+    assert laid[0] == (a, (0, 0))
+    assert laid[1][0].size == (40, 20) and laid[1][1] == (40, 0)
+    out = composite(laid)
+    assert out.size == (80, 20)
+    assert out.getpixel((39, 19)) == (255, 0, 0) and out.getpixel((40, 0)) == (0, 0, 255)
+
+
+def test_layout_fractional_scale_rounds():
+    a = Image.new("RGB", (1920, 1080), "red")    # scale 1.5, logical 1280x720 at (0, 0)
+    b = Image.new("RGB", (1920, 1080), "blue")   # scale 1, logical 1920x1080 at (1280, 0)
+    laid = layout_frames([(a, (0, 0), (1280, 720)), (b, (1280, 0), (1920, 1080))])
+    assert laid[0] == (a, (0, 0))
+    assert laid[1][0].size == (2880, 1620) and laid[1][1] == (1920, 0)
+    assert composite(laid).size == (4800, 1620)
+
+
+def test_layout_odd_logical_size_maps_to_own_frame():
+    a = Image.new("RGB", (2560, 1440), "red")    # scale 1.5 with a rounded logical width
+    laid = layout_frames([(a, (0, 0), (1707, 960)), (Image.new("RGB", (8, 8)), (1707, 0), (8, 8))])
+    assert laid[0][0] is a and laid[1][1] == (2560, 0)
+
+
+async def test_cancel_with_restore_token_stops_without_second_dialog():
+    src = PortalFrameSource("tok", lambda t: None)
+    calls = []
+
+    async def fake_open_session(token):
+        calls.append(token)
+        raise PortalResponseError("Start", 1)
+
+    src._open_session = fake_open_session
+    await src.start()
+    await asyncio.wait_for(src._task, 1)         # supervisor ended: no further attempts
+    assert calls == ["tok"] and src.available is False
+    await src.close()
+
+
+async def test_rejected_restore_token_retries_once_without_it():
+    src = PortalFrameSource("tok", lambda t: None)
+    calls = []
+
+    async def fake_open_session(token):
+        calls.append(token)
+        raise PortalResponseError("Start", 2 if token else 1)
+
+    src._open_session = fake_open_session
+    await src.start()
+    await asyncio.wait_for(src._task, 1)
+    assert calls == ["tok", None]
+    await src.close()

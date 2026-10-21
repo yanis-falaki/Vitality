@@ -31,3 +31,23 @@ def composite(frames: list[tuple[Image.Image, tuple[int, int]]]) -> Image.Image:
     for img, (x, y) in frames:
         canvas.paste(img, (x - min_x, y - min_y))
     return canvas
+
+
+def layout_frames(
+    frames: list[tuple[Image.Image, tuple[int, int], tuple[int, int]]],
+) -> list[tuple[Image.Image, tuple[int, int]]]:
+    """Map (frame, logical position, logical size) to physical-pixel placements for composite.
+
+    Positions and sizes are logical (compositor) units; frames are physical pixels. The
+    scale factor is the largest frame-width / logical-width ratio, so the sharpest monitor
+    keeps its native pixels and lower-scale monitors are upscaled to match. Frames already
+    at their target size are returned as the same object (no resize).
+    """
+    factor = max(img.width / size[0] for img, _, size in frames)
+    laid = []
+    for img, (x, y), (w, h) in frames:
+        target = (round(w * factor), round(h * factor))
+        if img.size != target:
+            img = img.resize(target, Image.Resampling.BICUBIC)
+        laid.append((img, (round(x * factor), round(y * factor))))
+    return laid

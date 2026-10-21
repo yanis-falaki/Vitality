@@ -24,7 +24,7 @@ from dbus_fast.aio import MessageBus  # noqa: E402
 from gi.repository import Gst, GstVideo  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from vitality_client.frames.base import composite  # noqa: E402
+from vitality_client.frames.base import composite, layout_frames  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +108,8 @@ class PortalFrameSource:
 
         # Shared with GStreamer threads.
         self._lock = threading.Lock()
-        self._positions: list[tuple[int, int]] = []
+        self._positions: list[tuple[int, int]] = []  # logical, from the portal
+        self._sizes: list[tuple[int, int] | None] = []  # logical; None if not reported
         self._frames: dict[int, Image.Image] = {}
 
     # -- FrameSource -------------------------------------------------------------------
@@ -134,8 +135,11 @@ class PortalFrameSource:
         with self._lock:
             if not self._positions or len(self._frames) < len(self._positions):
                 return None
-            frames = [(self._frames[i], pos) for i, pos in enumerate(self._positions)]
-        return composite(frames)
+            frames = [
+                (self._frames[i], pos, self._sizes[i] or self._frames[i].size)
+                for i, pos in enumerate(self._positions)
+            ]
+        return composite(layout_frames(frames))
 
     async def close(self) -> None:
         task, self._task = self._task, None
@@ -190,8 +194,8 @@ class PortalFrameSource:
         token = self._restore_token
         try:
             await self._open_session(token)
-        except PortalResponseError:
-            if token is None:
+        except PortalResponseError as exc:
+            if token is None or exc.response == RESPONSE_CANCELLED:
                 raise
             log.info("portal rejected the saved restore token; asking again without it")
             self._restore_token = None
@@ -315,12 +319,15 @@ class PortalFrameSource:
     # -- GStreamer -----------------------------------------------------------------------
 
     def _start_pipelines(self, streams: list) -> None:
-        positions = []
+        positions, sizes = [], []
         for node_id, props in streams:
             pos = props["position"].value if "position" in props else (0, 0)
             positions.append((int(pos[0]), int(pos[1])))
+            size = props["size"].value if "size" in props else None
+            sizes.append((int(size[0]), int(size[1])) if size and min(size) > 0 else None)
         with self._lock:
             self._positions = positions
+            self._sizes = sizes
             self._frames = {}
 
         for index, (node_id, _props) in enumerate(streams):
@@ -354,6 +361,7 @@ class PortalFrameSource:
             pipeline.set_state(Gst.State.NULL)
         with self._lock:
             self._positions = []
+            self._sizes = []
             self._frames = {}
         if self._fd is not None:
             os.close(self._fd)
