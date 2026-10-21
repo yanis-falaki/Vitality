@@ -1,144 +1,202 @@
-# Vitality — Daemon (client) design
+# Vitality — Client daemon design
 
 **Date:** 2026-10-21
 **Status:** Draft for review
-**Parent spec:** [2026-10-21-screen-user-model-design.md](2026-10-21-screen-user-model-design.md) (§5)
+**Parent spec:** [2026-10-21-screen-user-model-design.md](2026-10-21-screen-user-model-design.md) (§5). Where this spec differs from the parent, this spec wins.
 
 ## 1. Purpose
 
-A background service on a Linux machine that takes screenshots when the user is active, plus a regular heartbeat, and saves them locally with metadata. It is the first piece of Vitality to build because every later step (interpreter prompts, golden set, engine) needs days of real captures.
+`vitality-client` is a background service on a Linux machine that saves screenshots around the user's keyboard and mouse activity, as before/after pairs, to local storage with a small metadata index. It is built first so that real captures start accumulating for all later work (interpreter prompts, golden set, user-model engine).
 
 ## 2. Scope
 
 **In scope**
-- Detect user input activity (timing only).
-- Capture the screen on any Linux desktop (Wayland via portal, X11 directly).
-- Capture policy: burst captures after activity + heartbeat.
-- Save captures as WebP files with a local SQLite index.
-- Pause / resume / status via CLI; status output usable by a status bar.
-- Run as a systemd user service.
+- Detect input activity (timing only) on any Linux desktop.
+- Capture the whole desktop (Wayland via the screen-capture portal; X11 directly).
+- Before/after capture policy around activity; pause and timed pause.
+- Save captures as WebP files plus a SQLite index.
+- CLI for control and status; systemd user service.
 
 **Out of scope (later)**
-- Uploading to a processing server (the index has an `uploaded_at` column reserved for it).
-- Dedupe (server-side per the parent spec).
-- Any other source (audio, browser URLs, notifications), denylists, redaction, tray icon.
-- Encryption at rest of local captures (relies on full-disk encryption for now).
+- Uploading to a server (the index reserves an `uploaded_at` column).
+- Heartbeat / periodic captures (passive viewing is a known gap).
+- Detecting the active monitor; per-monitor captures or monitor ids.
+- Dedupe, denylists, redaction, tray icon.
+- Other sources (camera, audio) — the index has a `source` column so they can be added.
+- Client identity (assigned server-side later).
+- Encryption at rest (relies on full-disk encryption).
+- Isolating input-device access into a separate privileged process (§9).
 
-## 3. Behavior
+## 3. Components and data flow
 
-**Activity detection.** The daemon reads all keyboard, mouse, and touchpad devices via evdev and records only *that* an input event happened and when. Key codes, characters, and pointer positions are discarded on read and never stored, logged, or transmitted. Devices are re-scanned when hot-plugged.
+One Python (asyncio) process with these units:
 
-**Capture policy** (all values configurable):
-| Rule | Default |
-|---|---|
-| Burst capture fires once input has been quiet for the *settle delay* | 1.0 s |
-| Minimum gap between burst captures during continuous activity (a capture is forced once this elapses even if input never settles) | 5 s |
-| Heartbeat: capture if no capture of any kind in the last | 60 s |
-| While paused | no captures |
+| Unit | Does | Interface |
+|---|---|---|
+| **Input watcher** | Reads keyboard, mouse, and touchpad devices via evdev. Discards key codes and pointer data on read. Rescans on hot-plug. | Emits *activity events*: a timestamp only. |
+| **Screen stream** | Opens the capture source once and keeps frames flowing (Wayland backend) or grabs on demand (X11 backend). | Feeds the frame buffer. |
+| **Frame buffer** | Holds the most recent whole-desktop frame. | `latest_frame()` → image |
+| **Capture policy** | Pure timing logic (§4). No I/O; driven by activity events, pause commands, and an injectable clock. | Emits *snapshot requests*: `(kind, interaction_id, ts)` |
+| **Writer** | On a snapshot request, takes `latest_frame()`, encodes WebP, writes the file, inserts the index row. | Consumes snapshot requests. |
+| **Control socket** | Unix socket serving pause / resume / status; persists pause state. | Used by the CLI. |
+| **CLI** | `vitality-client` subcommands (§7). | Thin client of the control socket (except `run`, `doctor`, `capture-once`). |
 
-A single capture event captures every monitor; each monitor produces its own capture record sharing a `capture_group` id.
+**Before shots:** when the first activity event of an interaction arrives, the writer reads the frame buffer immediately. Applications have not yet redrawn in response to that input, so the buffered frame shows the screen as it was before the action.
 
-**Pause.** `vitality pause [DURATION]` stops capturing immediately (optionally for a duration, e.g. `30m`, then auto-resumes). `vitality resume` restarts. Pause state persists across daemon restarts — if the user paused, a reboot does not silently resume capture.
+## 4. Capture policy
 
-**Status.** `vitality status` prints state (capturing / paused / paused until …, captures today, last capture time). `vitality status --json` prints a single-line JSON object suitable for a Waybar/Polybar custom module, so the user can always see whether capture is on.
+States: **idle**, **active**, **paused**.
 
-**Manual test.** `vitality capture-once` takes one capture of all monitors and prints the saved paths — used to verify setup.
+1. **Idle → activity event:** request `snapshot(before)`, start a new `interaction_id`, enter **active**.
+2. **Active → activity event:** restart the settle timer.
+3. **Active → no activity for `settle_seconds` (default 2):** request `snapshot(after)`, enter **idle**.
+4. **Active → `max_gap_seconds` (default 10) since this interaction's last snapshot, activity continuing:** request `snapshot(after)`, stay **active** in the same interaction. A long session yields before, after, after, …
+5. **Pause command:** if **active**, request a final `snapshot(after)` to close the interaction. Enter **paused**; ignore activity.
+6. **Timed pause (`pause 30m`):** as 5, then the policy schedules its own resume.
+7. **Resume:** enter **idle**.
 
-## 4. Screen capture backends
+Pause state (including a timed-pause deadline) persists across daemon restarts: a reboot never silently resumes capture. An expired timed pause resumes on startup.
 
-Selected at startup from `XDG_SESSION_TYPE`.
+## 5. Screen capture
 
-- **Wayland — portal backend.** Uses xdg-desktop-portal's ScreenCast interface over D-Bus. On first run the user approves monitor selection in the desktop's dialog; the returned restore token is saved so later runs need no prompt. Frames are read from the resulting PipeWire stream (GStreamer `pipewiresrc` → app sink); the daemon keeps the stream open and grabs the latest frame when the policy fires. Works on GNOME, KDE, Hyprland, sway, and other compositors with a ScreenCast portal implementation.
-- **X11 — direct backend.** Captures each monitor with `mss`.
+Backend chosen at startup from `XDG_SESSION_TYPE`. Both produce one **whole-desktop image**: all monitors placed according to their layout. No monitor identity is recorded.
 
-If the portal session ends (e.g. the user revokes it), the daemon logs the error, reports it in `status`, and retries session setup with backoff.
+**Wayland — portal + PipeWire + GStreamer**
+- Request a ScreenCast session from xdg-desktop-portal for all monitors, with the cursor embedded in the stream, and persistence enabled.
+- First run shows the desktop's permission dialog; the returned restore token is saved so later runs start without it.
+- Each monitor arrives as a PipeWire video stream, read through a GStreamer pipeline (`pipewiresrc` → convert to RGB → app sink keeping only the newest frame).
+- Streams are capped at ~5 fps; compositors also only send frames when the screen changes, so idle cost is negligible.
+- `latest_frame()` composites the newest frame of each monitor using the positions and sizes reported by the portal.
 
-## 5. Storage
+**X11 — direct**
+- `latest_frame()` grabs the full virtual screen on demand with `mss`. No continuous stream.
 
-Data directory: `$XDG_DATA_HOME/vitality/` (default `~/.local/share/vitality/`).
+**Limits and failure**
+- If the composite exceeds WebP's 16,383 px per side, it is scaled down just enough to fit.
+- If the capture session is lost or setup fails, `status` reports `capture: unavailable`; the daemon retries with backoff. Snapshot requests during that time are dropped and logged.
+
+## 6. Storage
+
+Data directory: `$XDG_DATA_HOME/vitality/client/` (default `~/.local/share/vitality/client/`).
 
 ```
-vitality/
+client/
   captures/2026-10-21/<capture_id>.webp
   index.sqlite
 ```
 
-**Images:** downscaled so the longest side is at most 1920 px, WebP quality 80 (both configurable). Expected volume roughly 100–200 MB/day.
+**Images:** whole desktop, native resolution, lossy WebP, quality 85 (configurable).
 
-**Index table `captures`:**
-| Column | Notes |
+**Table `captures`:**
+
+| Column | Type | Meaning |
+|---|---|---|
+| `capture_id` | text, primary key | ULID (sorts by time); also the filename |
+| `interaction_id` | text | Shared by the before/after captures of one interaction (ULID) |
+| `kind` | text | `before` or `after` |
+| `source` | text | `screen` (only value in v0) |
+| `ts` | text | Capture time, UTC, ISO 8601 with milliseconds |
+| `path` | text | Path relative to the data directory |
+| `width`, `height` | integer | Pixel dimensions |
+| `bytes` | integer | File size |
+| `uploaded_at` | text, nullable | Always NULL in v0; reserved for upload |
+
+Indexes on `ts` and `uploaded_at`.
+
+**Crash safety:** the image is written to a temporary name, renamed into place, then the row is inserted. A row never points to a missing file. On startup, image files without a row are deleted.
+
+**Disk use:** `status` reports total size; past `disk_warning_gb` (default 20) it warns in `status` and the log. Nothing is deleted automatically.
+
+## 7. Control and running
+
+**CLI (`vitality-client`)**
+| Command | Does |
 |---|---|
-| `capture_id` | ULID (time-sortable) |
-| `capture_group` | shared by all monitors of one capture event |
-| `client_id` | stable id for this machine, generated on first run |
-| `source` | `"screen"` |
-| `monitor` | monitor name/index |
-| `ts` | UTC timestamp |
-| `trigger` | `"burst"` or `"heartbeat"` |
-| `path` | relative path to the WebP file |
-| `width`, `height`, `bytes` | image metadata |
-| `uploaded_at` | NULL; reserved for future upload |
+| `run` | Starts the daemon (used by the service) |
+| `pause [DURATION]` | Pause, optionally for e.g. `30m`, `2h` |
+| `resume` | Resume |
+| `status` | Human-readable: state, captures today, last capture time, disk use, warnings |
+| `status --json` | Same as one line of JSON, for a status bar |
+| `doctor` | Checks setup (§8) and explains anything missing |
+| `capture-once` | Saves one capture immediately (kind `after`, its own interaction) and prints the path |
 
-The image is written first, then the index row, so a crash never leaves an index row pointing at a missing file. Orphaned files without rows are cleaned on startup.
+Control socket: `$XDG_RUNTIME_DIR/vitality/client.sock`.
+State (pause state, portal restore token): `$XDG_STATE_HOME/vitality/client/state.json`.
 
-**Disk usage:** `status` reports total size; a configurable warning threshold (default 20 GB) is logged and shown in status. No automatic deletion.
+**Configuration:** optional `~/.config/vitality/client.toml`; defaults apply when absent.
 
-## 6. Structure
+```toml
+settle_seconds = 2
+max_gap_seconds = 10
+webp_quality = 85
+disk_warning_gb = 20
+```
 
-Located in `client/` of the Vitality monorepo. Python ≥ 3.12, managed with `uv`.
+**Service:** systemd user unit `vitality-client.service` running `vitality-client run`, `Restart=on-failure`, started with the graphical session. Logs to the journal.
+
+## 8. Setup
+
+`vitality-client doctor` checks each of these:
+1. The user is in the `input` group (required to read `/dev/input`; takes effect after re-login).
+2. Wayland: xdg-desktop-portal with a ScreenCast implementation, PipeWire, and the GStreamer PipeWire plugin are present.
+3. X11: a display is reachable.
+4. Data, state, and runtime directories are writable.
+
+First Wayland run: approve the screen-capture dialog once.
+
+## 9. Security and privacy notes
+
+- Membership in the `input` group lets **every** process of the user read all input devices, weakening Wayland's protection against keylogging. Accepted for v0 on the author's own machine.
+- The input watcher is a small, self-contained module that reduces each event to a timestamp before it leaves the module, so it can later be split into a separate process running as a dedicated system user. That split is required before Vitality runs on anyone else's machine.
+- Logs never contain key data, pointer data, or image contents.
+- Pausing captures one final frame if an interaction is active; the user should pause before, not after, sensitive content appears.
+
+## 10. Errors
+
+| Situation | Behavior |
+|---|---|
+| No permission to read input devices | Daemon runs; no activity detected, so no captures; `status`: `activity: unavailable` |
+| Capture backend unavailable | `status`: `capture: unavailable`; retries with backoff |
+| A single encode or write fails | Logged and skipped; daemon continues |
+| Daemon crash | systemd restarts it; pause state is restored from disk |
+
+## 11. Code layout
+
+In `client/` of the Vitality repo. Python ≥ 3.12, managed with `uv`.
 
 ```
 client/
   pyproject.toml
   vitality_client/
-    main.py            # entry point: CLI + daemon startup, asyncio orchestration
-    config.py          # load ~/.config/vitality/client.toml with defaults
-    activity.py        # evdev device discovery + activity timestamps (no key data)
-    policy.py          # pure capture-timing logic, driven by an injectable clock
-    capture/
-      base.py          # Capturer interface: capture() -> list of (monitor, image)
-      portal.py        # Wayland portal + PipeWire backend
-      x11.py           # X11 backend
-    store.py           # WebP encoding, file layout, SQLite index
-    control.py         # Unix socket server/client for pause/resume/status
+    cli.py           # vitality-client entry point and subcommands
+    daemon.py        # wires units together, asyncio main loop
+    config.py        # client.toml loading and defaults
+    activity.py      # input watcher (evdev)
+    policy.py        # capture policy (pure)
+    frames/
+      base.py        # FrameSource interface: latest_frame()
+      portal.py      # Wayland backend
+      x11.py         # X11 backend
+    writer.py        # WebP encoding, files, index rows
+    store.py         # SQLite schema and queries
+    control.py       # control socket server and client, persisted state
   tests/
-  systemd/vitality.service
+  systemd/vitality-client.service
 ```
 
-**Units and boundaries:**
-- `activity` emits "input happened at t" events; knows nothing about capturing.
-- `policy` consumes activity events and clock ticks, emits "capture now (burst|heartbeat)"; pure logic, no I/O.
-- `capture` backends implement one interface; `main` picks one.
-- `store` persists whatever it is given; knows nothing about timing.
-- `control` exposes pause/resume/status over a Unix socket at `$XDG_RUNTIME_DIR/vitality/daemon.sock`; the CLI subcommands are thin clients of it. Pause state is stored in `$XDG_STATE_HOME/vitality/state.json` alongside the portal restore token.
+**Dependencies:** `evdev`, a D-Bus client library for the portal (`dbus-next`), PyGObject with GStreamer and its PipeWire plugin (system packages), `mss`, `Pillow`, `python-ulid`.
 
-**Dependencies:** `evdev`, `dbus-next` (portal D-Bus calls), PyGObject + GStreamer with the PipeWire plugin (system packages), `mss`, `Pillow`, `python-ulid`.
+## 12. Testing
 
-## 7. Setup requirements
+- **Capture policy** (fake clock, scripted activity): single burst → before + after; continuous activity → before, then after every 10 s, then after on settle; pause while active → final after then nothing; pause while idle → nothing; timed pause resumes; pause state survives restart; idle → no snapshots.
+- **Input watcher** (fake devices and events): output contains timestamps only — no key codes or pointer values can leave the module.
+- **Writer and store** (temporary directory, fake images): file layout, row contents, file-before-row ordering, orphan cleanup on startup.
+- **Control** (temporary socket): pause, timed pause, resume, status and status --json round-trips.
+- **Capture backends:** verified manually with `capture-once` and `doctor` on the author's Arch/Hyprland laptop; X11 where available.
 
-- User is in the `input` group (needed to read `/dev/input`). The README documents this and `vitality doctor` checks it.
-- On Wayland: a running xdg-desktop-portal with a ScreenCast backend, PipeWire, and the GStreamer PipeWire plugin. `vitality doctor` checks these.
-- Install as a systemd user service: `systemctl --user enable --now vitality`.
+## 13. Done when
 
-## 8. Errors and logging
-
-- Logs go to stdout/stderr (collected by journald under the user service).
-- Logs never contain input event details or image content.
-- A failed capture is logged and skipped; the daemon keeps running.
-- Missing input permission: the daemon still runs heartbeat captures and reports `activity: unavailable` in status.
-- systemd restarts the daemon on crash.
-
-## 9. Testing
-
-- **policy:** unit tests with a fake clock and scripted activity sequences (idle, single burst, continuous typing, pause/resume, pause with duration, heartbeat).
-- **store:** unit tests on a temp directory (layout, index rows, write ordering, orphan cleanup).
-- **activity:** tests with fake devices/event streams, including assertions that no key codes reach any output.
-- **control:** pause/resume/status round-trip over a temp socket.
-- **capture backends:** manual verification via `vitality capture-once` and `vitality doctor` on the target machine (Hyprland/Wayland); X11 path tested where available.
-
-## 10. Done when
-
-- The daemon runs as a user service on the author's Arch/Hyprland laptop for a full day.
-- Captures appear on activity and at least once a minute, for every approved monitor, and none while paused.
-- `vitality status --json` works in a status-bar module.
-- The day's captures and index are readable and consistent.
+- `vitality-client` runs as a user service on the author's laptop for a full day.
+- Captures appear as before/after pairs around activity, with forced afters during long activity, and none while paused.
+- `status --json` drives a status-bar indicator.
+- The index and image files are consistent and readable.
