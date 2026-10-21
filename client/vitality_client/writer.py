@@ -1,6 +1,7 @@
 """Crash-safe screenshot writer: encode to a temp file, rename, then index."""
 
 import os
+import stat
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -68,6 +69,16 @@ class Writer:
         return deleted
 
     def disk_usage_bytes(self) -> int:
+        """Total size of files under captures/. Safe to call during a write: a temp
+        file renamed between the directory listing and stat() is skipped."""
         if not self._captures.is_dir():
             return 0
-        return sum(p.stat().st_size for p in self._captures.rglob("*") if p.is_file())
+        total = 0
+        for p in self._captures.rglob("*"):
+            try:
+                st = p.stat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                total += st.st_size
+        return total
