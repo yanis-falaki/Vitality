@@ -11,8 +11,8 @@
 ## 2. Scope
 
 **In scope**
-- Detect input activity (timing only) on any Linux desktop.
-- Capture the whole desktop (Wayland via the screen-capture portal; X11 directly).
+- Detect input activity (timing only) on any Linux Wayland desktop.
+- Capture the whole desktop via the screen-capture portal.
 - Before/after capture policy around activity; pause and timed pause.
 - Save captures as WebP files plus a SQLite index.
 - CLI for control and status; systemd user service.
@@ -22,6 +22,7 @@
 - Heartbeat / periodic captures (passive viewing is a known gap).
 - Detecting the active monitor; per-monitor captures or monitor ids.
 - Dedupe, denylists, redaction, tray icon.
+- X11 sessions (a direct-capture backend can be added behind the same frame-source interface).
 - Other sources (camera, audio) — the index has a `source` column so they can be added.
 - Client identity (assigned server-side later).
 - Encryption at rest (relies on full-disk encryption).
@@ -34,7 +35,7 @@ One Python (asyncio) process with these units:
 | Unit | Does | Interface |
 |---|---|---|
 | **Input watcher** | Reads keyboard, mouse, and touchpad devices via evdev. Discards key codes and pointer data on read. Rescans on hot-plug. | Emits *activity events*: a timestamp only. |
-| **Screen stream** | Opens the capture source once and keeps frames flowing (Wayland backend) or grabs on demand (X11 backend). | Feeds the frame buffer. |
+| **Screen stream** | Opens the screen-capture session once and keeps frames flowing. | Feeds the frame buffer. |
 | **Frame buffer** | Holds the most recent whole-desktop frame. | `latest_frame()` → image |
 | **Capture policy** | Pure timing logic (§4). No I/O; driven by activity events, pause commands, and an injectable clock. | Emits *snapshot requests*: `(kind, interaction_id, ts)` |
 | **Writer** | On a snapshot request, takes `latest_frame()`, encodes WebP, writes the file, inserts the index row. | Consumes snapshot requests. |
@@ -59,17 +60,14 @@ Pause state (including a timed-pause deadline) persists across daemon restarts: 
 
 ## 5. Screen capture
 
-Backend chosen at startup from `XDG_SESSION_TYPE`. Both produce one **whole-desktop image**: all monitors placed according to their layout. No monitor identity is recorded.
+Wayland only. Produces one **whole-desktop image**: all monitors placed according to their layout. No monitor identity is recorded. If `XDG_SESSION_TYPE` is not `wayland`, the daemon exits with an explanatory error.
 
-**Wayland — portal + PipeWire + GStreamer**
+**Portal + PipeWire + GStreamer**
 - Request a ScreenCast session from xdg-desktop-portal for all monitors, with the cursor embedded in the stream, and persistence enabled.
 - First run shows the desktop's permission dialog; the returned restore token is saved so later runs start without it.
 - Each monitor arrives as a PipeWire video stream, read through a GStreamer pipeline (`pipewiresrc` → convert to RGB → app sink keeping only the newest frame).
 - Streams are capped at ~5 fps; compositors also only send frames when the screen changes, so idle cost is negligible.
 - `latest_frame()` composites the newest frame of each monitor using the positions and sizes reported by the portal.
-
-**X11 — direct**
-- `latest_frame()` grabs the full virtual screen on demand with `mss`. No continuous stream.
 
 **Limits and failure**
 - If the composite exceeds WebP's 16,383 px per side, it is scaled down just enough to fit.
@@ -138,11 +136,10 @@ disk_warning_gb = 20
 
 `vitality-client doctor` checks each of these:
 1. The user is in the `input` group (required to read `/dev/input`; takes effect after re-login).
-2. Wayland: xdg-desktop-portal with a ScreenCast implementation, PipeWire, and the GStreamer PipeWire plugin are present.
-3. X11: a display is reachable.
-4. Data, state, and runtime directories are writable.
+2. The session is Wayland, and xdg-desktop-portal with a ScreenCast implementation, PipeWire, and the GStreamer PipeWire plugin are present.
+3. Data, state, and runtime directories are writable.
 
-First Wayland run: approve the screen-capture dialog once.
+First run: approve the screen-capture dialog once.
 
 ## 9. Security and privacy notes
 
@@ -175,8 +172,7 @@ client/
     policy.py        # capture policy (pure)
     frames/
       base.py        # FrameSource interface: latest_frame()
-      portal.py      # Wayland backend
-      x11.py         # X11 backend
+      portal.py      # portal + PipeWire backend
     writer.py        # WebP encoding, files, index rows
     store.py         # SQLite schema and queries
     control.py       # control socket server and client, persisted state
@@ -184,7 +180,7 @@ client/
   systemd/vitality-client.service
 ```
 
-**Dependencies:** `evdev`, a D-Bus client library for the portal (`dbus-next`), PyGObject with GStreamer and its PipeWire plugin (system packages), `mss`, `Pillow`, `python-ulid`.
+**Dependencies:** `evdev`, a D-Bus client library for the portal (`dbus-next`), PyGObject with GStreamer and its PipeWire plugin (system packages), `Pillow`, `python-ulid`.
 
 ## 12. Testing
 
@@ -192,7 +188,7 @@ client/
 - **Input watcher** (fake devices and events): output contains timestamps only — no key codes or pointer values can leave the module.
 - **Writer and store** (temporary directory, fake images): file layout, row contents, file-before-row ordering, orphan cleanup on startup.
 - **Control** (temporary socket): pause, timed pause, resume, status and status --json round-trips.
-- **Capture backends:** verified manually with `capture-once` and `doctor` on the author's Arch/Hyprland laptop; X11 where available.
+- **Capture backend:** verified manually with `capture-once` and `doctor` on the author's Arch/Hyprland laptop.
 
 ## 13. Done when
 
