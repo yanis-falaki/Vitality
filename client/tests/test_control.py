@@ -24,7 +24,7 @@ def test_parse_duration_rejects(bad):
 def test_state_file_roundtrip_and_defaults(tmp_path):
     f = StateFile(tmp_path / "s/state.json"); assert f.load() == State()
     f.save(State(True, 123.0, "tok")); assert f.load() == State(True, 123.0, "tok")
-    (tmp_path / "s/state.json").write_text("{not json"); assert f.load() == State()
+    (tmp_path / "s/state.json").write_text("{not json"); assert f.load() == State(paused=True)
 
 
 def test_state_file_ignores_unknown_keys(tmp_path):
@@ -41,7 +41,7 @@ def test_state_file_wrong_types_are_corrupt(tmp_path, caplog, content):
     p = tmp_path / "state.json"
     p.write_text(json.dumps(content))
     with caplog.at_level(logging.WARNING):
-        assert StateFile(p).load() == State()
+        assert StateFile(p).load() == State(paused=True)
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
@@ -128,3 +128,30 @@ async def test_response_timeout_is_daemon_not_running(tmp_path, monkeypatch):
     with pytest.raises(DaemonNotRunning):
         await send_command(tmp_path / "c.sock", {"cmd": "status"})
     await srv.close()
+
+
+def test_state_file_unreadable_loads_paused(tmp_path, caplog):
+    p = tmp_path / "state.json"; p.mkdir()  # exists but cannot be read as a file
+    with caplog.at_level(logging.WARNING):
+        assert StateFile(p).load() == State(paused=True)
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+async def test_close_does_not_hang_on_silent_client(tmp_path):
+    srv = ControlServer(tmp_path / "c.sock", AsyncMock(return_value={"ok": True})); await srv.start()
+    r, w = await asyncio.open_unix_connection(str(tmp_path / "c.sock"))
+    await asyncio.sleep(0.05)  # let the server accept and block reading
+    await asyncio.wait_for(srv.close(), timeout=1)
+    assert not (tmp_path / "c.sock").exists()
+    w.close()
+
+
+async def test_silent_client_is_dropped_after_request_timeout(tmp_path, monkeypatch):
+    import vitality_client.control as control
+    monkeypatch.setattr(control, "REQUEST_TIMEOUT", 0.05)
+    handler = AsyncMock(return_value={"ok": True})
+    srv = ControlServer(tmp_path / "c.sock", handler); await srv.start()
+    r, w = await asyncio.open_unix_connection(str(tmp_path / "c.sock"))
+    assert await asyncio.wait_for(r.read(), timeout=1) == b""  # closed, no response
+    handler.assert_not_called()
+    w.close(); await w.wait_closed(); await srv.close()
