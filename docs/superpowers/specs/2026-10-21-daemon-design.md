@@ -113,7 +113,7 @@ Indexes on `ts` and `uploaded_at`.
 | `run` | Starts the daemon (used by the service) |
 | `pause [DURATION]` | Pause, optionally for e.g. `30m`, `2h` |
 | `resume` | Resume |
-| `status` | Human-readable: state, captures today, last capture time, disk use, warnings |
+| `status` | Human-readable: state, captures today, last capture time, disk use, warnings, and the config/data/state paths |
 | `status --json` | Same as one line of JSON, for a status bar |
 | `doctor` | Checks setup (§8) and explains anything missing |
 | `capture-once` | Saves one capture immediately (kind `after`, its own interaction) and prints the path |
@@ -133,6 +133,8 @@ disk_warning_gb = 20
 **Service:** systemd user unit `vitality-client.service` running `vitality-client run`, `Restart=on-failure`, started with the graphical session. Logs to the journal.
 
 ## 8. Setup
+
+Files follow the XDG Base Directory convention (config, data, and state in separate locations, so settings can live in a dotfiles repo without the captures). `status` and `doctor` print all three paths.
 
 `vitality-client doctor` checks each of these:
 1. The user is in the `input` group (required to read `/dev/input`; takes effect after re-login).
