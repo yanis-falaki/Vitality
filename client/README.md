@@ -59,6 +59,21 @@ Nothing leaves the machine. Wayland only.
    journalctl --user -u vitality-client -f     # logs
    ```
 
+   The unit is tied to `graphical-session.target`, which only some setups start (for
+   example Hyprland through uwsm). Check yours:
+
+   ```sh
+   systemctl --user is-active graphical-session.target
+   ```
+
+   If it prints `inactive`, `enable` alone will not start the service at login. Start it
+   from the compositor instead; for Hyprland add this to `hyprland.conf`, after any
+   environment-import line (`systemctl --user enable` is then optional):
+
+   ```
+   exec-once = systemctl --user start vitality-client.service
+   ```
+
    If the service reports that it requires a Wayland session, your compositor has not
    exported its environment to systemd; for example, in Hyprland's config:
    `exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE`.
