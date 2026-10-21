@@ -2,10 +2,13 @@ from PIL import Image
 
 from vitality_client.frames.base import composite
 from vitality_client.frames.portal import (
+    PortalError,
+    PortalResponseError,
     backoff_delay,
     pipeline_description,
     request_path,
     rgb_image_from_bytes,
+    should_retry,
 )
 
 
@@ -57,3 +60,13 @@ def test_request_path():
 
 def test_backoff_doubles_from_2s_capped_at_60():
     assert [backoff_delay(n) for n in range(1, 8)] == [2, 4, 8, 16, 32, 60, 60]
+
+
+def test_user_cancel_stops_retrying():
+    assert should_retry(PortalResponseError("Start", 1)) is False
+
+
+def test_other_failures_keep_retrying():
+    assert should_retry(PortalResponseError("Start", 2)) is True
+    assert should_retry(PortalError("pipeline error")) is True
+    assert should_retry(OSError("bus gone")) is True

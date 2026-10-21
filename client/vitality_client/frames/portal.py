@@ -38,7 +38,8 @@ SOURCE_TYPE_MONITOR = 1
 CURSOR_MODE_EMBEDDED = 2
 PERSIST_MODE_UNTIL_REVOKED = 2
 
-_RESPONSE_MEANING = {1: "cancelled by the user", 2: "ended by the portal"}
+RESPONSE_CANCELLED = 1
+_RESPONSE_MEANING = {RESPONSE_CANCELLED: "cancelled by the user", 2: "ended by the portal"}
 _WATCH_INTERVAL = 0.5
 _STABLE_SESSION_SECONDS = 60  # a session that ran this long resets the retry backoff
 _CLOSE_TIMEOUT = 2.0
@@ -79,6 +80,11 @@ class PortalResponseError(PortalError):
         self.response = response
 
 
+def should_retry(exc: Exception) -> bool:
+    """False when the user cancelled the permission dialog; every other failure retries."""
+    return not (isinstance(exc, PortalResponseError) and exc.response == RESPONSE_CANCELLED)
+
+
 class PortalFrameSource:
     def __init__(
         self,
@@ -111,7 +117,8 @@ class PortalFrameSource:
         """Run the first session attempt (which may wait on the user's portal dialog).
 
         Returns once that attempt has succeeded or failed; failures and later stream
-        errors are retried with backoff in the background until close().
+        errors are retried with backoff in the background until close(), except a
+        user-cancelled permission dialog, which stops all further attempts.
         """
         if self._task is None:
             Gst.init(None)
@@ -149,9 +156,15 @@ class PortalFrameSource:
                 try:
                     await self._open()
                 except Exception as exc:
-                    log.warning("screen capture unavailable: %s", _describe(exc))
                     await self._teardown()
                     self._first_attempt.set()
+                    if not should_retry(exc):
+                        log.warning(
+                            "screen capture permission was cancelled; "
+                            "restart the daemon to be asked again"
+                        )
+                        return
+                    log.warning("screen capture unavailable: %s", _describe(exc))
                     failures += 1
                     await asyncio.sleep(backoff_delay(failures))
                     continue
