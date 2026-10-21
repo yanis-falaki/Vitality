@@ -1,0 +1,12 @@
+[Unit]
+Description=Vitality client daemon
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/vitality-client run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
