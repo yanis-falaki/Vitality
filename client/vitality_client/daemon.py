@@ -60,6 +60,10 @@ class Daemon:
         self._write_worker: asyncio.Task | None = None
         self._wake = asyncio.Event()  # set when the policy's next deadline moved earlier
         self._closing = False
+        # Cached capture-tree size: scanned once at startup (off the loop), then
+        # advanced by each written row, so status() never walks the tree.
+        self._disk_bytes = 0
+        self._disk_warned = False
 
     # -- lifecycle ---------------------------------------------------------------------
 
@@ -77,6 +81,8 @@ class Daemon:
             removed = self._writer.cleanup_orphans()
             if removed:
                 log.info("removed %d orphaned capture file(s)", removed)
+            # Before any task starts, so no write can land mid-scan and be counted twice.
+            self._record_disk_usage(await asyncio.to_thread(self._writer.disk_usage_bytes))
             # frames.start() may wait on the portal permission dialog: run it in the
             # background so control and activity are live immediately.
             tasks = [
@@ -178,9 +184,11 @@ class Daemon:
         while True:
             frame, req = await self._writes.get()
             try:
-                await asyncio.to_thread(self._writer.write, frame, req)
+                row = await asyncio.to_thread(self._writer.write, frame, req)
             except Exception as exc:
                 log.error("capture write failed: %s", str(exc) or type(exc).__name__)
+            else:
+                self._record_disk_usage(self._disk_bytes + row.bytes)
             finally:
                 self._writes.task_done()
 
@@ -227,11 +235,23 @@ class Daemon:
         except OSError as exc:
             log.warning("could not save daemon state: %s", exc.strerror or type(exc).__name__)
 
+    def _record_disk_usage(self, total: int) -> None:
+        """Update the cached usage; log once on crossing the warning threshold either way."""
+        self._disk_bytes = total
+        limit = self._config.disk_warning_gb * 1e9
+        if total > limit and not self._disk_warned:
+            self._disk_warned = True
+            log.warning("capture storage uses %.2f GB, above disk_warning_gb = %g",
+                        total / 1e9, self._config.disk_warning_gb)
+        elif total <= limit and self._disk_warned:
+            self._disk_warned = False
+            log.info("capture storage back under disk_warning_gb (%.2f GB)", total / 1e9)
+
     def status(self) -> dict:
         now = self._clock()
         midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
         until = self._policy.paused_until
-        disk = self._writer.disk_usage_bytes()
+        disk = self._disk_bytes
         return {
             "ok": True,
             "state": self._policy.state,

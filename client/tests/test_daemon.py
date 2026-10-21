@@ -259,3 +259,50 @@ def test_disk_usage_skips_files_that_vanish_during_scan(tmp_path):
 
     with patch.object(Path, "stat", racing_stat):
         assert w.disk_usage_bytes() == row.bytes
+
+
+def disk_warnings(caplog):
+    return [r for r in caplog.records if r.levelname == "WARNING" and "disk_warning_gb" in r.getMessage()]
+
+
+async def test_disk_warning_logged_once_when_crossed(daemon_env, caplog):
+    d, clock, data = daemon_env(config=Config(disk_warning_gb=1e-9))  # 1 byte
+    for t in (100.0, 200.0):  # two interactions: before + after each
+        d.handle_activity(t); clock.t = t + 3; await d.tick_once()
+    assert len(sqlite_rows(data / "index.sqlite")) == 4
+    assert len(disk_warnings(caplog)) == 1 and d.status()["disk_warning"] is True
+
+
+async def test_disk_usage_back_under_threshold_logs_info_once(daemon_env, caplog):
+    caplog.set_level("INFO")
+    d, _, _ = daemon_env(config=Config(disk_warning_gb=1e-6))  # 1000 bytes
+    d._record_disk_usage(5000); d._record_disk_usage(6000)
+    d._record_disk_usage(10); d._record_disk_usage(20)
+    assert len(disk_warnings(caplog)) == 1
+    assert sum("back under disk_warning_gb" in r.getMessage() for r in caplog.records) == 1
+
+
+async def test_status_disk_bytes_is_cached_not_rescanned(daemon_env):
+    d, clock, data = daemon_env()
+    with patch.object(Writer, "disk_usage_bytes", side_effect=AssertionError("rescanned")):
+        for t in (100.0, 200.0):  # two interactions: before + after each
+            d.handle_activity(t); clock.t = t + 3; await d.tick_once()
+        rows = sqlite_rows(data / "index.sqlite")
+        assert len(rows) == 4 and d.status()["disk_bytes"] == sum(r["bytes"] for r in rows)
+
+
+async def test_run_scans_existing_disk_usage_once_at_startup(daemon_env, caplog):
+    d, clock, data = daemon_env()
+    d.handle_activity(100.0); await d.drain()
+    existing = sqlite_rows(data / "index.sqlite")[0]["bytes"]
+    await d.close()
+    d2, _, _ = daemon_env(reuse=data, config=Config(disk_warning_gb=1e-9))
+    task = asyncio.create_task(d2.run())
+    for _ in range(200):
+        if d2.status()["disk_bytes"]:
+            break
+        await asyncio.sleep(0.01)
+    assert d2.status()["disk_bytes"] == existing and len(disk_warnings(caplog)) == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
