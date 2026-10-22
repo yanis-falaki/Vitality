@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from vitality_client import doctor
+from vitality_client.cli import checks as doctor
 from vitality_client.config import Paths
-from vitality_client.doctor import Check, run_checks
+from vitality_client.cli.checks import Check, run_checks
 
 
 def run_checks_with(groups, tmp_path, env=None, portal=True, gi=True, missing=()):

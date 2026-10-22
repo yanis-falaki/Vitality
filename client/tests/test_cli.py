@@ -1,7 +1,8 @@
 import json
 import pytest
 
-from vitality_client.cli import format_status, main
+from vitality_client.cli import main
+from vitality_client.cli.control import format_status
 
 STATUS = {
     "ok": True, "state": "idle", "paused_until": None, "captures_today": 412,
@@ -122,7 +123,7 @@ def test_missing_runtime_dir_is_an_error_not_a_traceback(monkeypatch, capsys):
 
 def test_capture_state_line_daemon_not_running():
     from datetime import datetime
-    from vitality_client.cli import capture_state_line
+    from vitality_client.cli.doctor import capture_state_line
     from vitality_client.control import State
 
     until = datetime(2026, 10, 21, 15, 30).timestamp()
@@ -133,7 +134,7 @@ def test_capture_state_line_daemon_not_running():
 
 
 def test_capture_state_line_daemon_running():
-    from vitality_client.cli import capture_state_line
+    from vitality_client.cli.doctor import capture_state_line
     from vitality_client.control import State
 
     assert capture_state_line({"state": "idle", "paused_until": None}, State(paused=True)) == (
@@ -145,7 +146,7 @@ def test_capture_state_line_daemon_running():
 
 
 def test_doctor_prints_saved_pause_state(tmp_path, monkeypatch, capsys):
-    from vitality_client import doctor
+    from vitality_client.cli import checks as doctor
     from vitality_client.control import State, StateFile
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))

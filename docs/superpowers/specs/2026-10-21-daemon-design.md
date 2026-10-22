@@ -167,20 +167,24 @@ In `client/` of the Vitality repo. Python ≥ 3.12, managed with `uv`.
 client/
   pyproject.toml
   vitality_client/
-    cli.py           # vitality-client entry point and subcommands
-    daemon.py        # wires units together, asyncio main loop
-    config.py        # client.toml loading and defaults
-    activity.py      # input watcher (evdev)
-    policy.py        # capture policy (pure)
-    frames/
-      base.py        # FrameSource interface: latest_frame()
-      portal.py      # portal + PipeWire backend
-    writer.py        # WebP encoding, files, index rows
-    store.py         # SQLite schema and queries
-    control.py       # control socket server and client, persisted state
+    daemon.py          # wires the packages together, asyncio main loop
+    config.py          # paths and client.toml settings
+    policy/            # WHEN to capture (pure logic)          -> CapturePolicy, SnapshotRequest
+    activity/          # input timing via evdev                -> ActivityWatcher
+    frames/            # whole-desktop images                  -> FrameSource (interface)
+      portal/          #   portal implementation               -> PortalFrameSource
+        session.py     #     D-Bus conversation with the portal
+        stream.py      #     GStreamer pipelines, newest-frame buffer
+        source.py      #     combines the two; retry/backoff
+    storage/           # WebP files + SQLite index             -> Writer, Store
+    control/           # socket channel, saved state, durations -> send_command, ControlServer, StateFile
+    cli/               # one module per command group; checks.py holds doctor's setup checks
   tests/
   systemd/vitality-client.service
 ```
+
+Each package's `__init__.py` states its contract and re-exports only its public names;
+everything else in the package is implementation.
 
 **Dependencies:** `evdev`, a D-Bus client library for the portal (`dbus-next`), PyGObject with GStreamer and its PipeWire plugin (system packages), `Pillow`, `python-ulid`.
 
