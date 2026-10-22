@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -196,6 +197,43 @@ def _capture_once(env: Mapping[str, str]) -> int:
     return 0
 
 
+def _describe_data(data_dir: Path) -> str:
+    captures = [p for p in (data_dir / "captures").rglob("*.webp") if p.is_file()]
+    size = sum(p.stat().st_size for p in captures)
+    return f"{data_dir}  ({len(captures)} captures, {_format_bytes(size)})"
+
+
+def _reset(env: Mapping[str, str], include_state: bool, assume_yes: bool) -> int:
+    paths = _paths(env)
+    if _daemon_is_running(paths.socket_path):
+        print(DAEMON_RUNNING, file=sys.stderr)
+        return 1
+    targets = []
+    if paths.data_dir.exists():
+        targets.append((paths.data_dir, _describe_data(paths.data_dir)))
+    state_dir = paths.state_file.parent
+    if include_state and state_dir.exists():
+        targets.append((state_dir, f"{state_dir}  (pause state and screen-sharing permission)"))
+    if not targets:
+        print("nothing to delete")
+        return 0
+    print("This permanently deletes:")
+    for _, description in targets:
+        print(f"  {description}")
+    if not assume_yes:
+        try:
+            reply = input("Type 'yes' to continue: ")
+        except EOFError:
+            reply = ""
+        if reply.strip() != "yes":
+            print("aborted, nothing deleted", file=sys.stderr)
+            return 1
+    for path, _ in targets:
+        shutil.rmtree(path)
+        print(f"deleted {path}")
+    return 0
+
+
 # -- entry point ---------------------------------------------------------------------------
 
 def _parser() -> argparse.ArgumentParser:
@@ -209,6 +247,10 @@ def _parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true", help="print one line of JSON")
     sub.add_parser("doctor", help="check the setup")
     sub.add_parser("capture-once", help="save one capture now and print its path")
+    reset = sub.add_parser("reset", help="delete all captures (asks first; daemon must be stopped)")
+    reset.add_argument("--all", action="store_true",
+                       help="also delete state (pause state and screen-sharing permission)")
+    reset.add_argument("--yes", action="store_true", help="don't ask for confirmation")
     return parser
 
 
@@ -229,6 +271,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return _doctor(env)
             case "capture-once":
                 return _capture_once(env)
+            case "reset":
+                return _reset(env, include_state=args.all, assume_yes=args.yes)
     except (RuntimeError, ValueError) as exc:  # no runtime dir, bad config, already running, ...
         print(f"vitality-client: {exc}", file=sys.stderr)
         return 1

@@ -117,6 +117,7 @@ Nothing leaves the machine. Wayland only.
 | `vitality-client status --json` | The same as one line of JSON |
 | `vitality-client doctor` | Check the setup |
 | `vitality-client capture-once` | Save one capture now and print its path |
+| `vitality-client reset [--all] [--yes]` | Delete all captures and the index (asks first; the daemon must be stopped). `--all` also deletes state, so the screen-sharing picker appears again |
 
 Pausing takes one final capture if an interaction is in progress, so pause before sensitive
 content appears, not after.
