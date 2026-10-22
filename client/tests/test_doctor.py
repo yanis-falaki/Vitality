@@ -48,7 +48,7 @@ def test_gst_check_names_every_missing_element(tmp_path):
 
 
 def test_gst_elements_cover_the_pipeline():
-    from vitality_client.frames.portal import pipeline_description
+    from vitality_client.frames.portal.stream import pipeline_description
     description = pipeline_description(3, 42, 5)
     assert set(doctor.GST_ELEMENTS) == {"pipewiresrc", "appsink"}
     assert all(e in description for e in doctor.GST_ELEMENTS)

@@ -3,16 +3,12 @@ import asyncio
 from PIL import Image
 
 from vitality_client.frames.base import composite, layout_frames
-from vitality_client.frames.portal import (
-    PortalFrameSource,
-    PortalError,
-    PortalResponseError,
-    backoff_delay,
+from vitality_client.frames.portal.session import PortalError, PortalResponseError, request_path
+from vitality_client.frames.portal.source import PortalFrameSource, backoff_delay, should_retry
+from vitality_client.frames.portal.stream import (
     pipeline_description,
-    request_path,
     raw_mode_for,
     rgb_image_from_bytes,
-    should_retry,
 )
 
 
@@ -116,15 +112,28 @@ def test_layout_odd_logical_size_maps_to_own_frame():
     assert laid[0][0] is a and laid[1][1] == (2560, 0)
 
 
+def failing_sessions(calls, response_for):
+    """A session_factory whose sessions record the token they were opened with, then fail."""
+    class FailingSession:
+        fd = None
+
+        async def open(self, token, on_restore_token):
+            calls.append(token)
+            raise PortalResponseError("Start", response_for(token))
+
+        def lost(self):
+            return None
+
+        async def close(self):
+            pass
+
+    return FailingSession
+
+
 async def test_cancel_with_restore_token_stops_without_second_dialog():
-    src = PortalFrameSource("tok", lambda t: None)
     calls = []
-
-    async def fake_open_session(token):
-        calls.append(token)
-        raise PortalResponseError("Start", 1)
-
-    src._open_session = fake_open_session
+    src = PortalFrameSource("tok", lambda t: None,
+                            session_factory=failing_sessions(calls, lambda token: 1))
     await src.start()
     await asyncio.wait_for(src._task, 1)         # supervisor ended: no further attempts
     assert calls == ["tok"] and src.available is False
@@ -132,14 +141,9 @@ async def test_cancel_with_restore_token_stops_without_second_dialog():
 
 
 async def test_rejected_restore_token_retries_once_without_it():
-    src = PortalFrameSource("tok", lambda t: None)
     calls = []
-
-    async def fake_open_session(token):
-        calls.append(token)
-        raise PortalResponseError("Start", 2 if token else 1)
-
-    src._open_session = fake_open_session
+    src = PortalFrameSource("tok", lambda t: None,
+                            session_factory=failing_sessions(calls, lambda token: 2 if token else 1))
     await src.start()
     await asyncio.wait_for(src._task, 1)
     assert calls == ["tok", None]
@@ -156,7 +160,7 @@ def test_rgb_image_accepts_a_memoryview_slice():
 
 def test_sample_to_image_from_a_real_gstreamer_buffer():
     from gi.repository import Gst
-    from vitality_client.frames.portal import _sample_to_image
+    from vitality_client.frames.portal.stream import sample_to_image as _sample_to_image
 
     Gst.init(None)
     pixels = bytes([1, 2, 3, 4, 5, 6, 0xEE, 0xEE, 7, 8, 9, 10, 11, 12, 0xEE, 0xEE])
@@ -180,7 +184,7 @@ def test_raw_mode_for_every_negotiable_format():
 
 def test_sample_to_image_converts_bgrx_from_a_real_gstreamer_buffer():
     from gi.repository import Gst
-    from vitality_client.frames.portal import _sample_to_image
+    from vitality_client.frames.portal.stream import sample_to_image as _sample_to_image
 
     Gst.init(None)
     pixels = bytes([3, 2, 1, 0xFF, 6, 5, 4, 0xFF])  # B, G, R, x per pixel
@@ -194,14 +198,15 @@ def test_sample_to_image_converts_bgrx_from_a_real_gstreamer_buffer():
 def test_frames_are_converted_only_when_requested(monkeypatch):
     # The stream delivers several frames a second; only snapshots need an image.
     from gi.repository import Gst
-    from vitality_client.frames import portal
+    from vitality_client.frames.portal import stream
+    from vitality_client.frames.portal.session import Stream
 
     Gst.init(None)
     conversions = []
-    real = portal._sample_to_image
-    monkeypatch.setattr(portal, "_sample_to_image", lambda s: conversions.append(s) or real(s))
-    src = PortalFrameSource(None, lambda token: None)
-    src._positions, src._sizes = [(0, 0)], [None]
+    real = stream.sample_to_image
+    monkeypatch.setattr(stream, "sample_to_image", lambda s: conversions.append(s) or real(s))
+    src = stream.FrameStreams(max_fps=5)
+    src._streams = [Stream(node_id=1, position=(0, 0), size=None)]
     caps = Gst.Caps.from_string("video/x-raw,format=BGRx,width=1,height=1")
     for value in (1, 2, 3):
         sample = Gst.Sample.new(Gst.Buffer.new_wrapped(bytes([value, value, value, 0])), caps, None, None)
