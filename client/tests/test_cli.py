@@ -117,3 +117,39 @@ def test_missing_runtime_dir_is_an_error_not_a_traceback(monkeypatch, capsys):
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     assert main(["status"]) == 1
     assert "XDG_RUNTIME_DIR is not set" in capsys.readouterr().err
+
+
+def test_capture_state_line_daemon_not_running():
+    from datetime import datetime
+    from vitality_client.cli import capture_state_line
+    from vitality_client.control import State
+
+    until = datetime(2026, 10, 21, 15, 30).timestamp()
+    assert capture_state_line(None, State()) == "daemon: not running; saved state: not paused"
+    assert capture_state_line(None, State(paused=True)) == "daemon: not running; saved state: paused"
+    assert capture_state_line(None, State(paused=True, paused_until=until)) == (
+        "daemon: not running; saved state: paused until 15:30")
+
+
+def test_capture_state_line_daemon_running():
+    from vitality_client.cli import capture_state_line
+    from vitality_client.control import State
+
+    assert capture_state_line({"state": "idle", "paused_until": None}, State(paused=True)) == (
+        "daemon: running, capturing")
+    assert capture_state_line({"state": "active", "paused_until": None}, State()) == (
+        "daemon: running, capturing")
+    assert capture_state_line({"state": "paused", "paused_until": None}, State()) == (
+        "daemon: running, paused")
+
+
+def test_doctor_prints_saved_pause_state(tmp_path, monkeypatch, capsys):
+    from vitality_client import doctor
+    from vitality_client.control import State, StateFile
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(doctor, "run_checks", lambda env, paths: [])
+    StateFile(tmp_path / "state/vitality/client/state.json").save(State(paused=True))
+    assert main(["doctor"]) == 0
+    assert "daemon: not running; saved state: paused" in capsys.readouterr().out
