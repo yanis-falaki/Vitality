@@ -113,6 +113,7 @@ Nothing leaves the machine. Wayland only.
 | `vitality-client run` | Run the daemon (what the service does) |
 | `vitality-client pause [DURATION]` | Pause, optionally for e.g. `30s`, `30m`, `2h` |
 | `vitality-client resume` | Resume |
+| `vitality-client toggle` | Pause if capturing, resume if paused (for a bar button or keybind) |
 | `vitality-client status` | State, captures today, last capture, disk use, warnings, paths |
 | `vitality-client status --json` | The same as one line of JSON |
 | `vitality-client doctor` | Check the setup |
@@ -138,9 +139,13 @@ daemon is not running:
 ```json
 "custom/vitality": {
     "exec": "vitality-client status --json | jq -r 'if .state == \"paused\" then \"paused\" else \"rec \\(.captures_today)\" end'",
-    "interval": 5
+    "interval": 5,
+    "on-click": "vitality-client toggle; pkill -SIGRTMIN+9 waybar",
+    "signal": 9
 }
 ```
+
+Clicking toggles pause; the signal refreshes the module immediately.
 
 ## Known limitations
 

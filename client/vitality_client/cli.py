@@ -128,6 +128,16 @@ def _pause(env: Mapping[str, str], duration: str | None) -> int:
     return _command(env, request)
 
 
+def _toggle(env: Mapping[str, str]) -> int:
+    """Pause if capturing, resume if paused."""
+    try:
+        status = asyncio.run(send_command(_paths(env).socket_path, {"cmd": "status"}))
+    except DaemonNotRunning:
+        print(NOT_RUNNING, file=sys.stderr)
+        return 1
+    return _command(env, {"cmd": "resume" if status.get("state") == "paused" else "pause"})
+
+
 def _pause_text(paused: bool, until: str | None) -> str:
     if not paused:
         return "not paused"
@@ -266,6 +276,7 @@ def _parser() -> argparse.ArgumentParser:
     pause = sub.add_parser("pause", help="pause capturing")
     pause.add_argument("duration", nargs="?", help="e.g. 30s, 10m, 2h (default: until resumed)")
     sub.add_parser("resume", help="resume capturing")
+    sub.add_parser("toggle", help="pause if capturing, resume if paused")
     status = sub.add_parser("status", help="show daemon status")
     status.add_argument("--json", action="store_true", help="print one line of JSON")
     sub.add_parser("doctor", help="check the setup")
@@ -288,6 +299,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return _pause(env, args.duration)
             case "resume":
                 return _command(env, {"cmd": "resume"})
+            case "toggle":
+                return _toggle(env)
             case "status":
                 return _command(env, {"cmd": "status"}, as_json=args.json)
             case "doctor":

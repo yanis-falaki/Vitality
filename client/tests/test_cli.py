@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from vitality_client.cli import format_status, main
 
@@ -153,3 +154,46 @@ def test_doctor_prints_saved_pause_state(tmp_path, monkeypatch, capsys):
     StateFile(tmp_path / "state/vitality/client/state.json").save(State(paused=True))
     assert main(["doctor"]) == 0
     assert "daemon: not running; saved state: paused" in capsys.readouterr().out
+
+
+def _toggle_against(tmp_path, monkeypatch, state):
+    import asyncio
+    from vitality_client.control import ControlServer
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    requests = []
+
+    async def handler(req):
+        requests.append(req)
+        if req["cmd"] == "status":
+            return dict(STATUS, state=state)
+        return dict(STATUS, state="idle" if req["cmd"] == "resume" else "paused")
+
+    async def scenario():
+        server = ControlServer(tmp_path / "vitality/client.sock", handler)
+        await server.start()
+        try:
+            return await asyncio.to_thread(main, ["toggle"])
+        finally:
+            await server.close()
+
+    return asyncio.run(scenario()), requests
+
+
+@pytest.mark.parametrize("state", ["idle", "active"])
+def test_toggle_pauses_when_capturing(tmp_path, monkeypatch, capsys, state):
+    code, requests = _toggle_against(tmp_path, monkeypatch, state)
+    assert code == 0 and requests == [{"cmd": "status"}, {"cmd": "pause"}]
+    assert capsys.readouterr().out.startswith("paused")
+
+
+def test_toggle_resumes_when_paused(tmp_path, monkeypatch, capsys):
+    code, requests = _toggle_against(tmp_path, monkeypatch, "paused")
+    assert code == 0 and requests == [{"cmd": "status"}, {"cmd": "resume"}]
+    assert capsys.readouterr().out.startswith("capturing")
+
+
+def test_toggle_when_daemon_not_running(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    assert main(["toggle"]) == 1
+    assert "vitality-client daemon is not running" in capsys.readouterr().err
