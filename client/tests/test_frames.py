@@ -140,3 +140,26 @@ async def test_rejected_restore_token_retries_once_without_it():
     await asyncio.wait_for(src._task, 1)
     assert calls == ["tok", None]
     await src.close()
+
+
+def test_rgb_image_accepts_a_memoryview_slice():
+    data = bytes([0xEE, 0xEE, 1, 2, 3, 4, 5, 6, 0xEE, 0xEE, 7, 8, 9, 10, 11, 12, 0xEE, 0xEE])
+    with memoryview(data) as view, view[2:] as tail:
+        img = rgb_image_from_bytes(tail, 2, 2, 8)
+    assert [img.getpixel(p) for p in [(0, 0), (1, 0), (0, 1), (1, 1)]] == [
+        (1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]
+
+
+def test_sample_to_image_from_a_real_gstreamer_buffer():
+    from gi.repository import Gst
+    from vitality_client.frames.portal import _sample_to_image
+
+    Gst.init(None)
+    pixels = bytes([1, 2, 3, 4, 5, 6, 0xEE, 0xEE, 7, 8, 9, 10, 11, 12, 0xEE, 0xEE])
+    sample = Gst.Sample.new(
+        Gst.Buffer.new_wrapped(pixels),
+        Gst.Caps.from_string("video/x-raw,format=RGB,width=2,height=2"), None, None)
+    img = _sample_to_image(sample)
+    assert img.size == (2, 2)
+    assert [img.getpixel(p) for p in [(0, 0), (1, 0), (0, 1), (1, 1)]] == [
+        (1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]

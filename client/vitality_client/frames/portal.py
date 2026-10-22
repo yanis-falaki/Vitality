@@ -64,7 +64,7 @@ def backoff_delay(failures: int) -> float:
     return min(2 ** failures, 60)
 
 
-def rgb_image_from_bytes(data: bytes, width: int, height: int, stride: int) -> Image.Image:
+def rgb_image_from_bytes(data: bytes | memoryview, width: int, height: int, stride: int) -> Image.Image:
     """Packed RGB rows of `stride` bytes (>= width * 3; extra bytes are padding) -> image."""
     return Image.frombytes("RGB", (width, height), data, "raw", "RGB", stride)
 
@@ -392,8 +392,9 @@ def _sample_to_image(sample) -> Image.Image:
     if not ok:
         raise PortalError("could not map the frame buffer")
     try:
-        data = bytes(mapinfo.data)[offset:]
-        return rgb_image_from_bytes(data, info.width, info.height, stride)
+        # A memoryview slice: no copy before PIL copies the pixels into the image.
+        with memoryview(mapinfo.data) as view, view[offset:] as data:
+            return rgb_image_from_bytes(data, info.width, info.height, stride)
     finally:
         buffer.unmap(mapinfo)
 
