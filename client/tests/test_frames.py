@@ -10,6 +10,7 @@ from vitality_client.frames.portal import (
     backoff_delay,
     pipeline_description,
     request_path,
+    raw_mode_for,
     rgb_image_from_bytes,
     should_retry,
 )
@@ -53,7 +54,8 @@ def test_pipeline_description():
     # downstream stalled on Hyprland's variable-rate stream (stuck on the first frame).
     assert pipeline_description(17, 42, 5) == (
         "pipewiresrc fd=17 path=42 keepalive-time=1000 ! "
-        "video/x-raw,max-framerate=5/1 ! videoconvert ! video/x-raw,format=RGB ! "
+        "video/x-raw,format=(string){BGRx,RGBx,xRGB,xBGR,BGRA,RGBA,ARGB,ABGR,BGR,RGB},"
+        "max-framerate=5/1 ! "
         "appsink name=sink max-buffers=1 drop=true sync=false emit-signals=true"
     )
 
@@ -165,3 +167,46 @@ def test_sample_to_image_from_a_real_gstreamer_buffer():
     assert img.size == (2, 2)
     assert [img.getpixel(p) for p in [(0, 0), (1, 0), (0, 1), (1, 1)]] == [
         (1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]
+
+
+def test_raw_mode_for_every_negotiable_format():
+    # Alpha bytes are ignored: screens are opaque, so A is read as padding.
+    assert {f: raw_mode_for(f) for f in
+            ["BGRx", "RGBx", "xRGB", "xBGR", "BGRA", "RGBA", "ARGB", "ABGR", "BGR", "RGB"]} == {
+        "BGRx": "BGRX", "RGBx": "RGBX", "xRGB": "XRGB", "xBGR": "XBGR",
+        "BGRA": "BGRX", "RGBA": "RGBX", "ARGB": "XRGB", "ABGR": "XBGR",
+        "BGR": "BGR", "RGB": "RGB"}
+
+
+def test_sample_to_image_converts_bgrx_from_a_real_gstreamer_buffer():
+    from gi.repository import Gst
+    from vitality_client.frames.portal import _sample_to_image
+
+    Gst.init(None)
+    pixels = bytes([3, 2, 1, 0xFF, 6, 5, 4, 0xFF])  # B, G, R, x per pixel
+    sample = Gst.Sample.new(
+        Gst.Buffer.new_wrapped(pixels),
+        Gst.Caps.from_string("video/x-raw,format=BGRx,width=2,height=1"), None, None)
+    img = _sample_to_image(sample)
+    assert img.mode == "RGB" and [img.getpixel((0, 0)), img.getpixel((1, 0))] == [(1, 2, 3), (4, 5, 6)]
+
+
+def test_frames_are_converted_only_when_requested(monkeypatch):
+    # The stream delivers several frames a second; only snapshots need an image.
+    from gi.repository import Gst
+    from vitality_client.frames import portal
+
+    Gst.init(None)
+    conversions = []
+    real = portal._sample_to_image
+    monkeypatch.setattr(portal, "_sample_to_image", lambda s: conversions.append(s) or real(s))
+    src = PortalFrameSource(None, lambda token: None)
+    src._positions, src._sizes = [(0, 0)], [None]
+    caps = Gst.Caps.from_string("video/x-raw,format=BGRx,width=1,height=1")
+    for value in (1, 2, 3):
+        sample = Gst.Sample.new(Gst.Buffer.new_wrapped(bytes([value, value, value, 0])), caps, None, None)
+        sink = type("Sink", (), {"emit": lambda self, name, s=sample: s})()
+        src._on_sample(sink, 0)
+    assert conversions == []
+    assert src.latest_frame().getpixel((0, 0)) == (3, 3, 3)
+    assert len(conversions) == 1

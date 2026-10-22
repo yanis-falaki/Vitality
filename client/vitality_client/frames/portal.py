@@ -51,13 +51,28 @@ def request_path(unique_name: str, handle_token: str) -> str:
     return f"{PORTAL_PATH}/request/{sender}/{handle_token}"
 
 
+# Packed formats the stream may arrive in, and the Pillow raw mode that reads each as RGB.
+# Alpha is read as padding: screen frames are opaque.
+_RAW_MODES = {
+    "BGRx": "BGRX", "RGBx": "RGBX", "xRGB": "XRGB", "xBGR": "XBGR",
+    "BGRA": "BGRX", "RGBA": "RGBX", "ARGB": "XRGB", "ABGR": "XBGR",
+    "BGR": "BGR", "RGB": "RGB",
+}
+
+
+def raw_mode_for(video_format: str) -> str:
+    return _RAW_MODES[video_format]
+
+
 def pipeline_description(fd: int, node_id: int, max_fps: int) -> str:
     # The frame-rate cap is a caps field so pipewiresrc negotiates it with the
-    # producer. A downstream videorate stalled on the compositor's variable-rate
-    # stream and kept serving the first frame.
+    # producer (a downstream videorate stalled on the compositor's variable-rate
+    # stream). Frames stay in the producer's format; they are converted to RGB only
+    # when a snapshot asks for one, not on every frame.
+    formats = ",".join(_RAW_MODES)
     return (
         f"pipewiresrc fd={fd} path={node_id} keepalive-time=1000 ! "
-        f"video/x-raw,max-framerate={max_fps}/1 ! videoconvert ! video/x-raw,format=RGB ! "
+        f"video/x-raw,format=(string){{{formats}}},max-framerate={max_fps}/1 ! "
         "appsink name=sink max-buffers=1 drop=true sync=false emit-signals=true"
     )
 
@@ -67,9 +82,10 @@ def backoff_delay(failures: int) -> float:
     return min(2 ** failures, 60)
 
 
-def rgb_image_from_bytes(data: bytes | memoryview, width: int, height: int, stride: int) -> Image.Image:
-    """Packed RGB rows of `stride` bytes (>= width * 3; extra bytes are padding) -> image."""
-    return Image.frombytes("RGB", (width, height), data, "raw", "RGB", stride)
+def rgb_image_from_bytes(data: bytes | memoryview, width: int, height: int, stride: int,
+                         raw_mode: str = "RGB") -> Image.Image:
+    """Packed rows of `stride` bytes (extra bytes are padding) in `raw_mode` -> RGB image."""
+    return Image.frombytes("RGB", (width, height), data, "raw", raw_mode, stride)
 
 
 class PortalError(Exception):
@@ -113,7 +129,7 @@ class PortalFrameSource:
         self._lock = threading.Lock()
         self._positions: list[tuple[int, int]] = []  # logical, from the portal
         self._sizes: list[tuple[int, int] | None] = []  # logical; None if not reported
-        self._frames: dict[int, Image.Image] = {}
+        self._frames: dict[int, Gst.Sample] = {}  # newest sample per stream, converted lazily
 
     # -- FrameSource -------------------------------------------------------------------
 
@@ -138,10 +154,15 @@ class PortalFrameSource:
         with self._lock:
             if not self._positions or len(self._frames) < len(self._positions):
                 return None
-            frames = [
-                (self._frames[i], pos, self._sizes[i] or self._frames[i].size)
-                for i, pos in enumerate(self._positions)
-            ]
+            samples = [(self._frames[i], pos, self._sizes[i]) for i, pos in enumerate(self._positions)]
+        try:
+            frames = []
+            for sample, pos, size in samples:
+                image = _sample_to_image(sample)
+                frames.append((image, pos, size or image.size))
+        except Exception as exc:
+            log.debug("could not convert the latest frame: %s", _describe(exc))
+            return None
         return composite(layout_frames(frames))
 
     async def close(self) -> None:
@@ -342,17 +363,14 @@ class PortalFrameSource:
 
     def _on_sample(self, sink, index: int) -> Gst.FlowReturn:
         # GStreamer streaming thread: no asyncio here, and never log image data.
+        # Only keep a reference to the newest sample; converting every frame would cost
+        # CPU on each screen update while snapshots need a frame only a few times a minute.
         sample = sink.emit("pull-sample")
         if sample is None:
             return Gst.FlowReturn.OK
-        try:
-            image = _sample_to_image(sample)
-        except Exception as exc:
-            log.debug("dropping a frame that could not be converted: %s", _describe(exc))
-            return Gst.FlowReturn.OK
         with self._lock:
             if index < len(self._positions):
-                self._frames[index] = image
+                self._frames[index] = sample
         return Gst.FlowReturn.OK
 
     # -- teardown ------------------------------------------------------------------------
@@ -388,6 +406,7 @@ class PortalFrameSource:
 def _sample_to_image(sample) -> Image.Image:
     caps = sample.get_caps()
     info = GstVideo.VideoInfo.new_from_caps(caps)
+    raw_mode = raw_mode_for(caps.get_structure(0).get_value("format"))
     buffer = sample.get_buffer()
     meta = GstVideo.buffer_get_video_meta(buffer)
     offset, stride = (meta.offset[0], meta.stride[0]) if meta else (info.offset[0], info.stride[0])
@@ -397,7 +416,7 @@ def _sample_to_image(sample) -> Image.Image:
     try:
         # A memoryview slice: no copy before PIL copies the pixels into the image.
         with memoryview(mapinfo.data) as view, view[offset:] as data:
-            return rgb_image_from_bytes(data, info.width, info.height, stride)
+            return rgb_image_from_bytes(data, info.width, info.height, stride, raw_mode)
     finally:
         buffer.unmap(mapinfo)
 

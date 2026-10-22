@@ -44,12 +44,18 @@ class ActivityWatcher:
         open_device: Callable[[str], Any] = evdev.InputDevice,
         clock: Callable[[], float] = time.time,
         rescan_seconds: float = 5,
+        min_interval: float = 0.1,
     ) -> None:
         self._on_activity = on_activity
         self._list_devices = list_devices
         self._open_device = open_device
         self._clock = clock
         self._rescan_seconds = rescan_seconds
+        # Report at most one activity per interval: a 1000 Hz mouse would otherwise call
+        # into the capture logic 1000 times a second. The first event after a quiet
+        # spell is always reported at once.
+        self._min_interval = min_interval
+        self._last_report: float | None = None
         self._devices: dict[str, Any] = {}
         self._readers: dict[str, asyncio.Task] = {}
         self.available = False
@@ -92,11 +98,18 @@ class ActivityWatcher:
             self._readers[path] = asyncio.create_task(self._read(path, device))
         self.available = bool(self._devices)
 
+    def _report(self, now: float) -> None:
+        last = self._last_report
+        if last is not None and 0 <= now - last < self._min_interval:
+            return
+        self._last_report = now
+        self._on_activity(now)
+
     async def _read(self, path: str, device: Any) -> None:
         try:
             async for event in device.async_read_loop():
                 if event.type in _ACTIVITY_EVENT_TYPES:
-                    self._on_activity(float(self._clock()))
+                    self._report(float(self._clock()))
         except OSError:
             log.info("input device %s went away", path)
         except Exception as exc:

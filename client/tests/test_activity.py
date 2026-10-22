@@ -57,7 +57,8 @@ async def run_briefly(w, seconds=0.05):
 async def test_events_reported_as_timestamp_only():
     seen = []
     dev = FakeDevice(KEYBOARD_CAPS, events=[ev(EV_KEY, KEY_A, 1), ev(EV_KEY, KEY_A, 0)])
-    w = ActivityWatcher(seen.append, lambda: ["/dev/input/event3"], lambda p: dev, clock=lambda: 42.0)
+    w = ActivityWatcher(seen.append, lambda: ["/dev/input/event3"], lambda p: dev, clock=lambda: 42.0,
+                        min_interval=0)
     await run_briefly(w)
     assert seen == [42.0, 42.0] and all(type(x) is float for x in seen)
 
@@ -71,7 +72,8 @@ async def test_sync_events_ignored():
 async def test_rel_and_abs_events_reported():
     seen = []
     dev = FakeDevice(MOUSE_CAPS, events=[ev(EV_REL, REL_X, 5), ev(EV_ABS, ABS_X, 9)])
-    await run_briefly(ActivityWatcher(seen.append, lambda: ["/e"], lambda p: dev, clock=lambda: 1.0))
+    await run_briefly(ActivityWatcher(seen.append, lambda: ["/e"], lambda p: dev, clock=lambda: 1.0,
+                                     min_interval=0))
     assert seen == [1.0, 1.0]
 
 
@@ -129,7 +131,8 @@ async def test_unplugged_device_dropped_and_reopened():          # Review Focus 
                        "/b": FakeDevice(KEYBOARD_CAPS, events=[ev(EV_KEY, KEY_A, 1)])}
     opens = []
     def open_(p): opens.append(p); return devs[p]
-    w = ActivityWatcher(seen.append, lambda: list(devs), open_, clock=lambda: 1.0, rescan_seconds=0.01)
+    w = ActivityWatcher(seen.append, lambda: list(devs), open_, clock=lambda: 1.0, rescan_seconds=0.01,
+                       min_interval=0)
     await run_briefly(w, seconds=0.1)
     assert seen.count(1.0) >= 2 and opens.count("/a") >= 2     # /b kept working; /a re-opened on rescan
     assert opens.count("/b") == 1                               # healthy device not re-opened
@@ -173,3 +176,21 @@ async def test_list_devices_oserror_keeps_open_devices():
         await task
     except asyncio.CancelledError:
         pass
+
+
+async def test_bursts_are_throttled_to_one_report_per_interval():
+    # A 1000 Hz mouse must not call into the capture logic 1000 times a second.
+    seen = []
+    dev = FakeDevice(MOUSE_CAPS, events=[ev(EV_REL, REL_X, 1)] * 50)
+    await run_briefly(ActivityWatcher(seen.append, lambda: ["/e"], lambda p: dev, clock=lambda: 7.0))
+    assert seen == [7.0]
+
+
+async def test_throttle_reports_first_event_then_once_per_interval():
+    seen = []
+    times = iter([0.0, 0.05, 0.1, 0.15, 0.2, 0.21])
+    dev = FakeDevice(MOUSE_CAPS, events=[ev(EV_REL, REL_X, 1)] * 6)
+    w = ActivityWatcher(seen.append, lambda: ["/e"], lambda p: dev, clock=lambda: next(times),
+                        min_interval=0.1)
+    await run_briefly(w)
+    assert seen == [0.0, 0.1, 0.2]
