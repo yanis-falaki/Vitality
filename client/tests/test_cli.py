@@ -40,6 +40,32 @@ def test_capture_once_refuses_non_wayland(monkeypatch, capsys):
     assert "requires a Wayland session (XDG_SESSION_TYPE=)" in capsys.readouterr().err
 
 
+def test_capture_once_refuses_while_daemon_is_running(tmp_path, monkeypatch, capsys):
+    import asyncio
+    from vitality_client.control import ControlServer
+
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    requests = []
+
+    async def handler(req):
+        requests.append(req)
+        return dict(STATUS)
+
+    async def scenario():
+        server = ControlServer(tmp_path / "vitality/client.sock", handler)
+        await server.start()
+        try:
+            return await asyncio.to_thread(main, ["capture-once"])
+        finally:
+            await server.close()
+
+    assert asyncio.run(scenario()) == 1
+    assert capsys.readouterr().err.strip() == (
+        "vitality-client daemon is running; stop it first (systemctl --user stop vitality-client)")
+    assert requests == [{"cmd": "status"}]  # only the probe; the portal was never started
+
+
 def test_format_status_idle():
     lines = format_status(STATUS).splitlines()
     assert lines[0].startswith("capturing · 412 captures today · last ")

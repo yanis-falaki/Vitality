@@ -20,6 +20,8 @@ from vitality_client.control import (
 
 FIRST_FRAME_TIMEOUT = 10.0
 NOT_RUNNING = "vitality-client daemon is not running"
+DAEMON_RUNNING = ("vitality-client daemon is running; stop it first "
+                  "(systemctl --user stop vitality-client)")
 
 
 def _local_time(iso_ts: str, fmt: str = "%H:%M:%S") -> str:
@@ -139,15 +141,27 @@ def _doctor(env: Mapping[str, str]) -> int:
     return 0 if all(c.ok for c in checks) else 1
 
 
+def _daemon_is_running(socket_path: Path) -> bool:
+    try:
+        asyncio.run(send_command(socket_path, {"cmd": "status"}))
+    except DaemonNotRunning:
+        return False
+    return True
+
+
 def _capture_once(env: Mapping[str, str]) -> int:
     if not _require_wayland(env):
+        return 1
+    paths = _paths(env)
+    # Portal restore tokens are single-use: capture-once would spend the daemon's token.
+    if _daemon_is_running(paths.socket_path):
+        print(DAEMON_RUNNING, file=sys.stderr)
         return 1
     from vitality_client.frames.portal import PortalFrameSource
     from vitality_client.policy import SnapshotRequest
     from vitality_client.store import Store
     from vitality_client.writer import Writer
 
-    paths = _paths(env)
     config = load_config(paths.config_file)
     state_file = StateFile(paths.state_file)
 
