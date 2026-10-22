@@ -193,8 +193,7 @@ def _capture_once(env: Mapping[str, str]) -> int:
         return 1
     from vitality_client.frames.portal import PortalFrameSource
     from vitality_client.policy import SnapshotRequest
-    from vitality_client.store import Store
-    from vitality_client.writer import Writer
+    from vitality_client.storage import Store, Writer
 
     config = load_config(paths.config_file)
     state_file = StateFile(paths.state_file)

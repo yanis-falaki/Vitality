@@ -121,7 +121,7 @@ async def test_permissions_and_close_removes_socket(tmp_path):
 
 
 async def test_response_timeout_is_daemon_not_running(tmp_path, monkeypatch):
-    import vitality_client.control as control
+    import vitality_client.control.channel as control
     monkeypatch.setattr(control, "RESPONSE_TIMEOUT", 0.05)
     async def slow(req): await asyncio.sleep(1); return {"ok": True}
     srv = ControlServer(tmp_path / "c.sock", slow); await srv.start()
@@ -147,7 +147,7 @@ async def test_close_does_not_hang_on_silent_client(tmp_path):
 
 
 async def test_silent_client_is_dropped_after_request_timeout(tmp_path, monkeypatch):
-    import vitality_client.control as control
+    import vitality_client.control.channel as control
     monkeypatch.setattr(control, "REQUEST_TIMEOUT", 0.05)
     handler = AsyncMock(return_value={"ok": True})
     srv = ControlServer(tmp_path / "c.sock", handler); await srv.start()

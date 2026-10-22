@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 from vitality_client.policy import SnapshotRequest
-from vitality_client.store import CaptureRow, Store
+from vitality_client.storage.index import CaptureRow, Store
 
 MAX_SIDE = 16383  # WebP's per-side limit
 

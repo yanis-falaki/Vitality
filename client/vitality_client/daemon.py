@@ -21,8 +21,7 @@ from vitality_client.config import Config, Paths
 from vitality_client.control import ControlServer, State, StateFile
 from vitality_client.frames.base import FrameSource
 from vitality_client.policy import CapturePolicy, SnapshotRequest
-from vitality_client.store import Store
-from vitality_client.writer import Writer, format_ts
+from vitality_client.storage import Store, Writer, format_ts
 
 log = logging.getLogger(__name__)
 

@@ -5,8 +5,8 @@ import pytest
 from PIL import Image
 
 from vitality_client.policy import SnapshotRequest
-from vitality_client.store import Store
-from vitality_client.writer import Writer
+from vitality_client.storage import Store
+from vitality_client.storage import Writer
 
 img = Image.new("RGB", (64, 40), "white")
 
@@ -69,5 +69,5 @@ def test_cleanup_and_usage_without_captures_dir(tmp_path):
     (1.0009, "1970-01-01T00:00:01.000Z"),   # truncates, does not round
 ])
 def test_format_ts(epoch, expected):
-    from vitality_client.writer import format_ts
+    from vitality_client.storage import format_ts
     assert format_ts(epoch) == expected
