@@ -70,3 +70,36 @@ def test_load_config_wrong_type_rejected(tmp_path, line):
     f.write_text(line + "\n")
     with pytest.raises(ValueError):
         load_config(f)
+
+
+@pytest.mark.parametrize(
+    "line, key",
+    [
+        ("settle_seconds = 0", "settle_seconds"),
+        ("settle_seconds = -1.5", "settle_seconds"),
+        ("max_gap_seconds = 0", "max_gap_seconds"),
+        ("max_gap_seconds = -10", "max_gap_seconds"),
+        ("disk_warning_gb = -1", "disk_warning_gb"),
+        ("webp_quality = 0", "webp_quality"),
+        ("webp_quality = 101", "webp_quality"),
+        ("webp_quality = -5", "webp_quality"),
+        ("settle_seconds = nan", "settle_seconds"),
+        ("max_gap_seconds = inf", "max_gap_seconds"),
+        ("disk_warning_gb = inf", "disk_warning_gb"),
+        ("disk_warning_gb = -inf", "disk_warning_gb"),
+    ],
+)
+def test_load_config_out_of_range_rejected(tmp_path, line, key):
+    f = tmp_path / "client.toml"
+    f.write_text(line + "\n")
+    with pytest.raises(ValueError, match=key):
+        load_config(f)
+
+
+def test_load_config_range_boundaries_accepted(tmp_path):
+    f = tmp_path / "client.toml"
+    f.write_text("settle_seconds = 0.1\nmax_gap_seconds = 0.5\ndisk_warning_gb = 0\nwebp_quality = 1\n")
+    c = load_config(f)
+    assert (c.settle_seconds, c.max_gap_seconds, c.disk_warning_gb, c.webp_quality) == (0.1, 0.5, 0.0, 1)
+    f.write_text("webp_quality = 100\n")
+    assert load_config(f).webp_quality == 100

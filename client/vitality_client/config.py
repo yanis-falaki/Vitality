@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -50,6 +51,17 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _check_range(key: str, value: float) -> None:
+    if not math.isfinite(value):
+        raise ValueError(f"config key {key} must be a finite number, got {value!r}")
+    if key in ("settle_seconds", "max_gap_seconds") and value <= 0:
+        raise ValueError(f"config key {key} must be greater than 0, got {value!r}")
+    if key == "disk_warning_gb" and value < 0:
+        raise ValueError(f"config key {key} must not be negative, got {value!r}")
+    if key == "webp_quality" and not 1 <= value <= 100:
+        raise ValueError(f"config key {key} must be between 1 and 100, got {value!r}")
+
+
 def load_config(path: Path) -> Config:
     """Load config from a TOML file; a missing file yields defaults."""
     try:
@@ -73,4 +85,5 @@ def load_config(path: Path) -> Config:
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError(f"config key {key} must be an integer, got {value!r}")
             values[key] = value
+        _check_range(key, values[key])
     return Config(**values)
