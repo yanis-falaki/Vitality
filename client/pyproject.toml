@@ -28,3 +28,7 @@ packages = ["vitality_client"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+filterwarnings = [
+    # System PyGObject (not ours to fix): raised by the real GLib import in the frame source.
+    "ignore:GLib.unix_signal_add_full is deprecated:gi.PyGIDeprecationWarning",
+]
