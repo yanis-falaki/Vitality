@@ -1,7 +1,9 @@
-"""The running daemon: wires activity, capture policy, frames, writer and control socket.
+"""The running daemon: takes before/after screenshots around user activity.
 
-Everything here runs on one asyncio loop. Image encoding and disk writes run in a
-worker thread, one at a time and in request order.
+The contract (`Daemon`, `Status`) comes first; the implementation (`CaptureDaemon`)
+follows. CaptureDaemon wires the packages together: activity → policy → frame →
+writer, plus a timer loop and the control socket. Everything runs on one asyncio loop;
+image encoding and disk writes run in a worker thread, one at a time, in request order.
 """
 
 import asyncio
@@ -12,6 +14,7 @@ import signal
 import time
 from collections.abc import Callable
 from datetime import datetime
+from typing import Literal, Protocol, TypedDict
 
 import ulid
 from PIL import Image
@@ -23,6 +26,68 @@ from vitality_client.frames import FrameSource
 from vitality_client.policy import CapturePolicy, SnapshotPolicy, SnapshotRequest
 from vitality_client.storage import CaptureIndex, CaptureWriter, Store, Writer, format_ts
 
+
+# == Contract =============================================================================
+
+class StatusPaths(TypedDict):
+    config: str  # client.toml
+    data: str    # captures/ and index.sqlite
+    state: str   # state.json
+
+
+class Status(TypedDict):
+    """The reply to a `status` request (and to `pause` / `resume`)."""
+
+    ok: bool
+    state: Literal["idle", "active", "paused"]
+    paused_until: str | None   # UTC ISO timestamp when a timed pause ends
+    captures_today: int        # since local midnight
+    last_capture: str | None   # UTC ISO timestamp
+    disk_bytes: int            # total size of saved captures
+    disk_warning: bool         # above disk_warning_gb
+    activity: Literal["available", "unavailable"]  # can input be read?
+    capture: Literal["available", "unavailable"]   # is the screen stream up?
+    paths: StatusPaths
+
+
+class Daemon(Protocol):
+    """Takes before/after screenshots around user activity until stopped.
+
+    It owns a capture policy, a frame source, a writer and the control socket. Three
+    things call into it: the activity source (`handle_activity`), the control socket
+    (`handle`) and the frame source (`save_restore_token`).
+    """
+
+    async def run(self) -> None:
+        """Start everything, run until SIGTERM/SIGINT, then shut down cleanly."""
+        ...
+
+    async def close(self) -> None:
+        """Stop taking snapshots, finish pending writes, release everything."""
+        ...
+
+    def handle_activity(self, now: float) -> None:
+        """The activity source's callback: the user touched an input device at `now`."""
+        ...
+
+    async def handle(self, request: dict) -> dict:
+        """The control socket's handler: `{"cmd": "status" | "pause" | "resume", ...}`.
+
+        Replies with the `Status`, or `{"ok": False, "error": ...}`.
+        """
+        ...
+
+    def save_restore_token(self, token: str) -> None:
+        """The frame source's callback: persist a new screen-sharing permission token."""
+        ...
+
+    def status(self) -> Status:
+        """What the daemon is doing right now."""
+        ...
+
+
+# == Implementation =======================================================================
+
 log = logging.getLogger(__name__)
 
 DRAIN_TIMEOUT = 10.0
@@ -32,7 +97,7 @@ def _new_id() -> str:
     return str(ulid.ULID())
 
 
-class Daemon:
+class CaptureDaemon(Daemon):
     def __init__(
         self,
         config: Config,
@@ -198,7 +263,7 @@ class Daemon:
     async def handle(self, request: dict) -> dict:
         cmd = request.get("cmd")
         if cmd == "status":
-            return self.status()
+            return dict(self.status())
         if cmd == "pause":
             seconds = request.get("seconds")
             if seconds is not None and (
@@ -212,12 +277,12 @@ class Daemon:
                 self._snapshot(req)
             self._save_state()
             self._wake.set()
-            return self.status()
+            return dict(self.status())
         if cmd == "resume":
             self._policy.resume()
             self._save_state()
             self._wake.set()
-            return self.status()
+            return dict(self.status())
         return {"ok": False, "error": f"unknown command: {cmd}"}
 
     def save_restore_token(self, token: str) -> None:
@@ -248,7 +313,7 @@ class Daemon:
             self._disk_warned = False
             log.info("capture storage back under disk_warning_gb (%.2f GB)", total / 1e9)
 
-    def status(self) -> dict:
+    def status(self) -> Status:
         now = self._clock()
         midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
         until = self._policy.paused_until

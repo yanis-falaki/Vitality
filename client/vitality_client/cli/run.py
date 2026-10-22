@@ -17,7 +17,7 @@ def run(env: Mapping[str, str]) -> int:
                         format="%(levelname)s %(name)s: %(message)s")
     # Imported here: these pull in GStreamer and evdev, which status/pause/doctor don't need.
     from vitality_client.activity import ActivityWatcher
-    from vitality_client.daemon import Daemon
+    from vitality_client.daemon import CaptureDaemon, Daemon
     from vitality_client.frames.portal import PortalFrameSource
 
     paths = paths_from(env)
@@ -28,7 +28,7 @@ def run(env: Mapping[str, str]) -> int:
         # The daemon owns the state file; the frame source reports new tokens through it.
         holder: list[Daemon] = []
         frames = PortalFrameSource(token, lambda t: holder[0].save_restore_token(t))
-        daemon = Daemon(config, paths, frames, ActivityWatcher)
+        daemon = CaptureDaemon(config, paths, frames, ActivityWatcher)
         holder.append(daemon)
         await daemon.run()
 

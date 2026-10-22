@@ -11,7 +11,7 @@ from PIL import Image
 
 from vitality_client.config import Config, Paths
 from vitality_client.control import StateFile, send_command
-from vitality_client.daemon import Daemon
+from vitality_client.daemon import CaptureDaemon
 from vitality_client.policy import SnapshotRequest
 from vitality_client.storage import Store
 from vitality_client.storage import Writer
@@ -71,7 +71,7 @@ async def daemon_env(tmp_path):
         paths = Paths(tmp_path / "config/client.toml", data,
                       tmp_path / "state/state.json", tmp_path / "run/vitality/client.sock")
         clock = clock or FakeClock()
-        d = Daemon(config or Config(), paths, FakeFrames(frame), NoopWatcher, clock=clock)
+        d = CaptureDaemon(config or Config(), paths, FakeFrames(frame), NoopWatcher, clock=clock)
         made.append(d)
         return d, clock, data
 
