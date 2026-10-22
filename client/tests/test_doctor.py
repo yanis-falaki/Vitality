@@ -40,9 +40,9 @@ def test_doctor_environment_failures(tmp_path):
 
 def test_gst_check_names_every_missing_element(tmp_path):
     checks = {c.name: c for c in run_checks_with(
-        ["input"], tmp_path, missing=["videorate", "videoconvert"])}
+        ["input"], tmp_path, missing=["videoconvert", "appsink"])}
     c = checks["gstreamer elements"]
-    assert not c.ok and "videorate, videoconvert" in c.hint
+    assert not c.ok and "videoconvert, appsink" in c.hint
     assert "sudo pacman -S gst-plugins-base gst-plugin-pipewire" in c.hint
     assert "pipewiresrc" not in c.hint and checks["python gobject"].ok
 
@@ -50,8 +50,9 @@ def test_gst_check_names_every_missing_element(tmp_path):
 def test_gst_elements_cover_the_pipeline():
     from vitality_client.frames.portal import pipeline_description
     description = pipeline_description(3, 42, 5)
-    assert set(doctor.GST_ELEMENTS) == {"pipewiresrc", "videorate", "videoconvert", "appsink"}
+    assert set(doctor.GST_ELEMENTS) == {"pipewiresrc", "videoconvert", "appsink"}
     assert all(e in description for e in doctor.GST_ELEMENTS)
+    assert "videorate" not in description
 
 
 def test_missing_gi_is_reported_separately(tmp_path):

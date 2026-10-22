@@ -52,9 +52,12 @@ def request_path(unique_name: str, handle_token: str) -> str:
 
 
 def pipeline_description(fd: int, node_id: int, max_fps: int) -> str:
+    # The frame-rate cap is a caps field so pipewiresrc negotiates it with the
+    # producer. A downstream videorate stalled on the compositor's variable-rate
+    # stream and kept serving the first frame.
     return (
-        f"pipewiresrc fd={fd} path={node_id} always-copy=true keepalive-time=1000 ! "
-        f"videorate max-rate={max_fps} ! videoconvert ! video/x-raw,format=RGB ! "
+        f"pipewiresrc fd={fd} path={node_id} keepalive-time=1000 ! "
+        f"video/x-raw,max-framerate={max_fps}/1 ! videoconvert ! video/x-raw,format=RGB ! "
         "appsink name=sink max-buffers=1 drop=true sync=false emit-signals=true"
     )
 

@@ -49,9 +49,11 @@ def test_rgb_image_padded_rows_skip_padding():
 
 
 def test_pipeline_description():
+    # The rate cap is negotiated with the producer via caps; a videorate element
+    # downstream stalled on Hyprland's variable-rate stream (stuck on the first frame).
     assert pipeline_description(17, 42, 5) == (
-        "pipewiresrc fd=17 path=42 always-copy=true keepalive-time=1000 ! "
-        "videorate max-rate=5 ! videoconvert ! video/x-raw,format=RGB ! "
+        "pipewiresrc fd=17 path=42 keepalive-time=1000 ! "
+        "video/x-raw,max-framerate=5/1 ! videoconvert ! video/x-raw,format=RGB ! "
         "appsink name=sink max-buffers=1 drop=true sync=false emit-signals=true"
     )
 

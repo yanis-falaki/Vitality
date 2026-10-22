@@ -25,7 +25,7 @@ GI_HINT = ("sudo pacman -S python-gobject (and the virtualenv must use system si
            "uv venv --python /usr/bin/python3 --system-site-packages)")
 GST_HINT = "sudo pacman -S gst-plugins-base gst-plugin-pipewire"
 # Every element the capture pipeline (frames/portal.py pipeline_description) uses.
-GST_ELEMENTS = ("pipewiresrc", "videorate", "videoconvert", "appsink")
+GST_ELEMENTS = ("pipewiresrc", "videoconvert", "appsink")
 
 
 @dataclass
