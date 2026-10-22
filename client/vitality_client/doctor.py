@@ -21,7 +21,11 @@ PROBE_TIMEOUT = 5.0
 INPUT_GROUP_HINT = "sudo usermod -aG input $USER, then log out and back in"
 PORTAL_HINT = ("install xdg-desktop-portal and a ScreenCast backend for your compositor "
                "(e.g. xdg-desktop-portal-hyprland), and make sure it is running")
-GST_HINT = "sudo pacman -S gst-plugin-pipewire (or the distro equivalent)"
+GI_HINT = ("sudo pacman -S python-gobject (and the virtualenv must use system site packages: "
+           "uv venv --python /usr/bin/python3 --system-site-packages)")
+GST_HINT = "sudo pacman -S gst-plugins-base gst-plugin-pipewire"
+# Every element the capture pipeline (frames/portal.py pipeline_description) uses.
+GST_ELEMENTS = ("pipewiresrc", "videorate", "videoconvert", "appsink")
 
 
 @dataclass
@@ -73,8 +77,20 @@ def check_pipewire(env: Mapping[str, str]) -> Check:
                  "PipeWire is not running: systemctl --user enable --now pipewire")
 
 
-def check_gst_plugin(probe: Callable[[], bool]) -> Check:
-    return _probe_check("gstreamer pipewire plugin", probe, GST_HINT)
+def check_gi(probe: Callable[[], bool]) -> Check:
+    return _probe_check("python gobject", probe, GI_HINT)
+
+
+def check_gst_elements(probe: Callable[[], Iterable[str]]) -> Check:
+    """`probe` returns the names of the pipeline's GStreamer elements that are missing."""
+    name = "gstreamer elements"
+    try:
+        missing = list(probe())
+    except Exception as exc:
+        return Check(name, False, f"{GST_HINT} ({str(exc) or type(exc).__name__})")
+    if not missing:
+        return Check(name, True, "")
+    return Check(name, False, f"missing {', '.join(missing)}: {GST_HINT}")
 
 
 def _writable(directory: Path) -> bool:
@@ -108,14 +124,20 @@ def portal_has_screencast() -> bool:
     return asyncio.run(asyncio.wait_for(probe(), PROBE_TIMEOUT))
 
 
-def gst_has_pipewire() -> bool:
+def gi_importable() -> bool:
+    import gi  # noqa: F401  (ImportError is reported by the check)
+
+    return True
+
+
+def missing_gst_elements() -> list[str]:
     import gi
 
     gi.require_version("Gst", "1.0")
     from gi.repository import Gst
 
     Gst.init(None)
-    return Gst.ElementFactory.find("pipewiresrc") is not None
+    return [e for e in GST_ELEMENTS if Gst.ElementFactory.find(e) is None]
 
 
 def run_checks(
@@ -123,13 +145,19 @@ def run_checks(
     paths: Paths,
     groups: Iterable[str] | None = None,
     portal_probe: Callable[[], bool] = portal_has_screencast,
-    gst_probe: Callable[[], bool] = gst_has_pipewire,
+    gi_probe: Callable[[], bool] = gi_importable,
+    gst_probe: Callable[[], Iterable[str]] = missing_gst_elements,
 ) -> list[Check]:
+    gi_check = check_gi(gi_probe)
+    # Without gi the element probe can only fail with the same ImportError; say so once.
+    gst_check = (check_gst_elements(gst_probe) if gi_check.ok else
+                 Check("gstreamer elements", False, "needs python gobject (see above)"))
     return [
         check_input_group(current_groups() if groups is None else groups),
         check_wayland(env),
         check_portal(portal_probe),
         check_pipewire(env),
-        check_gst_plugin(gst_probe),
+        gi_check,
+        gst_check,
         check_directories(paths),
     ]

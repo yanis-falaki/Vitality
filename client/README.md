@@ -9,9 +9,12 @@ Nothing leaves the machine. Wayland only.
 1. System packages and permissions:
 
    ```sh
-   sudo pacman -S gst-plugin-pipewire        # or the distro equivalent
+   sudo pacman -S python-gobject gst-plugins-base gst-plugin-pipewire xdg-desktop-portal-hyprland
    sudo usermod -aG input $USER              # then log out and back in
    ```
+
+   (`xdg-desktop-portal-hyprland` is the ScreenCast backend on Hyprland; use your compositor's
+   backend elsewhere, and the distro equivalents of the other packages.)
 
    The `input` group is how the daemon reads `/dev/input` to notice activity. See
    [Security note](#security-note).
@@ -42,14 +45,26 @@ Nothing leaves the machine. Wayland only.
 
    It lists what is missing and how to fix it, then prints the config, data and state paths.
 
-5. Approve screen capture once. This saves one capture and shows the portal's permission
-   dialog the first time; approve it:
+5. Approve screen capture once. This saves one capture and shows the portal's share picker
+   the first time (the service must not be running, or `capture-once` refuses):
 
    ```sh
    vitality-client capture-once
    ```
 
-   The permission is remembered, so the service will not ask again.
+   On Hyprland, in the picker select a **screen/monitor** (not a window or a region) and
+   tick **"Allow a restore token"**. Otherwise the portal returns no token and the dialog
+   appears on every start. Alternative: add this to `~/.config/hypr/xdph.conf` so a token is
+   always issued:
+
+   ```
+   screencopy {
+       allow_token_by_default = true
+   }
+   ```
+
+   Once a token is saved (in the state file), later starts reuse it without a dialog. If the
+   token is lost or rejected, the picker appears again.
 
 6. Run it as a user service, started with your graphical session:
 
@@ -71,12 +86,25 @@ Nothing leaves the machine. Wayland only.
    environment-import line (`systemctl --user enable` is then optional):
 
    ```
-   exec-once = systemctl --user start vitality-client.service
+   exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE && systemctl --user start vitality-client.service
    ```
 
-   If the service reports that it requires a Wayland session, your compositor has not
-   exported its environment to systemd; for example, in Hyprland's config:
-   `exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE`.
+   The service needs the compositor's environment (`WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`) in
+   the systemd user manager; the `&&` makes sure the import finishes before the start. If the
+   service reports that it requires a Wayland session, that import did not happen.
+
+7. Check that it works: `vitality-client status` should show `activity: available` and
+   `capture: available`.
+
+   If it shows `activity: unavailable` right after you added yourself to the `input` group,
+   reboot: the systemd user manager may still have the old groups, so logging out and back
+   in is not always enough.
+
+   To check CPU use, scroll or type for a while and watch the daemon:
+
+   ```sh
+   top -p $(pgrep -f 'vitality-client run')
+   ```
 
 ## Commands
 
@@ -112,6 +140,13 @@ daemon is not running:
     "interval": 5
 }
 ```
+
+## Known limitations
+
+- On Hyprland the portal's picker returns a single monitor, so only that monitor is
+  captured; other monitors do not appear in the screenshots.
+- After undocking (that output disappearing) the saved permission no longer matches, so the
+  picker will appear again.
 
 ## Configuration
 
