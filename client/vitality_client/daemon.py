@@ -16,12 +16,12 @@ from datetime import datetime
 import ulid
 from PIL import Image
 
-from vitality_client.activity import ActivityWatcher
+from vitality_client.activity import ActivitySource
 from vitality_client.config import Config, Paths
-from vitality_client.control import ControlServer, State, StateFile
-from vitality_client.frames.base import FrameSource
-from vitality_client.policy import CapturePolicy, SnapshotRequest
-from vitality_client.storage import Store, Writer, format_ts
+from vitality_client.control import ControlServer, State, StateFile, StateStore
+from vitality_client.frames import FrameSource
+from vitality_client.policy import CapturePolicy, SnapshotPolicy, SnapshotRequest
+from vitality_client.storage import CaptureIndex, CaptureWriter, Store, Writer, format_ts
 
 log = logging.getLogger(__name__)
 
@@ -38,21 +38,23 @@ class Daemon:
         config: Config,
         paths: Paths,
         frames: FrameSource,
-        watcher_factory: Callable[[Callable[[float], None]], ActivityWatcher],
+        watcher_factory: Callable[[Callable[[float], None]], ActivitySource],
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._config = config
         self._paths = paths
         self._frames = frames
         self._clock = clock
-        self._state_file = StateFile(paths.state_file)
+        # The concrete parts are chosen here; everything below uses them only
+        # through their interfaces.
+        self._state_file: StateStore = StateFile(paths.state_file)
         self._state = self._state_file.load()
-        self._policy = CapturePolicy(
+        self._policy: SnapshotPolicy = CapturePolicy(
             config.settle_seconds, config.max_gap_seconds, _new_id,
             paused=self._state.paused, paused_until=self._state.paused_until,
         )
-        self._store = Store(paths.data_dir / "index.sqlite")
-        self._writer = Writer(paths.data_dir, self._store, config.webp_quality, _new_id)
+        self._store: CaptureIndex = Store(paths.data_dir / "index.sqlite")
+        self._writer: CaptureWriter = Writer(paths.data_dir, self._store, config.webp_quality, _new_id)
         self._server = ControlServer(paths.socket_path, self.handle)
         self._watcher = watcher_factory(self.handle_activity)
         self._writes: asyncio.Queue[tuple[Image.Image, SnapshotRequest]] = asyncio.Queue()

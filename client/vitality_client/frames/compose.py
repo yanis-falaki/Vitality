@@ -1,18 +1,6 @@
-"""Frame-source interface and multi-monitor compositing."""
-
-from typing import Protocol
+"""Combining several monitors' frames into one whole-desktop image."""
 
 from PIL import Image
-
-
-class FrameSource(Protocol):
-    available: bool
-
-    async def start(self) -> None: ...
-
-    def latest_frame(self) -> Image.Image | None: ...
-
-    async def close(self) -> None: ...
 
 
 def composite(frames: list[tuple[Image.Image, tuple[int, int]]]) -> Image.Image:

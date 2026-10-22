@@ -1,9 +1,16 @@
 import asyncio
+from collections.abc import Callable
 
 from PIL import Image
 
-from vitality_client.frames.base import composite, layout_frames
-from vitality_client.frames.portal.session import PortalError, PortalResponseError, request_path
+from vitality_client.frames import composite, layout_frames
+from vitality_client.frames.portal.session import (
+    PortalError,
+    PortalResponseError,
+    PortalSession,
+    Stream,
+    request_path,
+)
 from vitality_client.frames.portal.source import PortalFrameSource, backoff_delay, should_retry
 from vitality_client.frames.portal.stream import (
     pipeline_description,
@@ -114,17 +121,18 @@ def test_layout_odd_logical_size_maps_to_own_frame():
 
 def failing_sessions(calls, response_for):
     """A session_factory whose sessions record the token they were opened with, then fail."""
-    class FailingSession:
-        fd = None
+    class FailingSession(PortalSession):
+        fd: int | None = None
 
-        async def open(self, token, on_restore_token):
-            calls.append(token)
-            raise PortalResponseError("Start", response_for(token))
+        async def open(self, restore_token: str | None,
+                       on_restore_token: Callable[[str], None]) -> list[Stream]:
+            calls.append(restore_token)
+            raise PortalResponseError("Start", response_for(restore_token))
 
-        def lost(self):
+        def lost(self) -> str | None:
             return None
 
-        async def close(self):
+        async def close(self) -> None:
             pass
 
     return FailingSession
@@ -135,6 +143,7 @@ async def test_cancel_with_restore_token_stops_without_second_dialog():
     src = PortalFrameSource("tok", lambda t: None,
                             session_factory=failing_sessions(calls, lambda token: 1))
     await src.start()
+    assert src._task is not None
     await asyncio.wait_for(src._task, 1)         # supervisor ended: no further attempts
     assert calls == ["tok"] and src.available is False
     await src.close()
@@ -145,6 +154,7 @@ async def test_rejected_restore_token_retries_once_without_it():
     src = PortalFrameSource("tok", lambda t: None,
                             session_factory=failing_sessions(calls, lambda token: 2 if token else 1))
     await src.start()
+    assert src._task is not None
     await asyncio.wait_for(src._task, 1)
     assert calls == ["tok", None]
     await src.close()
@@ -213,5 +223,6 @@ def test_frames_are_converted_only_when_requested(monkeypatch):
         sink = type("Sink", (), {"emit": lambda self, name, s=sample: s})()
         src._on_sample(sink, 0)
     assert conversions == []
-    assert src.latest_frame().getpixel((0, 0)) == (3, 3, 3)
+    frame = src.latest_frame()
+    assert frame is not None and frame.getpixel((0, 0)) == (3, 3, 3)
     assert len(conversions) == 1

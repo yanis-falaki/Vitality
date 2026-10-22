@@ -9,24 +9,19 @@ import json
 import logging
 import os
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 
+from vitality_client.control.interface import State, StateStore
+
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class State:
-    paused: bool = False
-    paused_until: float | None = None
-    restore_token: str | None = None
 
 
 def _is_number(v: object) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-class StateFile:
+class StateFile(StateStore):
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
 

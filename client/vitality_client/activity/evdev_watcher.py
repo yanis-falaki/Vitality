@@ -14,6 +14,8 @@ from typing import Any
 import evdev
 from evdev import ecodes
 
+from vitality_client.activity.interface import ActivitySource
+
 log = logging.getLogger(__name__)
 
 _ACTIVITY_EVENT_TYPES = frozenset({ecodes.EV_KEY, ecodes.EV_REL, ecodes.EV_ABS})
@@ -36,7 +38,7 @@ def is_activity_device(capabilities: dict[int, list]) -> bool:
     return ecodes.REL_X in _codes(capabilities.get(ecodes.EV_REL, []))
 
 
-class ActivityWatcher:
+class ActivityWatcher(ActivitySource):
     def __init__(
         self,
         on_activity: Callable[[float], None],

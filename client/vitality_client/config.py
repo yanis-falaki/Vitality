@@ -86,4 +86,4 @@ def load_config(path: Path) -> Config:
                 raise ValueError(f"config key {key} must be an integer, got {value!r}")
             values[key] = value
         _check_range(key, values[key])
-    return Config(**values)
+    return Config(**values)  # pyright: ignore[reportArgumentType]  # types validated above

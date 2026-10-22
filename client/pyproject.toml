@@ -12,6 +12,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pygobject-stubs>=2.20.0",
+    "pyright>=1.1.414",
     "pytest",
     "pytest-asyncio",
 ]
@@ -32,3 +34,12 @@ filterwarnings = [
     # System PyGObject (not ours to fix): raised by the real GLib import in the frame source.
     "ignore:GLib.unix_signal_add_full is deprecated:gi.PyGIDeprecationWarning",
 ]
+
+[tool.pyright]
+include = ["vitality_client", "tests"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
+# PyGObject's source lives in the system site-packages (see the README); its types come
+# from pygobject-stubs, so a missing *source* is expected, not an error.
+reportMissingModuleSource = "none"

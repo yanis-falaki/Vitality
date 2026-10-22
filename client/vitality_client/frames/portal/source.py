@@ -18,9 +18,12 @@ from collections.abc import Callable
 
 from PIL import Image
 
+from vitality_client.frames.interface import FrameSource
 from vitality_client.frames.portal.session import (
     RESPONSE_CANCELLED,
+    PortalError,
     PortalResponseError,
+    PortalSession,
     ScreenCastSession,
     Stream,
 )
@@ -42,13 +45,13 @@ def should_retry(exc: Exception) -> bool:
     return not (isinstance(exc, PortalResponseError) and exc.response == RESPONSE_CANCELLED)
 
 
-class PortalFrameSource:
+class PortalFrameSource(FrameSource):
     def __init__(
         self,
         restore_token: str | None,
         on_restore_token: Callable[[str], None],
         max_fps: int = 5,
-        session_factory: Callable[[], ScreenCastSession] = ScreenCastSession,
+        session_factory: Callable[[], PortalSession] = ScreenCastSession,
     ) -> None:
         self._restore_token = restore_token
         self._on_restore_token = on_restore_token
@@ -57,7 +60,7 @@ class PortalFrameSource:
 
         self._task: asyncio.Task | None = None
         self._first_attempt = asyncio.Event()
-        self._session: ScreenCastSession | None = None
+        self._session: PortalSession | None = None
         self._streams = FrameStreams(max_fps)
 
     # -- FrameSource -------------------------------------------------------------------
@@ -141,7 +144,10 @@ class PortalFrameSource:
             self._restore_token = None
             await self._teardown()
             streams = await self._open_session(None)
-        self._streams.start(self._session.fd, streams)
+        fd = self._session.fd if self._session else None
+        if fd is None:
+            raise PortalError("portal session has no PipeWire connection")
+        self._streams.start(fd, streams)
 
     async def _open_session(self, token: str | None) -> list[Stream]:
         self._session = self._session_factory()

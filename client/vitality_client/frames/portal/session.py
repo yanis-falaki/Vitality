@@ -16,6 +16,7 @@ import os
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from dbus_fast import BusType, Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
@@ -50,6 +51,21 @@ class PortalResponseError(PortalError):
         self.response = response
 
 
+class PortalSession(Protocol):
+    """What PortalFrameSource needs from a portal session (lets tests use a fake)."""
+
+    fd: int | None
+    """The PipeWire connection, once `open` has returned."""
+
+    async def open(
+        self, restore_token: str | None, on_restore_token: Callable[[str], None],
+    ) -> list["Stream"]: ...
+
+    def lost(self) -> str | None: ...
+
+    async def close(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class Stream:
     """One monitor's PipeWire stream; position and size are in logical pixels."""
@@ -65,7 +81,7 @@ def request_path(unique_name: str, handle_token: str) -> str:
     return f"{PORTAL_PATH}/request/{sender}/{handle_token}"
 
 
-class ScreenCastSession:
+class ScreenCastSession(PortalSession):
     def __init__(self) -> None:
         self.fd: int | None = None
         self._bus: MessageBus | None = None
@@ -142,10 +158,10 @@ class ScreenCastSession:
 
     async def _request(self, method: str, signature: str, body: list) -> dict[str, Variant]:
         """Call a ScreenCast method and wait for its Request.Response; return the results."""
-        bus = self._bus
+        bus = self._connected_bus()
         handle_token = _new_token()
         body[-1]["handle_token"] = Variant("s", handle_token)
-        path = request_path(bus.unique_name, handle_token)
+        path = request_path(bus.unique_name or "", handle_token)
         rule = f"type='signal',interface='{REQUEST_IFACE}',member='Response',path='{path}'"
         response: asyncio.Future = asyncio.get_running_loop().create_future()
 
@@ -178,20 +194,26 @@ class ScreenCastSession:
             raise PortalResponseError(method, code)
         return results
 
+    def _connected_bus(self) -> MessageBus:
+        if self._bus is None:
+            raise PortalError("not connected to the session bus")
+        return self._bus
+
     async def _watch_closed(self, session: str) -> None:
         def on_message(msg: Message) -> None:
             if (msg.message_type == MessageType.SIGNAL and msg.path == session
                     and msg.interface == SESSION_IFACE and msg.member == "Closed"):
                 self._closed_by_portal = True
 
-        self._bus.add_message_handler(on_message)
+        bus = self._connected_bus()
+        bus.add_message_handler(on_message)
         await _bus_match(
-            self._bus, "AddMatch",
+            bus, "AddMatch",
             f"type='signal',interface='{SESSION_IFACE}',member='Closed',path='{session}'",
         )
 
 
-def _stream(node_id, props: dict) -> Stream:
+def _stream(node_id: int, props: dict) -> Stream:
     pos = props["position"].value if "position" in props else (0, 0)
     size = props["size"].value if "size" in props else None
     return Stream(

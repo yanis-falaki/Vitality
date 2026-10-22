@@ -121,7 +121,8 @@ def test_backwards_clock_rebases_deadlines():
     P = fresh()
     p = P(); p.on_activity(100.0)
     assert p.on_tick(50.0) == []
-    assert p.next_deadline() >= 50.0
+    deadline = p.next_deadline()
+    assert deadline is not None and deadline >= 50.0
     out = []
     for t in range(51, 63): out += p.on_activity(float(t))
     assert [(r.kind, r.ts) for r in out] == [("after", 60.0)]

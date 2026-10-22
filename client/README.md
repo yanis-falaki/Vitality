@@ -147,6 +147,17 @@ daemon is not running:
 
 Clicking toggles pause; the signal refreshes the module immediately.
 
+## Development
+
+```bash
+uv run pytest     # tests
+uv run pyright    # type check: implementations must match their interfaces
+```
+
+Each package's `interface.py` holds its contract (`Protocol`s plus the data types they use);
+the implementations inherit from it and pyright checks they match. Start reading at a
+package's `__init__.py`.
+
 ## Known limitations
 
 - On Hyprland the portal's picker returns a single monitor, so only that monitor is

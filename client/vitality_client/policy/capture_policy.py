@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Literal
 
-
-@dataclass(frozen=True)
-class SnapshotRequest:
-    kind: Literal["before", "after"]
-    interaction_id: str
-    ts: float
+from vitality_client.policy.interface import SnapshotPolicy, SnapshotRequest
 
 
-class CapturePolicy:
+class CapturePolicy(SnapshotPolicy):
     def __init__(
         self,
         settle_seconds: float,

@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 from vitality_client.policy import SnapshotRequest
-from vitality_client.storage.index import CaptureRow, Store
+from vitality_client.storage.interface import CaptureIndex, CaptureRow, CaptureWriter
 
 MAX_SIDE = 16383  # WebP's per-side limit
 
@@ -20,8 +20,8 @@ def format_ts(epoch: float) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{dt.microsecond // 1000:03d}Z"
 
 
-class Writer:
-    def __init__(self, data_dir: Path, store: Store, quality: int,
+class Writer(CaptureWriter):
+    def __init__(self, data_dir: Path, store: CaptureIndex, quality: int,
                  new_id: Callable[[], str]) -> None:
         self._data_dir = Path(data_dir)
         self._captures = self._data_dir / "captures"

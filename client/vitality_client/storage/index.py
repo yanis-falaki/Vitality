@@ -2,8 +2,9 @@
 
 import sqlite3
 import threading
-from dataclasses import dataclass
 from pathlib import Path
+
+from vitality_client.storage.interface import CaptureIndex, CaptureRow
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS captures (
@@ -23,20 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_captures_uploaded_at ON captures(uploaded_at);
 """
 
 
-@dataclass(frozen=True)
-class CaptureRow:
-    capture_id: str
-    interaction_id: str
-    kind: str
-    source: str
-    ts: str
-    path: str
-    width: int
-    height: int
-    bytes: int
-
-
-class Store:
+class Store(CaptureIndex):
     """Thread-safe: the writer thread inserts while the event loop reads."""
 
     def __init__(self, db_path: Path) -> None:

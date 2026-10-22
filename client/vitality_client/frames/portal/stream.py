@@ -20,7 +20,7 @@ gi.require_version("GstVideo", "1.0")
 from gi.repository import Gst, GstVideo  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from vitality_client.frames.base import composite, layout_frames  # noqa: E402
+from vitality_client.frames.compose import composite, layout_frames  # noqa: E402
 from vitality_client.frames.portal.session import Stream  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -64,6 +64,8 @@ def rgb_image_from_bytes(data: bytes | memoryview, width: int, height: int, stri
 def sample_to_image(sample) -> Image.Image:
     caps = sample.get_caps()
     info = GstVideo.VideoInfo.new_from_caps(caps)
+    if info is None:
+        raise StreamError("frame has unreadable video caps")
     raw_mode = raw_mode_for(caps.get_structure(0).get_value("format"))
     buffer = sample.get_buffer()
     meta = GstVideo.buffer_get_video_meta(buffer)
@@ -98,8 +100,11 @@ class FrameStreams:
             self._samples = {}
         for index, stream in enumerate(streams):
             pipeline = Gst.parse_launch(pipeline_description(fd, stream.node_id, self._max_fps))
+            sink = pipeline.get_by_name("sink") if isinstance(pipeline, Gst.Pipeline) else None
+            if not isinstance(pipeline, Gst.Pipeline) or sink is None:
+                raise StreamError(f"could not build the pipeline for stream {index}")
             self._pipelines.append(pipeline)
-            pipeline.get_by_name("sink").connect("new-sample", self._on_sample, index)
+            sink.connect("new-sample", self._on_sample, index)
             if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
                 raise StreamError(f"could not start the pipeline for stream {index}")
 
