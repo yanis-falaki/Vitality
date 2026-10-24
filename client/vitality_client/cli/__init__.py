@@ -5,7 +5,8 @@
     reset          delete the captures, with the daemon stopped          reset.py
 
 `main(argv) -> exit code` is the entry point; `main.py` parses arguments and
-dispatches. Shared paths, messages and formatting live in `common.py`.
+dispatches. Shared paths, messages and formatting live in `common.py`; `duration.py` parses
+`pause 30m`-style durations into seconds before they are sent to the daemon.
 """
 
 from vitality_client.cli.main import main

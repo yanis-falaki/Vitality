@@ -172,7 +172,7 @@ client/
   pyproject.toml
   vitality_client/
     config.py          # shared: paths and client.toml settings
-    control/           # shared: socket channel, saved state, durations -> send_command, ControlServer, StateFile
+    control/           # shared: socket channel, saved state          -> send_command, ControlServer, StateFile
     daemon/            # vitality-clientd and the parts only it uses
       daemon.py        #   contract (Daemon, Status) at the top, CaptureDaemon below
       main.py          #   the vitality-clientd entry point
@@ -184,7 +184,8 @@ client/
           stream.py    #       GStreamer pipelines, newest-frame buffer
           source.py    #       combines the two; retry/backoff
       storage/         #   WebP files + SQLite index           -> Writer, Store
-    cli/               # vitality-client: one module per command group; checks.py holds doctor's checks
+    cli/               # vitality-client: one module per command group; checks.py holds doctor's
+                       #   checks, duration.py parses pause durations
   tests/
   systemd/vitality-client.service
 ```

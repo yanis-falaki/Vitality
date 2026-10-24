@@ -12,15 +12,13 @@ The CLI ↔ daemon channel (channel.py):
 - `ControlServer(socket_path, handler)` — what the daemon runs; `handler` is an
   async function from request dict to response dict.
 
-`parse_duration("30m") -> 1800.0` (duration.py).
 """
 
 from vitality_client.control.channel import ControlServer, DaemonNotRunning, send_command
-from vitality_client.control.duration import parse_duration
 from vitality_client.control.interface import State, StateStore
 from vitality_client.control.state import StateFile
 
 __all__ = [
     "ControlServer", "DaemonNotRunning", "State", "StateFile", "StateStore",
-    "parse_duration", "send_command",
+    "send_command",
 ]
