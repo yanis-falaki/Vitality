@@ -56,7 +56,7 @@ def test_format_status_paused_until_and_unavailable():
 
 def test_status_json_is_one_line_without_ok(tmp_path, monkeypatch, capsys):
     import asyncio
-    from vitality_client.control import ControlServer
+    from vitality_client.shared.channel import ControlServer
 
     sock = tmp_path / "vitality/client.sock"
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
@@ -86,7 +86,7 @@ def test_missing_runtime_dir_is_an_error_not_a_traceback(monkeypatch, capsys):
 def test_capture_state_line_daemon_not_running():
     from datetime import datetime
     from vitality_client.cli.doctor import capture_state_line
-    from vitality_client.control import State
+    from vitality_client.shared.state import State
 
     until = datetime(2026, 10, 21, 15, 30).timestamp()
     assert capture_state_line(None, State()) == "daemon: not running; saved state: not paused"
@@ -97,7 +97,7 @@ def test_capture_state_line_daemon_not_running():
 
 def test_capture_state_line_daemon_running():
     from vitality_client.cli.doctor import capture_state_line
-    from vitality_client.control import State
+    from vitality_client.shared.state import State
 
     assert capture_state_line({"state": "idle", "paused_until": None}, State(paused=True)) == (
         "daemon: running, capturing")
@@ -109,7 +109,7 @@ def test_capture_state_line_daemon_running():
 
 def test_doctor_prints_saved_pause_state(tmp_path, monkeypatch, capsys):
     from vitality_client.cli import checks as doctor
-    from vitality_client.control import State, StateFile
+    from vitality_client.shared.state import State, StateFile
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
@@ -121,7 +121,7 @@ def test_doctor_prints_saved_pause_state(tmp_path, monkeypatch, capsys):
 
 def _toggle_against(tmp_path, monkeypatch, state):
     import asyncio
-    from vitality_client.control import ControlServer
+    from vitality_client.shared.channel import ControlServer
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     requests = []
@@ -164,7 +164,7 @@ def test_toggle_when_daemon_not_running(tmp_path, monkeypatch, capsys):
 
 def _capture_against(tmp_path, monkeypatch, reply):
     import asyncio
-    from vitality_client.control import ControlServer
+    from vitality_client.shared.channel import ControlServer
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     requests = []

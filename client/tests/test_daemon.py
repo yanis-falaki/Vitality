@@ -9,8 +9,9 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
-from vitality_client.config import Config, Paths
-from vitality_client.control import StateFile, send_command
+from vitality_client.shared.config import Config, Paths
+from vitality_client.shared.channel import send_command
+from vitality_client.shared.state import StateFile
 from vitality_client.daemon.daemon import CaptureDaemon
 from vitality_client.daemon.policy import SnapshotRequest
 from vitality_client.daemon.storage import Store

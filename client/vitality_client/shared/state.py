@@ -1,18 +1,47 @@
 """The daemon's memory across restarts: pause state and the portal restore token.
 
+The contract (`State`, `StateStore`) comes first; the implementation (`StateFile`) follows.
+The daemon owns the file; the CLI only reads it (`doctor`, while the daemon is stopped).
+
 Saved atomically (temp file, fsync, rename). A missing file is a fresh start; an
 existing but unreadable or corrupt one loads as paused, so a reboot never silently
 resumes capture. Never logs file contents (they include the restore token).
 """
 
+
 import json
 import logging
 import os
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Protocol
 
-from vitality_client.control.interface import State, StateStore
+
+# == Contract =============================================================================
+
+@dataclass
+class State:
+    """What survives a restart."""
+
+    paused: bool = False
+    paused_until: float | None = None  # epoch seconds; a timed pause
+    restore_token: str | None = None   # the screen-sharing permission (single-use)
+
+
+class StateStore(Protocol):
+    """Loads and saves `State`."""
+
+    def load(self) -> State:
+        """The saved state; a fresh `State()` if none, paused if the saved copy is unreadable."""
+        ...
+
+    def save(self, state: State) -> None:
+        """Save atomically."""
+        ...
+
+
+# == Implementation =======================================================================
 
 log = logging.getLogger(__name__)
 

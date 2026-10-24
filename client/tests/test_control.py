@@ -7,9 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from vitality_client.control import (
-    ControlServer, DaemonNotRunning, State, StateFile, send_command,
-)
+from vitality_client.shared.channel import ControlServer, DaemonNotRunning, send_command
+from vitality_client.shared.state import State, StateFile
 
 
 def test_state_file_roundtrip_and_defaults(tmp_path):
@@ -112,7 +111,7 @@ async def test_permissions_and_close_removes_socket(tmp_path):
 
 
 async def test_response_timeout_is_daemon_not_running(tmp_path, monkeypatch):
-    import vitality_client.control.channel as control
+    import vitality_client.shared.channel as control
     monkeypatch.setattr(control, "RESPONSE_TIMEOUT", 0.05)
     async def slow(req): await asyncio.sleep(1); return {"ok": True}
     srv = ControlServer(tmp_path / "c.sock", slow); await srv.start()
@@ -138,7 +137,7 @@ async def test_close_does_not_hang_on_silent_client(tmp_path):
 
 
 async def test_silent_client_is_dropped_after_request_timeout(tmp_path, monkeypatch):
-    import vitality_client.control.channel as control
+    import vitality_client.shared.channel as control
     monkeypatch.setattr(control, "REQUEST_TIMEOUT", 0.05)
     handler = AsyncMock(return_value={"ok": True})
     srv = ControlServer(tmp_path / "c.sock", handler); await srv.start()

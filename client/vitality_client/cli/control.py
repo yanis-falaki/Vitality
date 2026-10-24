@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 from vitality_client.cli.common import NOT_RUNNING, format_bytes, local_time, path_lines, paths_from
 from vitality_client.cli.duration import parse_duration
-from vitality_client.control import DaemonNotRunning, send_command
+from vitality_client.shared.channel import DaemonNotRunning, send_command
 
 
 def format_status(status: dict) -> str:

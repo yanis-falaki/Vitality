@@ -5,7 +5,8 @@ from collections.abc import Mapping
 from datetime import datetime
 
 from vitality_client.cli.common import local_time, path_lines, paths_from
-from vitality_client.control import DaemonNotRunning, State, StateFile, send_command
+from vitality_client.shared.channel import DaemonNotRunning, send_command
+from vitality_client.shared.state import State, StateFile
 
 
 def _pause_text(paused: bool, until: str | None) -> str:

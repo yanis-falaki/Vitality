@@ -5,8 +5,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
-from vitality_client.config import Paths, resolve_paths
-from vitality_client.control import DaemonNotRunning, send_command
+from vitality_client.shared.config import Paths, resolve_paths
+from vitality_client.shared.channel import DaemonNotRunning, send_command
 
 NOT_RUNNING = "vitality-client daemon is not running"
 DAEMON_RUNNING = ("vitality-client daemon is running; stop it first "

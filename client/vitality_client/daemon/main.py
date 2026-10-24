@@ -12,8 +12,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from vitality_client.config import load_config, resolve_paths
-from vitality_client.control import StateFile
+from vitality_client.shared.config import load_config, resolve_paths
+from vitality_client.shared.state import StateFile
 
 
 def main(argv: Sequence[str] | None = None) -> int:

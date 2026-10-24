@@ -156,8 +156,9 @@ uv run pyright    # type check: implementations must match their interfaces
 ```
 
 Layout: `daemon/` is `vitality-clientd` and the parts only it uses (policy, activity,
-frames, storage); `cli/` is `vitality-client`; `control/` (the socket protocol and saved
-state) and `config.py` are shared by both. Neither `daemon/` nor `cli/` imports the other.
+frames, storage); `cli/` is `vitality-client`; `shared/` holds what both use: `config.py`
+(paths and settings), `state.py` (saved pause state) and `channel.py` (the socket
+protocol). Neither `daemon/` nor `cli/` imports the other.
 
 Each package's `interface.py` holds its contract (`Protocol`s plus the data types they use);
 the implementations inherit from it and pyright checks they match. Start reading at a

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from vitality_client.config import Config, load_config, resolve_paths
+from vitality_client.shared.config import Config, load_config, resolve_paths
 
 
 def test_resolve_paths_defaults(tmp_path):

@@ -171,8 +171,10 @@ In `client/` of the Vitality repo. Python ≥ 3.12, managed with `uv`.
 client/
   pyproject.toml
   vitality_client/
-    config.py          # shared: paths and client.toml settings
-    control/           # shared: socket channel, saved state          -> send_command, ControlServer, StateFile
+    shared/            # used by both programs
+      config.py        #   paths and client.toml settings
+      state.py         #   saved pause state + restore token (contract at top) -> StateFile
+      channel.py       #   CLI <-> daemon socket protocol      -> send_command, ControlServer
     daemon/            # vitality-clientd and the parts only it uses
       daemon.py        #   contract (Daemon, Status) at the top, CaptureDaemon below
       main.py          #   the vitality-clientd entry point
@@ -192,7 +194,7 @@ client/
 
 Dependencies only point down the tree: a package's children are what it alone uses, and
 anything two parts share sits at their common level. `daemon/` and `cli/` never import
-each other; both use `control/` and `config.py`. Each package's `interface.py` holds its
+each other; both use `shared/`. Each package's `interface.py` holds its
 contract and its `__init__.py` says what it is.
 
 **Dependencies:** `evdev`, a D-Bus client library for the portal (`dbus-next`), PyGObject with GStreamer and its PipeWire plugin (system packages), `Pillow`, `python-ulid`.

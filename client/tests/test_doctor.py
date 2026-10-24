@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from vitality_client.cli import checks as doctor
-from vitality_client.config import Paths
+from vitality_client.shared.config import Paths
 from vitality_client.cli.checks import Check, run_checks
 
 

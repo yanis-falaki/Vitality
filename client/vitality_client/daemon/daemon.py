@@ -20,8 +20,9 @@ import ulid
 from PIL import Image
 
 from vitality_client.daemon.activity import ActivitySource
-from vitality_client.config import Config, Paths
-from vitality_client.control import ControlServer, State, StateFile, StateStore
+from vitality_client.shared.config import Config, Paths
+from vitality_client.shared.channel import ControlServer
+from vitality_client.shared.state import State, StateFile, StateStore
 from vitality_client.daemon.frames import FrameSource
 from vitality_client.daemon.policy import CapturePolicy, SnapshotPolicy, SnapshotRequest
 from vitality_client.daemon.storage import CaptureIndex, CaptureRow, CaptureWriter, Store, Writer, format_ts

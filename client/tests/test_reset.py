@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from vitality_client.cli import main
-from vitality_client.control import ControlServer
+from vitality_client.shared.channel import ControlServer
 
 
 @pytest.fixture
