@@ -6,7 +6,9 @@ Contract for saved state: `StateStore` and `State` (interface.py); implementatio
 The CLI ↔ daemon channel (channel.py):
 - `send_command(socket_path, request) -> dict` — what the CLI uses; raises
   `DaemonNotRunning` if nothing answers. Requests: `{"cmd": "status"}`,
-  `{"cmd": "pause", "seconds": float | None}`, `{"cmd": "resume"}`.
+  `{"cmd": "pause", "seconds": float | None}`, `{"cmd": "resume"}` (each replies with the
+  daemon's status) and `{"cmd": "capture"}` (replies `{"ok": True, "path": ...}`).
+  The daemon's side of these is `Daemon.handle` in daemon/daemon.py.
 - `ControlServer(socket_path, handler)` — what the daemon runs; `handler` is an
   async function from request dict to response dict.
 
