@@ -25,7 +25,6 @@ def capture_once(env: Mapping[str, str]) -> int:
         print(DAEMON_RUNNING, file=sys.stderr)
         return 1
     from vitality_client.frames.portal import PortalFrameSource
-    from vitality_client.policy import SnapshotRequest
     from vitality_client.storage import Store, Writer
 
     config = load_config(paths.config_file)
@@ -49,7 +48,7 @@ def capture_once(env: Mapping[str, str]) -> int:
         store = Store(paths.data_dir / "index.sqlite")
         try:
             writer = Writer(paths.data_dir, store, config.webp_quality, lambda: str(ulid.ULID()))
-            row = writer.write(frame, SnapshotRequest("after", str(ulid.ULID()), time.time()))
+            row = writer.write(frame, "after", str(ulid.ULID()), time.time())
         finally:
             store.close()
         return (paths.data_dir / row.path).resolve()

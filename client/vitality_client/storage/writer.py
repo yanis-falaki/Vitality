@@ -5,10 +5,10 @@ import stat
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from PIL import Image
 
-from vitality_client.policy import SnapshotRequest
 from vitality_client.storage.interface import CaptureIndex, CaptureRow, CaptureWriter
 
 MAX_SIDE = 16383  # WebP's per-side limit
@@ -29,11 +29,12 @@ class Writer(CaptureWriter):
         self._quality = quality
         self._new_id = new_id
 
-    def write(self, image: Image.Image, req: SnapshotRequest) -> CaptureRow:
+    def write(self, image: Image.Image, kind: Literal["before", "after"],
+              interaction_id: str, ts: float) -> CaptureRow:
         """Save the image and index it. The file is complete on disk before the
         row exists, so the index never points at a missing or partial file."""
         capture_id = self._new_id()
-        date = datetime.fromtimestamp(req.ts, UTC).strftime("%Y-%m-%d")
+        date = datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d")
         rel = f"captures/{date}/{capture_id}.webp"
         final = self._data_dir / rel
         tmp = final.with_name(final.name + ".tmp")
@@ -44,8 +45,8 @@ class Writer(CaptureWriter):
             final.parent.mkdir(parents=True, exist_ok=True)
             image.save(tmp, "WEBP", quality=self._quality)
             os.replace(tmp, final)
-            row = CaptureRow(capture_id, req.interaction_id, req.kind, "screen",
-                             format_ts(req.ts), rel, image.width, image.height,
+            row = CaptureRow(capture_id, interaction_id, kind, "screen",
+                             format_ts(ts), rel, image.width, image.height,
                              final.stat().st_size)
             self._store.insert(row)
         except BaseException:

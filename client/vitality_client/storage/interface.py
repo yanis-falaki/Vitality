@@ -1,11 +1,9 @@
 """The contract for saving screenshots and looking them up."""
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from PIL import Image
-
-from vitality_client.policy import SnapshotRequest
 
 
 @dataclass(frozen=True)
@@ -46,8 +44,12 @@ class CaptureIndex(Protocol):
 class CaptureWriter(Protocol):
     """Saves screenshots to disk and indexes them."""
 
-    def write(self, image: Image.Image, req: SnapshotRequest) -> CaptureRow:
-        """Save one screenshot crash-safely (file first, then index row); return its row."""
+    def write(self, image: Image.Image, kind: Literal["before", "after"],
+              interaction_id: str, ts: float) -> CaptureRow:
+        """Save one screenshot crash-safely (file first, then index row); return its row.
+
+        `ts` is the capture time in epoch seconds; it also picks the day folder.
+        """
         ...
 
     def cleanup_orphans(self) -> int:

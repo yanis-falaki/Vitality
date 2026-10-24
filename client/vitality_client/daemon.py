@@ -250,7 +250,8 @@ class CaptureDaemon(Daemon):
         while True:
             frame, req = await self._writes.get()
             try:
-                row = await asyncio.to_thread(self._writer.write, frame, req)
+                row = await asyncio.to_thread(
+                    self._writer.write, frame, req.kind, req.interaction_id, req.ts)
             except Exception as exc:
                 log.error("capture write failed: %s", str(exc) or type(exc).__name__)
             else:

@@ -130,12 +130,12 @@ async def test_writes_are_serialized_in_request_order(daemon_env):
     peak = 0
     real_write = Writer.write
 
-    def slow_write(self, image, req):
+    def slow_write(self, image, kind, interaction_id, ts):
         nonlocal active, peak
         active += 1; peak = max(peak, active)
         time.sleep(0.02)
         try:
-            return real_write(self, image, req)
+            return real_write(self, image, kind, interaction_id, ts)
         finally:
             active -= 1
 
@@ -247,7 +247,7 @@ async def test_run_refuses_second_instance_without_touching_files(daemon_env):
 
 def test_disk_usage_skips_files_that_vanish_during_scan(tmp_path):
     w = Writer(tmp_path, Store(tmp_path / "i.sqlite"), 85, lambda: "C")
-    row = w.write(img, SnapshotRequest("after", "I", 0.0))
+    row = w.write(img, "after", "I", 0.0)
     (tmp_path / "captures/1970-01-01/G.webp.tmp").write_bytes(b"x")
     real_stat = Path.stat
 
