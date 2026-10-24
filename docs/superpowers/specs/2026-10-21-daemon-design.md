@@ -40,7 +40,7 @@ One Python (asyncio) process with these units:
 | **Capture policy** | Pure timing logic (§4). No I/O; driven by activity events, pause commands, and an injectable clock. | Emits *snapshot requests*: `(kind, interaction_id, ts)` |
 | **Writer** | On a snapshot request, takes `latest_frame()`, encodes WebP, writes the file, inserts the index row. | Consumes snapshot requests. |
 | **Control socket** | Unix socket serving pause / resume / status; persists pause state. | Used by the CLI. |
-| **CLI** | `vitality-client` subcommands (§7). | Thin client of the control socket (except `run`, `doctor`, `capture-once`). |
+| **CLI** | `vitality-client` subcommands (§7). | Thin client of the control socket (except `doctor` and `reset`). |
 
 **Before shots:** when the first activity event of an interaction arrives, the writer reads the frame buffer immediately. Applications have not yet redrawn in response to that input, so the buffered frame shows the screen as it was before the action.
 
@@ -107,16 +107,20 @@ Indexes on `ts` and `uploaded_at`.
 
 ## 7. Control and running
 
+Two commands from one package: **`vitality-clientd`** is the daemon (what the service runs);
+**`vitality-client`** controls it.
+
 **CLI (`vitality-client`)**
 | Command | Does |
 |---|---|
-| `run` | Starts the daemon (used by the service) |
 | `pause [DURATION]` | Pause, optionally for e.g. `30m`, `2h` |
 | `resume` | Resume |
 | `status` | Human-readable: state, captures today, last capture time, disk use, warnings, and the config/data/state paths |
 | `status --json` | Same as one line of JSON, for a status bar |
 | `doctor` | Checks setup (§8) and explains anything missing |
-| `capture-once` | Saves one capture immediately (kind `after`, its own interaction) and prints the path |
+| `capture` | Asks the daemon for one screenshot now (kind `after`, its own interaction, even while paused) and prints its path |
+| `toggle` | Pause if capturing, resume if paused |
+| `reset [--all] [--yes]` | Delete all captures (and with `--all` the state); refuses while the daemon runs |
 
 Control socket: `$XDG_RUNTIME_DIR/vitality/client.sock`.
 State (pause state, portal restore token): `$XDG_STATE_HOME/vitality/client/state.json`.
@@ -130,7 +134,7 @@ webp_quality = 85
 disk_warning_gb = 20
 ```
 
-**Service:** systemd user unit `vitality-client.service` running `vitality-client run`, `Restart=on-failure`, started with the graphical session. Logs to the journal.
+**Service:** systemd user unit `vitality-client.service` running `vitality-clientd`, `Restart=on-failure`, started with the graphical session. Logs to the journal.
 
 ## 8. Setup
 
@@ -167,24 +171,28 @@ In `client/` of the Vitality repo. Python ≥ 3.12, managed with `uv`.
 client/
   pyproject.toml
   vitality_client/
-    daemon.py          # wires the packages together, asyncio main loop
-    config.py          # paths and client.toml settings
-    policy/            # WHEN to capture (pure logic)          -> CapturePolicy, SnapshotRequest
-    activity/          # input timing via evdev                -> ActivityWatcher
-    frames/            # whole-desktop images                  -> FrameSource (interface)
-      portal/          #   portal implementation               -> PortalFrameSource
-        session.py     #     D-Bus conversation with the portal
-        stream.py      #     GStreamer pipelines, newest-frame buffer
-        source.py      #     combines the two; retry/backoff
-    storage/           # WebP files + SQLite index             -> Writer, Store
-    control/           # socket channel, saved state, durations -> send_command, ControlServer, StateFile
-    cli/               # one module per command group; checks.py holds doctor's setup checks
+    config.py          # shared: paths and client.toml settings
+    control/           # shared: socket channel, saved state, durations -> send_command, ControlServer, StateFile
+    daemon/            # vitality-clientd and the parts only it uses
+      daemon.py        #   contract (Daemon, Status) at the top, CaptureDaemon below
+      main.py          #   the vitality-clientd entry point
+      policy/          #   WHEN to capture (pure logic)        -> CapturePolicy, SnapshotRequest
+      activity/        #   input timing via evdev              -> ActivityWatcher
+      frames/          #   whole-desktop images                -> FrameSource (interface)
+        portal/        #     portal implementation             -> PortalFrameSource
+          session.py   #       D-Bus conversation with the portal
+          stream.py    #       GStreamer pipelines, newest-frame buffer
+          source.py    #       combines the two; retry/backoff
+      storage/         #   WebP files + SQLite index           -> Writer, Store
+    cli/               # vitality-client: one module per command group; checks.py holds doctor's checks
   tests/
   systemd/vitality-client.service
 ```
 
-Each package's `__init__.py` states its contract and re-exports only its public names;
-everything else in the package is implementation.
+Dependencies only point down the tree: a package's children are what it alone uses, and
+anything two parts share sits at their common level. `daemon/` and `cli/` never import
+each other; both use `control/` and `config.py`. Each package's `interface.py` holds its
+contract and its `__init__.py` says what it is.
 
 **Dependencies:** `evdev`, a D-Bus client library for the portal (`dbus-next`), PyGObject with GStreamer and its PipeWire plugin (system packages), `Pillow`, `python-ulid`.
 
@@ -194,7 +202,7 @@ everything else in the package is implementation.
 - **Input watcher** (fake devices and events): output contains timestamps only — no key codes or pointer values can leave the module.
 - **Writer and store** (temporary directory, fake images): file layout, row contents, file-before-row ordering, orphan cleanup on startup.
 - **Control** (temporary socket): pause, timed pause, resume, status and status --json round-trips.
-- **Capture backend:** verified manually with `capture-once` and `doctor` on the author's Arch/Hyprland laptop.
+- **Capture backend:** verified manually with `vitality-client capture` and `doctor` on the author's Arch/Hyprland laptop.
 
 ## 13. Done when
 

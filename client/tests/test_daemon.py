@@ -11,10 +11,10 @@ from PIL import Image
 
 from vitality_client.config import Config, Paths
 from vitality_client.control import StateFile, send_command
-from vitality_client.daemon import CaptureDaemon
-from vitality_client.policy import SnapshotRequest
-from vitality_client.storage import Store
-from vitality_client.storage import Writer
+from vitality_client.daemon.daemon import CaptureDaemon
+from vitality_client.daemon.policy import SnapshotRequest
+from vitality_client.daemon.storage import Store
+from vitality_client.daemon.storage import Writer
 
 img = Image.new("RGB", (64, 40), "white")
 

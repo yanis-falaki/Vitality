@@ -4,7 +4,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from vitality_client.storage.interface import CaptureIndex, CaptureRow
+from vitality_client.daemon.storage.interface import CaptureIndex, CaptureRow
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS captures (

@@ -18,8 +18,8 @@ from collections.abc import Callable
 
 from PIL import Image
 
-from vitality_client.frames.interface import FrameSource
-from vitality_client.frames.portal.session import (
+from vitality_client.daemon.frames.interface import FrameSource
+from vitality_client.daemon.frames.portal.session import (
     RESPONSE_CANCELLED,
     PortalError,
     PortalResponseError,
@@ -27,7 +27,7 @@ from vitality_client.frames.portal.session import (
     ScreenCastSession,
     Stream,
 )
-from vitality_client.frames.portal.stream import FrameStreams
+from vitality_client.daemon.frames.portal.stream import FrameStreams
 
 log = logging.getLogger(__name__)
 

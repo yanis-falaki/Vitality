@@ -20,6 +20,7 @@ dev = [
 
 [project.scripts]
 vitality-client = "vitality_client.cli:main"
+vitality-clientd = "vitality_client.daemon.main:main"
 
 [build-system]
 requires = ["hatchling"]

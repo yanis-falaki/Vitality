@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Literal
 
-from vitality_client.policy.interface import SnapshotPolicy, SnapshotRequest
+from vitality_client.daemon.policy.interface import SnapshotPolicy, SnapshotRequest
 
 
 class CapturePolicy(SnapshotPolicy):

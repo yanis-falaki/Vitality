@@ -20,8 +20,8 @@ gi.require_version("GstVideo", "1.0")
 from gi.repository import Gst, GstVideo  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from vitality_client.frames.compose import composite, layout_frames  # noqa: E402
-from vitality_client.frames.portal.session import Stream  # noqa: E402
+from vitality_client.daemon.frames.compose import composite, layout_frames  # noqa: E402
+from vitality_client.daemon.frames.portal.session import Stream  # noqa: E402
 
 log = logging.getLogger(__name__)
 

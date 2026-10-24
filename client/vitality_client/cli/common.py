@@ -1,7 +1,6 @@
 """Helpers shared by the command modules: paths, messages, formatting."""
 
 import asyncio
-import sys
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -16,15 +15,6 @@ DAEMON_RUNNING = ("vitality-client daemon is running; stop it first "
 
 def paths_from(env: Mapping[str, str]) -> Paths:
     return resolve_paths(env, Path.home())
-
-
-def require_wayland(env: Mapping[str, str]) -> bool:
-    session = env.get("XDG_SESSION_TYPE", "")
-    if session != "wayland":
-        print(f"vitality-client requires a Wayland session (XDG_SESSION_TYPE={session})",
-              file=sys.stderr)
-        return False
-    return True
 
 
 def local_time(iso_ts: str, fmt: str = "%H:%M:%S") -> str:

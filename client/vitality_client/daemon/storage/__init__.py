@@ -7,8 +7,8 @@ Layout under the data directory: `captures/YYYY-MM-DD/<capture_id>.webp` and
 `index.sqlite`.
 """
 
-from vitality_client.storage.index import Store
-from vitality_client.storage.interface import CaptureIndex, CaptureRow, CaptureWriter
-from vitality_client.storage.writer import Writer, format_ts
+from vitality_client.daemon.storage.index import Store
+from vitality_client.daemon.storage.interface import CaptureIndex, CaptureRow, CaptureWriter
+from vitality_client.daemon.storage.writer import Writer, format_ts
 
 __all__ = ["CaptureIndex", "CaptureRow", "CaptureWriter", "Store", "Writer", "format_ts"]

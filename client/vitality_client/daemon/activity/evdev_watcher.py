@@ -14,7 +14,7 @@ from typing import Any
 import evdev
 from evdev import ecodes
 
-from vitality_client.activity.interface import ActivitySource
+from vitality_client.daemon.activity.interface import ActivitySource
 
 log = logging.getLogger(__name__)
 

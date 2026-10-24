@@ -27,10 +27,12 @@ Nothing leaves the machine. Wayland only.
    uv sync
    ```
 
-3. Put the command on your `PATH` (the service unit expects `~/.local/bin/vitality-client`):
+3. Put both commands on your `PATH`: `vitality-clientd` is the daemon (the service unit
+   expects `~/.local/bin/vitality-clientd`), `vitality-client` controls it.
 
    ```sh
    mkdir -p ~/.local/bin
+   ln -s "$PWD/.venv/bin/vitality-clientd" ~/.local/bin/vitality-clientd
    ln -s "$PWD/.venv/bin/vitality-client" ~/.local/bin/vitality-client
    ```
 
@@ -45,28 +47,7 @@ Nothing leaves the machine. Wayland only.
 
    It lists what is missing and how to fix it, then prints the config, data and state paths.
 
-5. Approve screen capture once. This saves one capture and shows the portal's share picker
-   the first time (the service must not be running, or `capture-once` refuses):
-
-   ```sh
-   vitality-client capture-once
-   ```
-
-   On Hyprland, in the picker select a **screen/monitor** (not a window or a region) and
-   tick **"Allow a restore token"**. Otherwise the portal returns no token and the dialog
-   appears on every start. Alternative: add this to `~/.config/hypr/xdph.conf` so a token is
-   always issued:
-
-   ```
-   screencopy {
-       allow_token_by_default = true
-   }
-   ```
-
-   Once a token is saved (in the state file), later starts reuse it without a dialog. If the
-   token is lost or rejected, the picker appears again.
-
-6. Run it as a user service, started with your graphical session:
+5. Run the daemon as a user service, started with your graphical session:
 
    ```sh
    systemctl --user link "$PWD/systemd/vitality-client.service"
@@ -93,8 +74,26 @@ Nothing leaves the machine. Wayland only.
    the systemd user manager; the `&&` makes sure the import finishes before the start. If the
    service reports that it requires a Wayland session, that import did not happen.
 
+6. Approve screen capture. On its first start the daemon asks for screen-sharing permission,
+   so the portal's share picker appears.
+
+   On Hyprland, in the picker select a **screen/monitor** (not a window or a region) and
+   tick **"Allow a restore token"**. Otherwise the portal returns no token and the dialog
+   appears on every start. Alternative: add this to `~/.config/hypr/xdph.conf` so a token is
+   always issued:
+
+   ```
+   screencopy {
+       allow_token_by_default = true
+   }
+   ```
+
+   Once a token is saved (in the state file), later starts reuse it without a dialog. If the
+   token is lost or rejected, the picker appears again.
+
 7. Check that it works: `vitality-client status` should show `activity: available` and
-   `capture: available`.
+   `capture: available`, and `vitality-client capture` saves a screenshot and prints its
+   path.
 
    If it shows `activity: unavailable` right after you added yourself to the `input` group,
    reboot: the systemd user manager may still have the old groups, so logging out and back
@@ -103,21 +102,23 @@ Nothing leaves the machine. Wayland only.
    To check CPU use, scroll or type for a while and watch the daemon:
 
    ```sh
-   top -p $(pgrep -f 'vitality-client run')
+   top -p $(pgrep -f vitality-clientd)
    ```
 
 ## Commands
 
+`vitality-clientd` is the daemon itself (what the service runs). Everything else goes
+through `vitality-client`, which talks to the running daemon:
+
 | Command | Does |
 |---|---|
-| `vitality-client run` | Run the daemon (what the service does) |
 | `vitality-client pause [DURATION]` | Pause, optionally for e.g. `30s`, `30m`, `2h` |
 | `vitality-client resume` | Resume |
 | `vitality-client toggle` | Pause if capturing, resume if paused (for a bar button or keybind) |
 | `vitality-client status` | State, captures today, last capture, disk use, warnings, paths |
 | `vitality-client status --json` | The same as one line of JSON |
 | `vitality-client doctor` | Check the setup |
-| `vitality-client capture-once` | Save one capture now and print its path |
+| `vitality-client capture` | Take a screenshot now (even while paused) and print its path |
 | `vitality-client reset [--all] [--yes]` | Delete all captures and the index (asks first; the daemon must be stopped). `--all` also deletes state, so the screen-sharing picker appears again |
 
 Pausing takes one final capture if an interaction is in progress, so pause before sensitive
@@ -154,9 +155,13 @@ uv run pytest     # tests
 uv run pyright    # type check: implementations must match their interfaces
 ```
 
+Layout: `daemon/` is `vitality-clientd` and the parts only it uses (policy, activity,
+frames, storage); `cli/` is `vitality-client`; `control/` (the socket protocol and saved
+state) and `config.py` are shared by both. Neither `daemon/` nor `cli/` imports the other.
+
 Each package's `interface.py` holds its contract (`Protocol`s plus the data types they use);
 the implementations inherit from it and pyright checks they match. Start reading at a
-package's `__init__.py`.
+package's `__init__.py`; `daemon/daemon.py` opens with the daemon's own contract.
 
 ## Known limitations
 

@@ -6,7 +6,7 @@ and calls `on_activity(timestamp)` at most once per 0.1 s. Key codes, characters
 pointer positions never leave this package.
 """
 
-from vitality_client.activity.evdev_watcher import ActivityWatcher, is_activity_device
-from vitality_client.activity.interface import ActivitySource
+from vitality_client.daemon.activity.evdev_watcher import ActivityWatcher, is_activity_device
+from vitality_client.daemon.activity.interface import ActivitySource
 
 __all__ = ["ActivitySource", "ActivityWatcher", "is_activity_device"]

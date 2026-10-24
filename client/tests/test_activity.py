@@ -7,7 +7,7 @@ from evdev.ecodes import (
     KEY_A, KEY_POWER, KEY_SPACE, REL_X, REL_Y, SW_LID,
 )
 
-from vitality_client.activity import ActivityWatcher, is_activity_device
+from vitality_client.daemon.activity import ActivityWatcher, is_activity_device
 
 KEYBOARD_CAPS = {EV_KEY: [KEY_A, KEY_SPACE], EV_SYN: [0]}
 MOUSE_CAPS = {EV_KEY: [BTN_LEFT], EV_REL: [REL_X, REL_Y]}

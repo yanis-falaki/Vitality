@@ -30,12 +30,6 @@ def test_pause_invalid_duration(tmp_path, monkeypatch, capsys):
     assert main(["pause", "3d"]) == 2 and "invalid duration: 3d" in capsys.readouterr().err
 
 
-def test_run_refuses_non_wayland(monkeypatch, capsys):
-    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
-    assert main(["run"]) == 1
-    assert "requires a Wayland session (XDG_SESSION_TYPE=x11)" in capsys.readouterr().err
-
-
 def test_format_status_idle():
     lines = format_status(STATUS).splitlines()
     assert lines[0].startswith("capturing · 412 captures today · last ")

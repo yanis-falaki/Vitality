@@ -1,6 +1,5 @@
-"""The `vitality-client` command line.
+"""The `vitality-client` command line: controls the daemon (`vitality-clientd`).
 
-    run            start the daemon (what the service runs)              run.py
     pause/resume/toggle/status/capture   talk to the running daemon     control.py
     doctor         check the setup; show whether capture is paused       doctor.py (+ checks.py)
     reset          delete the captures, with the daemon stopped          reset.py

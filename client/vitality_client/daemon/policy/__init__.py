@@ -8,7 +8,7 @@ without input → `after`; during continuous activity, an `after` every
 `max_gap_seconds`; pausing mid-interaction takes one final `after`.
 """
 
-from vitality_client.policy.capture_policy import CapturePolicy
-from vitality_client.policy.interface import SnapshotPolicy, SnapshotRequest
+from vitality_client.daemon.policy.capture_policy import CapturePolicy
+from vitality_client.daemon.policy.interface import SnapshotPolicy, SnapshotRequest
 
 __all__ = ["CapturePolicy", "SnapshotPolicy", "SnapshotRequest"]

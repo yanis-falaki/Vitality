@@ -1,4 +1,4 @@
-from vitality_client.policy import CapturePolicy, SnapshotRequest
+from vitality_client.daemon.policy import CapturePolicy, SnapshotRequest
 
 def fresh():
     """Return a P(**kw) factory whose policies draw ids i1, i2, i3 from a fresh counter."""

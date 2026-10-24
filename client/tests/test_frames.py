@@ -3,16 +3,16 @@ from collections.abc import Callable
 
 from PIL import Image
 
-from vitality_client.frames import composite, layout_frames
-from vitality_client.frames.portal.session import (
+from vitality_client.daemon.frames import composite, layout_frames
+from vitality_client.daemon.frames.portal.session import (
     PortalError,
     PortalResponseError,
     PortalSession,
     Stream,
     request_path,
 )
-from vitality_client.frames.portal.source import PortalFrameSource, backoff_delay, should_retry
-from vitality_client.frames.portal.stream import (
+from vitality_client.daemon.frames.portal.source import PortalFrameSource, backoff_delay, should_retry
+from vitality_client.daemon.frames.portal.stream import (
     pipeline_description,
     raw_mode_for,
     rgb_image_from_bytes,
@@ -170,7 +170,7 @@ def test_rgb_image_accepts_a_memoryview_slice():
 
 def test_sample_to_image_from_a_real_gstreamer_buffer():
     from gi.repository import Gst
-    from vitality_client.frames.portal.stream import sample_to_image as _sample_to_image
+    from vitality_client.daemon.frames.portal.stream import sample_to_image as _sample_to_image
 
     Gst.init(None)
     pixels = bytes([1, 2, 3, 4, 5, 6, 0xEE, 0xEE, 7, 8, 9, 10, 11, 12, 0xEE, 0xEE])
@@ -194,7 +194,7 @@ def test_raw_mode_for_every_negotiable_format():
 
 def test_sample_to_image_converts_bgrx_from_a_real_gstreamer_buffer():
     from gi.repository import Gst
-    from vitality_client.frames.portal.stream import sample_to_image as _sample_to_image
+    from vitality_client.daemon.frames.portal.stream import sample_to_image as _sample_to_image
 
     Gst.init(None)
     pixels = bytes([3, 2, 1, 0xFF, 6, 5, 4, 0xFF])  # B, G, R, x per pixel
@@ -208,8 +208,8 @@ def test_sample_to_image_converts_bgrx_from_a_real_gstreamer_buffer():
 def test_frames_are_converted_only_when_requested(monkeypatch):
     # The stream delivers several frames a second; only snapshots need an image.
     from gi.repository import Gst
-    from vitality_client.frames.portal import stream
-    from vitality_client.frames.portal.session import Stream
+    from vitality_client.daemon.frames.portal import stream
+    from vitality_client.daemon.frames.portal.session import Stream
 
     Gst.init(None)
     conversions = []

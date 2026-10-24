@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from vitality_client.storage import CaptureRow, Store
+from vitality_client.daemon.storage import CaptureRow, Store
 
 ROW = CaptureRow("01J...A", "01J...I", "before", "screen", "2026-10-21T14:02:05.312Z",
                  "captures/2026-10-21/01J...A.webp", 2560, 1600, 123456)

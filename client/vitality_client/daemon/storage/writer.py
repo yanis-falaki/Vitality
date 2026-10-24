@@ -9,7 +9,7 @@ from typing import Literal
 
 from PIL import Image
 
-from vitality_client.storage.interface import CaptureIndex, CaptureRow, CaptureWriter
+from vitality_client.daemon.storage.interface import CaptureIndex, CaptureRow, CaptureWriter
 
 MAX_SIDE = 16383  # WebP's per-side limit
 

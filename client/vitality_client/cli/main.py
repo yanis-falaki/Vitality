@@ -5,13 +5,12 @@ import os
 import sys
 from collections.abc import Sequence
 
-from vitality_client.cli import control, doctor, reset, run
+from vitality_client.cli import control, doctor, reset
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="vitality-client")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("run", help="start the daemon (used by the service)")
     pause = sub.add_parser("pause", help="pause capturing")
     pause.add_argument("duration", nargs="?", help="e.g. 30s, 10m, 2h (default: until resumed)")
     sub.add_parser("resume", help="resume capturing")
@@ -32,8 +31,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     env = os.environ
     try:
         match args.command:
-            case "run":
-                return run.run(env)
             case "pause":
                 return control.pause(env, args.duration)
             case "resume":
