@@ -41,14 +41,13 @@ def is_activity_device(capabilities: dict[int, list]) -> bool:
 class ActivityWatcher(ActivitySource):
     def __init__(
         self,
-        on_activity: Callable[[float], None],
         list_devices: Callable[[], list[str]] = evdev.list_devices,
         open_device: Callable[[str], Any] = evdev.InputDevice,
         clock: Callable[[], float] = time.time,
         rescan_seconds: float = 5,
         min_interval: float = 0.1,
     ) -> None:
-        self._on_activity = on_activity
+        self._on_activity: Callable[[float], None] = lambda now: None  # set by run()
         self._list_devices = list_devices
         self._open_device = open_device
         self._clock = clock
@@ -62,7 +61,8 @@ class ActivityWatcher(ActivitySource):
         self._readers: dict[str, asyncio.Task] = {}
         self.available = False
 
-    async def run(self) -> None:
+    async def run(self, on_activity: Callable[[float], None]) -> None:
+        self._on_activity = on_activity
         try:
             while True:
                 self._scan()

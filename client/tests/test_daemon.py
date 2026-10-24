@@ -26,7 +26,7 @@ class FakeFrames:
         self.available = True
         self.closed = False
 
-    async def start(self):
+    async def start(self, on_restore_token):
         pass
 
     def latest_frame(self):
@@ -39,10 +39,7 @@ class FakeFrames:
 class NoopWatcher:
     available = False
 
-    def __init__(self, on_activity):
-        self.on_activity = on_activity
-
-    async def run(self):
+    async def run(self, on_activity):
         await asyncio.Event().wait()
 
 
@@ -72,7 +69,7 @@ async def daemon_env(tmp_path):
         paths = Paths(tmp_path / "config/client.toml", data,
                       tmp_path / "state/state.json", tmp_path / "run/vitality/client.sock")
         clock = clock or FakeClock()
-        d = CaptureDaemon(config or Config(), paths, FakeFrames(frame), NoopWatcher, clock=clock)
+        d = CaptureDaemon(config or Config(), paths, FakeFrames(frame), NoopWatcher(), clock=clock)
         made.append(d)
         return d, clock, data
 
@@ -216,7 +213,8 @@ async def test_run_serves_control_ticks_and_stops_on_sigterm(daemon_env):
         if sock.exists():
             break
         await asyncio.sleep(0.01)
-    assert (await send_command(sock, {"cmd": "status"}))["state"] == "idle"
+    reply = await send_command(sock, {"cmd": "status"})
+    assert reply["ok"] and "state" in reply and reply["state"] == "idle"
     d.handle_activity(time.time())
     for _ in range(200):  # the tick loop wakes for the new deadline and closes the interaction
         if [r["kind"] for r in sqlite_rows(data / "index.sqlite")] == ["before", "after"]:

@@ -1,7 +1,8 @@
 """The running daemon: takes before/after screenshots around user activity.
 
-The contract (`Daemon`, `Status`) comes first; the implementation (`CaptureDaemon`)
-follows. CaptureDaemon wires the packages together: activity → policy → frame →
+The contract (`Daemon`) comes first; the implementation (`CaptureDaemon`) follows.
+The messages it answers (`Request`, `Reply`, `Status`) are defined in shared/channel.py,
+since the CLI uses them too. CaptureDaemon wires the packages together: activity → policy → frame →
 writer, plus a timer loop and the control socket. Everything runs on one asyncio loop;
 image encoding and disk writes run in a worker thread, one at a time, in request order.
 """
@@ -14,14 +15,14 @@ import signal
 import time
 from collections.abc import Callable
 from datetime import datetime
-from typing import Literal, Protocol, TypedDict
+from typing import Protocol
 
 import ulid
 from PIL import Image
 
 from vitality_client.daemon.activity import ActivitySource
 from vitality_client.shared.config import Config, Paths
-from vitality_client.shared.channel import ControlServer, UnixControlServer
+from vitality_client.shared.channel import ControlServer, Reply, Request, Status, UnixControlServer
 from vitality_client.shared.state import State, StateFile, StateStore
 from vitality_client.daemon.frames import FrameSource
 from vitality_client.daemon.policy import CapturePolicy, SnapshotPolicy, SnapshotRequest
@@ -30,33 +31,15 @@ from vitality_client.daemon.storage import CaptureIndex, CaptureRow, CaptureWrit
 
 # == Contract =============================================================================
 
-class StatusPaths(TypedDict):
-    config: str  # client.toml
-    data: str    # captures/ and index.sqlite
-    state: str   # state.json
-
-
-class Status(TypedDict):
-    """The reply to a `status` request (and to `pause` / `resume`)."""
-
-    ok: bool
-    state: Literal["idle", "active", "paused"]
-    paused_until: str | None   # UTC ISO timestamp when a timed pause ends
-    captures_today: int        # since local midnight
-    last_capture: str | None   # UTC ISO timestamp
-    disk_bytes: int            # total size of saved captures
-    disk_warning: bool         # above disk_warning_gb
-    activity: Literal["available", "unavailable"]  # can input be read?
-    capture: Literal["available", "unavailable"]   # is the screen stream up?
-    paths: StatusPaths
-
-
 class Daemon(Protocol):
     """Takes before/after screenshots around user activity until stopped.
 
-    It owns a capture policy, a frame source, a writer and the control socket. Three
-    things call into it: the activity source (`handle_activity`), the control socket
-    (`handle`) and the frame source (`save_restore_token`).
+    It is built from a frame source and an activity source, and creates its own capture
+    policy, writer and control server. When it runs, it hands each part a callback:
+
+        activity.run(self.handle_activity)      input happened
+        server.start(self.handle)               a CLI request arrived
+        frames.start(self.save_restore_token)   a screen-sharing token to keep
     """
 
     async def run(self) -> None:
@@ -68,20 +51,16 @@ class Daemon(Protocol):
         ...
 
     def handle_activity(self, now: float) -> None:
-        """The activity source's callback: the user touched an input device at `now`."""
+        """Input happened at `now`: may take a `before` shot or extend the interaction."""
         ...
 
-    async def handle(self, request: dict) -> dict:
-        """The control socket's handler: `{"cmd": "status" | "pause" | "resume" | "capture"}`.
-
-        `status`, `pause` (optional `"seconds"`) and `resume` reply with the `Status`;
-        `capture` takes one screenshot now, even while paused, and replies
-        `{"ok": True, "path": ...}`. Failures reply `{"ok": False, "error": ...}`.
-        """
+    async def handle(self, request: Request) -> Reply:
+        """Answer one CLI request: `status`, `pause` and `resume` reply with the `Status`;
+        `capture` takes one screenshot now (even while paused) and replies with its path."""
         ...
 
     def save_restore_token(self, token: str) -> None:
-        """The frame source's callback: persist a new screen-sharing permission token."""
+        """Keep a new screen-sharing permission token for the next start."""
         ...
 
     def status(self) -> Status:
@@ -107,7 +86,7 @@ class CaptureDaemon(Daemon):
         config: Config,
         paths: Paths,
         frames: FrameSource,
-        watcher_factory: Callable[[Callable[[float], None]], ActivitySource],
+        activity: ActivitySource,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._config = config
@@ -124,8 +103,8 @@ class CaptureDaemon(Daemon):
         )
         self._store: CaptureIndex = Store(paths.data_dir / "index.sqlite")
         self._writer: CaptureWriter = Writer(paths.data_dir, self._store, config.webp_quality, _new_id)
-        self._server: ControlServer = UnixControlServer(paths.socket_path, self.handle)
-        self._watcher = watcher_factory(self.handle_activity)
+        self._server: ControlServer = UnixControlServer(paths.socket_path)
+        self._watcher = activity
         # Pending saves; the future (if any) receives the saved row, for `capture`.
         self._writes: asyncio.Queue[
             tuple[Image.Image, SnapshotRequest, asyncio.Future[CaptureRow] | None]
@@ -150,7 +129,7 @@ class CaptureDaemon(Daemon):
         try:
             # Start the server first: it refuses to run beside a live daemon, whose
             # in-flight temp files cleanup_orphans() would otherwise delete.
-            await self._server.start()
+            await self._server.start(self.handle)
             removed = self._writer.cleanup_orphans()
             if removed:
                 log.info("removed %d orphaned capture file(s)", removed)
@@ -160,7 +139,7 @@ class CaptureDaemon(Daemon):
             # background so control and activity are live immediately.
             tasks = [
                 asyncio.create_task(self._start_frames()),
-                asyncio.create_task(self._watcher.run()),
+                asyncio.create_task(self._watcher.run(self.handle_activity)),
                 asyncio.create_task(self._tick_loop()),
             ]
             critical = set(tasks[1:])
@@ -201,7 +180,7 @@ class CaptureDaemon(Daemon):
 
     async def _start_frames(self) -> None:
         try:
-            await self._frames.start()
+            await self._frames.start(self.save_restore_token)
         except Exception as exc:
             log.error("screen capture failed to start: %s", str(exc) or type(exc).__name__)
 
@@ -276,10 +255,10 @@ class CaptureDaemon(Daemon):
 
     # -- control -----------------------------------------------------------------------
 
-    async def handle(self, request: dict) -> dict:
-        cmd = request.get("cmd")
+    async def handle(self, request: Request) -> Reply:
+        cmd = request.get("cmd")  # the socket passes on any JSON; unknown commands get an error
         if cmd == "status":
-            return dict(self.status())
+            return self.status()
         if cmd == "pause":
             seconds = request.get("seconds")
             if seconds is not None and (
@@ -293,17 +272,17 @@ class CaptureDaemon(Daemon):
                 self._snapshot(req)
             self._save_state()
             self._wake.set()
-            return dict(self.status())
+            return self.status()
         if cmd == "resume":
             self._policy.resume()
             self._save_state()
             self._wake.set()
-            return dict(self.status())
+            return self.status()
         if cmd == "capture":
             return await self._capture_now()
         return {"ok": False, "error": f"unknown command: {cmd}"}
 
-    async def _capture_now(self) -> dict:
+    async def _capture_now(self) -> Reply:
         """One screenshot on request: saved like any other, its path returned."""
         if self._closing:
             return {"ok": False, "error": "the daemon is shutting down"}

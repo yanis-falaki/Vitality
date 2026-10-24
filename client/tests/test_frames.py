@@ -140,9 +140,9 @@ def failing_sessions(calls, response_for):
 
 async def test_cancel_with_restore_token_stops_without_second_dialog():
     calls = []
-    src = PortalFrameSource("tok", lambda t: None,
+    src = PortalFrameSource("tok",
                             session_factory=failing_sessions(calls, lambda token: 1))
-    await src.start()
+    await src.start(lambda token: None)
     assert src._task is not None
     await asyncio.wait_for(src._task, 1)         # supervisor ended: no further attempts
     assert calls == ["tok"] and src.available is False
@@ -151,9 +151,9 @@ async def test_cancel_with_restore_token_stops_without_second_dialog():
 
 async def test_rejected_restore_token_retries_once_without_it():
     calls = []
-    src = PortalFrameSource("tok", lambda t: None,
+    src = PortalFrameSource("tok",
                             session_factory=failing_sessions(calls, lambda token: 2 if token else 1))
-    await src.start()
+    await src.start(lambda token: None)
     assert src._task is not None
     await asyncio.wait_for(src._task, 1)
     assert calls == ["tok", None]

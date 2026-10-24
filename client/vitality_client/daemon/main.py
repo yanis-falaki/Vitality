@@ -37,17 +37,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         format="%(levelname)s %(name)s: %(message)s")
     # Imported here: they load GStreamer and evdev, which --help doesn't need.
     from vitality_client.daemon.activity import ActivityWatcher
-    from vitality_client.daemon.daemon import CaptureDaemon, Daemon
+    from vitality_client.daemon.daemon import CaptureDaemon
     from vitality_client.daemon.frames.portal import PortalFrameSource
 
     token = StateFile(paths.state_file).load().restore_token
 
     async def run() -> None:
-        # The daemon owns the state file; the frame source reports new tokens through it.
-        holder: list[Daemon] = []
-        frames = PortalFrameSource(token, lambda t: holder[0].save_restore_token(t))
-        daemon = CaptureDaemon(config, paths, frames, ActivityWatcher)
-        holder.append(daemon)
+        daemon = CaptureDaemon(config, paths, PortalFrameSource(token), ActivityWatcher())
         await daemon.run()
 
     try:

@@ -49,12 +49,11 @@ class PortalFrameSource(FrameSource):
     def __init__(
         self,
         restore_token: str | None,
-        on_restore_token: Callable[[str], None],
         max_fps: int = 5,
         session_factory: Callable[[], PortalSession] = ScreenCastSession,
     ) -> None:
         self._restore_token = restore_token
-        self._on_restore_token = on_restore_token
+        self._on_restore_token: Callable[[str], None] = lambda token: None  # set by start()
         self._session_factory = session_factory
         self.available = False
 
@@ -65,13 +64,14 @@ class PortalFrameSource(FrameSource):
 
     # -- FrameSource -------------------------------------------------------------------
 
-    async def start(self) -> None:
+    async def start(self, on_restore_token: Callable[[str], None]) -> None:
         """Run the first session attempt (which may wait on the user's portal dialog).
 
         Returns once that attempt has succeeded or failed; failures and later stream
         errors are retried with backoff in the background until close(), except a
         user-cancelled permission dialog, which stops all further attempts.
         """
+        self._on_restore_token = on_restore_token
         if self._task is None:
             self._first_attempt.clear()
             self._task = asyncio.create_task(self._run())

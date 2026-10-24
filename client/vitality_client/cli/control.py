@@ -7,12 +7,21 @@ from collections.abc import Mapping
 
 from vitality_client.cli.common import NOT_RUNNING, format_bytes, local_time, path_lines, paths_from
 from vitality_client.cli.duration import parse_duration
-from vitality_client.shared.channel import DaemonNotRunning, send_command
+from vitality_client.shared.channel import (
+    DaemonNotRunning,
+    PauseRequest,
+    Reply,
+    Request,
+    ResumeRequest,
+    Status,
+    StatusRequest,
+    send_command,
+)
 
 
-def format_status(status: dict) -> str:
+def format_status(status: Status) -> str:
     if status["state"] == "paused":
-        until = status.get("paused_until")
+        until = status["paused_until"]
         state = "paused" if until is None else f"paused until {local_time(until, '%H:%M')}"
     else:
         state = "capturing"
@@ -31,22 +40,41 @@ def format_status(status: dict) -> str:
     return "\n".join(lines)
 
 
-def command(env: Mapping[str, str], request: dict, as_json: bool = False) -> int:
+def ask(env: Mapping[str, str], request: Request) -> Reply | None:
+    """Send one request to the daemon. If it isn't running, say so and return None."""
     try:
-        response = asyncio.run(send_command(paths_from(env).socket_path, request))
+        return asyncio.run(send_command(paths_from(env).socket_path, request))
     except DaemonNotRunning:
         print(NOT_RUNNING, file=sys.stderr)
+        return None
+
+
+def _status(reply: Reply | None) -> Status | None:
+    """The `Status` in a reply; prints the daemon's error (and returns None) otherwise."""
+    if reply is None:
+        return None
+    if reply["ok"] is False:
+        print(f"vitality-client: {reply['error']}", file=sys.stderr)
+        return None
+    if "state" not in reply:
+        print("vitality-client: unexpected reply from the daemon", file=sys.stderr)
+        return None
+    return reply
+
+
+def command(env: Mapping[str, str], request: StatusRequest | PauseRequest | ResumeRequest,
+            as_json: bool = False) -> int:
+    """Send a status/pause/resume request and print the daemon's status."""
+    status = _status(ask(env, request))
+    if status is None:
         return 1
-    if not response.get("ok"):
-        print(f"vitality-client: {response.get('error', 'request failed')}", file=sys.stderr)
-        return 1
-    response.pop("ok")
-    print(json.dumps(response) if as_json else format_status(response))
+    print(json.dumps({k: v for k, v in status.items() if k != "ok"}) if as_json
+          else format_status(status))
     return 0
 
 
 def pause(env: Mapping[str, str], duration: str | None) -> int:
-    request: dict = {"cmd": "pause"}
+    request: PauseRequest = {"cmd": "pause"}
     if duration is not None:
         try:
             request["seconds"] = parse_duration(duration)
@@ -58,23 +86,24 @@ def pause(env: Mapping[str, str], duration: str | None) -> int:
 
 def toggle(env: Mapping[str, str]) -> int:
     """Pause if capturing, resume if paused."""
-    try:
-        status = asyncio.run(send_command(paths_from(env).socket_path, {"cmd": "status"}))
-    except DaemonNotRunning:
-        print(NOT_RUNNING, file=sys.stderr)
+    status = _status(ask(env, {"cmd": "status"}))
+    if status is None:
         return 1
-    return command(env, {"cmd": "resume" if status.get("state") == "paused" else "pause"})
+    if status["state"] == "paused":
+        return command(env, {"cmd": "resume"})
+    return command(env, {"cmd": "pause"})
 
 
 def capture(env: Mapping[str, str]) -> int:
     """Ask the daemon for one screenshot now and print where it was saved."""
-    try:
-        response = asyncio.run(send_command(paths_from(env).socket_path, {"cmd": "capture"}))
-    except DaemonNotRunning:
-        print(NOT_RUNNING, file=sys.stderr)
+    reply = ask(env, {"cmd": "capture"})
+    if reply is None:
         return 1
-    if not response.get("ok"):
-        print(f"vitality-client: {response.get('error', 'capture failed')}", file=sys.stderr)
+    if reply["ok"] is False:
+        print(f"vitality-client: {reply['error']}", file=sys.stderr)
         return 1
-    print(response["path"])
+    if "path" not in reply:
+        print("vitality-client: unexpected reply from the daemon", file=sys.stderr)
+        return 1
+    print(reply["path"])
     return 0

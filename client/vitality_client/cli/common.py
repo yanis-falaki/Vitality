@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from vitality_client.shared.config import Paths, resolve_paths
-from vitality_client.shared.channel import DaemonNotRunning, send_command
+from vitality_client.shared.channel import DaemonNotRunning, StatusPaths, send_command
 
 NOT_RUNNING = "vitality-client daemon is not running"
 DAEMON_RUNNING = ("vitality-client daemon is running; stop it first "
@@ -29,7 +29,7 @@ def format_bytes(n: float) -> str:
     return f"{n / 1e3:.1f} kB"
 
 
-def path_lines(paths: Mapping[str, str]) -> list[str]:
+def path_lines(paths: StatusPaths) -> list[str]:
     return [f"config: {paths['config']}", f"data: {paths['data']}", f"state: {paths['state']}"]
 
 

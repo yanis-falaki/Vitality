@@ -1,15 +1,23 @@
 import json
+from typing import cast
+
 import pytest
 
 from vitality_client.cli import main
 from vitality_client.cli.control import format_status
+from vitality_client.shared.channel import Reply, Request, Status
 
-STATUS = {
+STATUS: Status = {
     "ok": True, "state": "idle", "paused_until": None, "captures_today": 412,
-    "last_capture": "2026-10-21T14:02:05.312Z", "disk_bytes": 3.1e9, "disk_warning": False,
+    "last_capture": "2026-10-21T14:02:05.312Z", "disk_bytes": 3_100_000_000, "disk_warning": False,
     "activity": "available", "capture": "available",
     "paths": {"config": "/c", "data": "/d", "state": "/s"},
 }
+
+
+def status(**changes) -> Status:
+    """A daemon status reply: STATUS with some fields changed."""
+    return cast(Status, {**STATUS, **changes})
 
 
 def test_status_when_daemon_not_running(tmp_path, monkeypatch, capsys):      # Review Focus 4
@@ -40,15 +48,14 @@ def test_format_status_idle():
 
 
 def test_format_status_paused_and_warning():
-    s = {"state": "paused", "paused_until": None, "captures_today": 3, "last_capture": None, "disk_bytes": 25e9,
-         "disk_warning": True, "activity": "available", "capture": "available",
-         "paths": {"config": "/c", "data": "/d", "state": "/s"}}
+    s = status(state="paused", captures_today=3, last_capture=None, disk_bytes=25_000_000_000,
+               disk_warning=True)
     out = format_status(s)
     assert out.splitlines()[0].startswith("paused · 3 captures today") and "disk" in out and "/d" in out
 
 
 def test_format_status_paused_until_and_unavailable():
-    s = dict(STATUS, state="paused", paused_until="2026-10-21T13:30:00.000Z", activity="unavailable")
+    s = status(state="paused", paused_until="2026-10-21T13:30:00.000Z", activity="unavailable")
     first = format_status(s).splitlines()[0]
     assert first.startswith("paused until ") and " · 412 captures today" in first
     assert "activity: unavailable" in format_status(s)
@@ -61,12 +68,12 @@ def test_status_json_is_one_line_without_ok(tmp_path, monkeypatch, capsys):
     sock = tmp_path / "vitality/client.sock"
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
 
-    async def handler(req):
-        return dict(STATUS)
+    async def handler(req: Request) -> Reply:
+        return status()
 
     async def scenario():
-        server = UnixControlServer(sock, handler)
-        await server.start()
+        server = UnixControlServer(sock)
+        await server.start(handler)
         try:
             return await asyncio.to_thread(main, ["status", "--json"])
         finally:
@@ -99,11 +106,11 @@ def test_capture_state_line_daemon_running():
     from vitality_client.cli.doctor import capture_state_line
     from vitality_client.shared.state import State
 
-    assert capture_state_line({"state": "idle", "paused_until": None}, State(paused=True)) == (
+    assert capture_state_line(status(state="idle"), State(paused=True)) == (
         "daemon: running, capturing")
-    assert capture_state_line({"state": "active", "paused_until": None}, State()) == (
+    assert capture_state_line(status(state="active"), State()) == (
         "daemon: running, capturing")
-    assert capture_state_line({"state": "paused", "paused_until": None}, State()) == (
+    assert capture_state_line(status(state="paused"), State()) == (
         "daemon: running, paused")
 
 
@@ -126,15 +133,15 @@ def _toggle_against(tmp_path, monkeypatch, state):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     requests = []
 
-    async def handler(req):
+    async def handler(req: Request) -> Reply:
         requests.append(req)
         if req["cmd"] == "status":
-            return dict(STATUS, state=state)
-        return dict(STATUS, state="idle" if req["cmd"] == "resume" else "paused")
+            return status(state=state)
+        return status(state="idle" if req["cmd"] == "resume" else "paused")
 
     async def scenario():
-        server = UnixControlServer(tmp_path / "vitality/client.sock", handler)
-        await server.start()
+        server = UnixControlServer(tmp_path / "vitality/client.sock")
+        await server.start(handler)
         try:
             return await asyncio.to_thread(main, ["toggle"])
         finally:
@@ -162,20 +169,20 @@ def test_toggle_when_daemon_not_running(tmp_path, monkeypatch, capsys):
     assert "vitality-client daemon is not running" in capsys.readouterr().err
 
 
-def _capture_against(tmp_path, monkeypatch, reply):
+def _capture_against(tmp_path, monkeypatch, reply: Reply):
     import asyncio
     from vitality_client.shared.channel import UnixControlServer
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     requests = []
 
-    async def handler(req):
+    async def handler(req: Request) -> Reply:
         requests.append(req)
         return reply
 
     async def scenario():
-        server = UnixControlServer(tmp_path / "vitality/client.sock", handler)
-        await server.start()
+        server = UnixControlServer(tmp_path / "vitality/client.sock")
+        await server.start(handler)
         try:
             return await asyncio.to_thread(main, ["capture"])
         finally:

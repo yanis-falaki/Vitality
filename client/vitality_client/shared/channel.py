@@ -3,8 +3,9 @@
 Wire format: UTF-8 JSON, one object per line in each direction, one request and one
 response per connection; the server closes the connection after replying.
 
-The contract (`ControlServer`, `Handler`, `DaemonNotRunning`) comes first; the
-implementation (`UnixControlServer`, `send_command`) follows.
+The contract comes first: every request and reply that crosses the channel, the
+`Handler` the daemon provides, `ControlServer` (the daemon's end) and `DaemonNotRunning`.
+The implementation (`UnixControlServer`, and `send_command` — the CLI's end) follows.
 """
 
 import asyncio
@@ -15,13 +16,77 @@ import os
 import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, NotRequired, Protocol, TypedDict, cast
 
 
 # == Contract =============================================================================
 
-Handler = Callable[[dict], Awaitable[dict]]
-"""Answers one request dict with one response dict (the daemon's `handle`)."""
+# -- requests: what the CLI can ask ------------------------------------------------------
+
+class StatusRequest(TypedDict):
+    cmd: Literal["status"]
+
+
+class PauseRequest(TypedDict):
+    cmd: Literal["pause"]
+    seconds: NotRequired[float | None]  # omitted or None: until resumed
+
+
+class ResumeRequest(TypedDict):
+    cmd: Literal["resume"]
+
+
+class CaptureRequest(TypedDict):
+    cmd: Literal["capture"]  # take one screenshot now, even while paused
+
+
+Request = StatusRequest | PauseRequest | ResumeRequest | CaptureRequest
+
+
+# -- replies: what the daemon answers -----------------------------------------------------
+
+class StatusPaths(TypedDict):
+    config: str  # client.toml
+    data: str    # captures/ and index.sqlite
+    state: str   # state.json
+
+
+class Status(TypedDict):
+    """The reply to `status`, `pause` and `resume`: what the daemon is doing now."""
+
+    ok: Literal[True]
+    state: Literal["idle", "active", "paused"]
+    paused_until: str | None   # UTC ISO timestamp when a timed pause ends
+    captures_today: int        # since local midnight
+    last_capture: str | None   # UTC ISO timestamp
+    disk_bytes: int            # total size of saved captures
+    disk_warning: bool         # above disk_warning_gb
+    activity: Literal["available", "unavailable"]  # can input be read?
+    capture: Literal["available", "unavailable"]   # is the screen stream up?
+    paths: StatusPaths
+
+
+class CaptureReply(TypedDict):
+    """The reply to `capture`."""
+
+    ok: Literal[True]
+    path: str  # absolute path of the saved screenshot
+
+
+class ErrorReply(TypedDict):
+    """The reply to any request that could not be done."""
+
+    ok: Literal[False]
+    error: str
+
+
+Reply = Status | CaptureReply | ErrorReply
+
+
+# -- the two ends -------------------------------------------------------------------------
+
+Handler = Callable[[Request], Awaitable[Reply]]
+"""Answers one request (the daemon's `handle`)."""
 
 
 class DaemonNotRunning(RuntimeError):
@@ -37,9 +102,12 @@ class ControlServer(Protocol):
     The CLI's end is `send_command(socket_path, request) -> dict`.
     """
 
-    async def start(self) -> None:
-        """Create the socket and start answering. Raises RuntimeError if another daemon
-        is already answering on it; a stale socket left by a crash is replaced."""
+    async def start(self, handler: Handler) -> None:
+        """Create the socket and answer every request on it by calling `handler(request)`.
+
+        Raises RuntimeError if another daemon is already answering on it; a stale socket
+        left by a crash is replaced.
+        """
         ...
 
     async def close(self) -> None:
@@ -56,13 +124,14 @@ REQUEST_TIMEOUT = 5.0
 
 
 class UnixControlServer(ControlServer):
-    def __init__(self, socket_path: Path, handler: Handler) -> None:
+    def __init__(self, socket_path: Path) -> None:
         self.socket_path = Path(socket_path)
-        self._handler = handler
+        self._handler: Handler | None = None
         self._server: asyncio.Server | None = None
         self._writers: set[asyncio.StreamWriter] = set()
 
-    async def start(self) -> None:
+    async def start(self, handler: Handler) -> None:
+        self._handler = handler
         self.socket_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         await self._clear_stale_socket()
         self._server = await asyncio.start_unix_server(self._serve, path=str(self.socket_path))
@@ -111,10 +180,12 @@ class UnixControlServer(ControlServer):
                 if not isinstance(request, dict):
                     raise ValueError("request is not an object")
             except ValueError:
-                response = {"ok": False, "error": "invalid request"}
+                response: Reply | dict = {"ok": False, "error": "invalid request"}
             else:
                 try:
-                    response = await self._handler(request)
+                    assert self._handler is not None  # set by start() before serving
+                    # Unknown commands reach the handler too; it answers them with an ErrorReply.
+                    response = await self._handler(cast(Request, request))
                 except Exception as e:
                     log.warning("control handler failed: %s", type(e).__name__)
                     response = {"ok": False, "error": str(e)}
@@ -127,7 +198,7 @@ class UnixControlServer(ControlServer):
             writer.close()
 
 
-async def send_command(socket_path: Path, request: dict) -> dict:
+async def send_command(socket_path: Path, request: Request) -> Reply:
     try:
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
     except (FileNotFoundError, ConnectionRefusedError, NotADirectoryError):
@@ -145,4 +216,4 @@ async def send_command(socket_path: Path, request: dict) -> dict:
             await writer.wait_closed()
     if not line:
         raise RuntimeError("vitality-client daemon closed the connection without replying")
-    return json.loads(line)
+    return cast(Reply, json.loads(line))
