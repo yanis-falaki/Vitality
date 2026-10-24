@@ -1,11 +1,9 @@
 """The xdg-desktop-portal ScreenCast conversation over D-Bus.
 
-`ScreenCastSession().open(restore_token, on_restore_token)` asks the portal for every
-monitor (cursor embedded, permission persisted) and returns the PipeWire streams;
-`fd` is then the PipeWire connection to read them from. With a valid restore token
-the portal skips its permission dialog. Tokens are single-use, so the new one is
-handed to `on_restore_token` the moment the portal returns it, before anything else
-can fail.
+The contract (`PortalSession`, `Stream`, the errors) comes first; the implementation
+(`ScreenCastSession`) follows. A session asks the portal for every monitor (cursor
+embedded, permission persisted) and hands back the PipeWire streams; with a valid
+restore token the portal skips its permission dialog.
 
 Never logged: the restore token value.
 """
@@ -21,6 +19,63 @@ from typing import Protocol
 from dbus_fast import BusType, Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
 
+
+# == Contract =============================================================================
+
+@dataclass(frozen=True)
+class Stream:
+    """One monitor's PipeWire stream; position and size are in logical pixels."""
+
+    node_id: int
+    position: tuple[int, int]
+    size: tuple[int, int] | None  # None when the portal did not report it
+
+
+class PortalSession(Protocol):
+    """One screen-capture session with the portal (what PortalFrameSource uses)."""
+
+    fd: int | None
+    """The PipeWire connection to read the streams from, once `open` has returned."""
+
+    async def open(
+        self, restore_token: str | None, on_restore_token: Callable[[str], None],
+    ) -> list[Stream]:
+        """Ask the portal for every monitor and return their streams.
+
+        Shows the permission dialog unless `restore_token` is still valid. Tokens are
+        single-use: the portal's new one goes to `on_restore_token` the moment it arrives,
+        before anything else can fail.
+        """
+        ...
+
+    def lost(self) -> str | None:
+        """Why the session stopped being usable (portal closed it, bus lost), or None."""
+        ...
+
+    async def close(self) -> None:
+        """End the session and release the PipeWire connection."""
+        ...
+
+
+RESPONSE_CANCELLED = 1  # the user cancelled the permission dialog
+_RESPONSE_MEANING = {RESPONSE_CANCELLED: "cancelled by the user", 2: "ended by the portal"}
+
+
+class PortalError(Exception):
+    """Talking to the portal failed."""
+
+
+class PortalResponseError(PortalError):
+    """The portal answered a request with a non-zero response code."""
+
+    def __init__(self, method: str, response: int) -> None:
+        meaning = _RESPONSE_MEANING.get(response, f"response {response}")
+        super().__init__(f"portal {method} {meaning}")
+        self.response = response
+
+
+# == Implementation =======================================================================
+
 log = logging.getLogger(__name__)
 
 PORTAL_BUS_NAME = "org.freedesktop.portal.Desktop"
@@ -33,46 +88,7 @@ SOURCE_TYPE_MONITOR = 1
 CURSOR_MODE_EMBEDDED = 2
 PERSIST_MODE_UNTIL_REVOKED = 2
 
-RESPONSE_CANCELLED = 1
-_RESPONSE_MEANING = {RESPONSE_CANCELLED: "cancelled by the user", 2: "ended by the portal"}
 _CLOSE_TIMEOUT = 2.0
-
-
-class PortalError(Exception):
-    pass
-
-
-class PortalResponseError(PortalError):
-    """The portal answered a request with a non-zero response code."""
-
-    def __init__(self, method: str, response: int) -> None:
-        meaning = _RESPONSE_MEANING.get(response, f"response {response}")
-        super().__init__(f"portal {method} {meaning}")
-        self.response = response
-
-
-class PortalSession(Protocol):
-    """What PortalFrameSource needs from a portal session (lets tests use a fake)."""
-
-    fd: int | None
-    """The PipeWire connection, once `open` has returned."""
-
-    async def open(
-        self, restore_token: str | None, on_restore_token: Callable[[str], None],
-    ) -> list["Stream"]: ...
-
-    def lost(self) -> str | None: ...
-
-    async def close(self) -> None: ...
-
-
-@dataclass(frozen=True)
-class Stream:
-    """One monitor's PipeWire stream; position and size are in logical pixels."""
-
-    node_id: int
-    position: tuple[int, int]
-    size: tuple[int, int] | None  # None when the portal did not report it
 
 
 def request_path(unique_name: str, handle_token: str) -> str:
