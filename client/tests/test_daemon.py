@@ -306,3 +306,35 @@ async def test_run_scans_existing_disk_usage_once_at_startup(daemon_env, caplog)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def test_capture_command_saves_one_screenshot_and_returns_its_path(daemon_env):
+    d, _, data = daemon_env()
+    reply = await d.handle({"cmd": "capture"})
+    assert reply["ok"] is True
+    rows = sqlite_rows(data / "index.sqlite")
+    assert [r["kind"] for r in rows] == ["after"]
+    assert reply["path"] == str((data / rows[0]["path"]).resolve())
+    assert (data / rows[0]["path"]).exists()
+
+
+async def test_capture_command_without_a_frame_is_an_error(daemon_env):
+    d, _, data = daemon_env(frame=None)
+    reply = await d.handle({"cmd": "capture"})
+    assert reply == {"ok": False, "error": "no screen frame available yet"}
+    assert sqlite_rows(data / "index.sqlite") == []
+
+
+async def test_capture_command_works_while_paused(daemon_env):
+    # An explicit capture is the user's own request, so pause doesn't block it.
+    d, _, data = daemon_env()
+    await d.handle({"cmd": "pause", "seconds": None})
+    reply = await d.handle({"cmd": "capture"})
+    assert reply["ok"] is True and d.status()["state"] == "paused"
+
+
+async def test_capture_command_reports_a_failed_write(daemon_env):
+    d, _, data = daemon_env()
+    with patch.object(Writer, "write", side_effect=OSError("disk full")):
+        reply = await d.handle({"cmd": "capture"})
+    assert reply == {"ok": False, "error": "capture failed: disk full"}

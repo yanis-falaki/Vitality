@@ -1,4 +1,4 @@
-"""Commands that talk to the running daemon: pause, resume, toggle, status."""
+"""Commands that talk to the running daemon: pause, resume, toggle, status, capture."""
 
 import asyncio
 import json
@@ -63,3 +63,17 @@ def toggle(env: Mapping[str, str]) -> int:
         print(NOT_RUNNING, file=sys.stderr)
         return 1
     return command(env, {"cmd": "resume" if status.get("state") == "paused" else "pause"})
+
+
+def capture(env: Mapping[str, str]) -> int:
+    """Ask the daemon for one screenshot now and print where it was saved."""
+    try:
+        response = asyncio.run(send_command(paths_from(env).socket_path, {"cmd": "capture"}))
+    except DaemonNotRunning:
+        print(NOT_RUNNING, file=sys.stderr)
+        return 1
+    if not response.get("ok"):
+        print(f"vitality-client: {response.get('error', 'capture failed')}", file=sys.stderr)
+        return 1
+    print(response["path"])
+    return 0

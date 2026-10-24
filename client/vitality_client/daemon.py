@@ -24,7 +24,7 @@ from vitality_client.config import Config, Paths
 from vitality_client.control import ControlServer, State, StateFile, StateStore
 from vitality_client.frames import FrameSource
 from vitality_client.policy import CapturePolicy, SnapshotPolicy, SnapshotRequest
-from vitality_client.storage import CaptureIndex, CaptureWriter, Store, Writer, format_ts
+from vitality_client.storage import CaptureIndex, CaptureRow, CaptureWriter, Store, Writer, format_ts
 
 
 # == Contract =============================================================================
@@ -71,9 +71,11 @@ class Daemon(Protocol):
         ...
 
     async def handle(self, request: dict) -> dict:
-        """The control socket's handler: `{"cmd": "status" | "pause" | "resume", ...}`.
+        """The control socket's handler: `{"cmd": "status" | "pause" | "resume" | "capture"}`.
 
-        Replies with the `Status`, or `{"ok": False, "error": ...}`.
+        `status`, `pause` (optional `"seconds"`) and `resume` reply with the `Status`;
+        `capture` takes one screenshot now, even while paused, and replies
+        `{"ok": True, "path": ...}`. Failures reply `{"ok": False, "error": ...}`.
         """
         ...
 
@@ -91,6 +93,7 @@ class Daemon(Protocol):
 log = logging.getLogger(__name__)
 
 DRAIN_TIMEOUT = 10.0
+CAPTURE_TIMEOUT = 4.0  # under the CLI's 5 s response timeout
 
 
 def _new_id() -> str:
@@ -122,7 +125,10 @@ class CaptureDaemon(Daemon):
         self._writer: CaptureWriter = Writer(paths.data_dir, self._store, config.webp_quality, _new_id)
         self._server = ControlServer(paths.socket_path, self.handle)
         self._watcher = watcher_factory(self.handle_activity)
-        self._writes: asyncio.Queue[tuple[Image.Image, SnapshotRequest]] = asyncio.Queue()
+        # Pending saves; the future (if any) receives the saved row, for `capture`.
+        self._writes: asyncio.Queue[
+            tuple[Image.Image, SnapshotRequest, asyncio.Future[CaptureRow] | None]
+        ] = asyncio.Queue()
         self._write_worker: asyncio.Task | None = None
         self._wake = asyncio.Event()  # set when the policy's next deadline moved earlier
         self._closing = False
@@ -242,20 +248,28 @@ class CaptureDaemon(Daemon):
         if frame is None:
             log.info("snapshot dropped: no frame available")
             return
-        self._writes.put_nowait((frame, req))
+        self._enqueue(frame, req)
+
+    def _enqueue(self, frame: Image.Image, req: SnapshotRequest,
+                 saved: asyncio.Future[CaptureRow] | None = None) -> None:
+        self._writes.put_nowait((frame, req, saved))
         if self._write_worker is None or self._write_worker.done():
             self._write_worker = asyncio.create_task(self._write_loop())
 
     async def _write_loop(self) -> None:
         while True:
-            frame, req = await self._writes.get()
+            frame, req, saved = await self._writes.get()
             try:
                 row = await asyncio.to_thread(
                     self._writer.write, frame, req.kind, req.interaction_id, req.ts)
             except Exception as exc:
                 log.error("capture write failed: %s", str(exc) or type(exc).__name__)
+                if saved is not None and not saved.done():
+                    saved.set_exception(exc)
             else:
                 self._record_disk_usage(self._disk_bytes + row.bytes)
+                if saved is not None and not saved.done():
+                    saved.set_result(row)
             finally:
                 self._writes.task_done()
 
@@ -284,7 +298,29 @@ class CaptureDaemon(Daemon):
             self._save_state()
             self._wake.set()
             return dict(self.status())
+        if cmd == "capture":
+            return await self._capture_now()
         return {"ok": False, "error": f"unknown command: {cmd}"}
+
+    async def _capture_now(self) -> dict:
+        """One screenshot on request: saved like any other, its path returned."""
+        if self._closing:
+            return {"ok": False, "error": "the daemon is shutting down"}
+        try:
+            frame = self._frames.latest_frame()
+        except Exception as exc:
+            return {"ok": False, "error": f"reading the frame failed: {str(exc) or type(exc).__name__}"}
+        if frame is None:
+            return {"ok": False, "error": "no screen frame available yet"}
+        saved: asyncio.Future[CaptureRow] = asyncio.get_running_loop().create_future()
+        self._enqueue(frame, SnapshotRequest("after", _new_id(), self._clock()), saved)
+        try:
+            row = await asyncio.wait_for(asyncio.shield(saved), CAPTURE_TIMEOUT)
+        except TimeoutError:
+            return {"ok": False, "error": "the capture is taking too long; check the log"}
+        except Exception as exc:
+            return {"ok": False, "error": f"capture failed: {str(exc) or type(exc).__name__}"}
+        return {"ok": True, "path": str((self._paths.data_dir / row.path).resolve())}
 
     def save_restore_token(self, token: str) -> None:
         """Persist a new portal restore token (the PortalFrameSource callback)."""

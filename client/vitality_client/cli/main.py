@@ -5,7 +5,7 @@ import os
 import sys
 from collections.abc import Sequence
 
-from vitality_client.cli import control, data, doctor, run
+from vitality_client.cli import control, doctor, reset, run
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -19,7 +19,7 @@ def _parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status", help="show daemon status")
     status.add_argument("--json", action="store_true", help="print one line of JSON")
     sub.add_parser("doctor", help="check the setup")
-    sub.add_parser("capture-once", help="save one capture now and print its path")
+    sub.add_parser("capture", help="take a screenshot now (asks the daemon) and print its path")
     reset = sub.add_parser("reset", help="delete all captures (asks first; daemon must be stopped)")
     reset.add_argument("--all", action="store_true",
                        help="also delete state (pause state and screen-sharing permission)")
@@ -44,10 +44,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return control.command(env, {"cmd": "status"}, as_json=args.json)
             case "doctor":
                 return doctor.doctor(env)
-            case "capture-once":
-                return data.capture_once(env)
+            case "capture":
+                return control.capture(env)
             case "reset":
-                return data.reset(env, include_state=args.all, assume_yes=args.yes)
+                return reset.reset(env, include_state=args.all, assume_yes=args.yes)
     except (RuntimeError, ValueError) as exc:  # no runtime dir, bad config, already running, ...
         print(f"vitality-client: {exc}", file=sys.stderr)
         return 1

@@ -36,38 +36,6 @@ def test_run_refuses_non_wayland(monkeypatch, capsys):
     assert "requires a Wayland session (XDG_SESSION_TYPE=x11)" in capsys.readouterr().err
 
 
-def test_capture_once_refuses_non_wayland(monkeypatch, capsys):
-    monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
-    assert main(["capture-once"]) == 1
-    assert "requires a Wayland session (XDG_SESSION_TYPE=)" in capsys.readouterr().err
-
-
-def test_capture_once_refuses_while_daemon_is_running(tmp_path, monkeypatch, capsys):
-    import asyncio
-    from vitality_client.control import ControlServer
-
-    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    requests = []
-
-    async def handler(req):
-        requests.append(req)
-        return dict(STATUS)
-
-    async def scenario():
-        server = ControlServer(tmp_path / "vitality/client.sock", handler)
-        await server.start()
-        try:
-            return await asyncio.to_thread(main, ["capture-once"])
-        finally:
-            await server.close()
-
-    assert asyncio.run(scenario()) == 1
-    assert capsys.readouterr().err.strip() == (
-        "vitality-client daemon is running; stop it first (systemctl --user stop vitality-client)")
-    assert requests == [{"cmd": "status"}]  # only the probe; the portal was never started
-
-
 def test_format_status_idle():
     lines = format_status(STATUS).splitlines()
     assert lines[0].startswith("capturing · 412 captures today · last ")
@@ -197,4 +165,43 @@ def test_toggle_resumes_when_paused(tmp_path, monkeypatch, capsys):
 def test_toggle_when_daemon_not_running(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     assert main(["toggle"]) == 1
+    assert "vitality-client daemon is not running" in capsys.readouterr().err
+
+
+def _capture_against(tmp_path, monkeypatch, reply):
+    import asyncio
+    from vitality_client.control import ControlServer
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    requests = []
+
+    async def handler(req):
+        requests.append(req)
+        return reply
+
+    async def scenario():
+        server = ControlServer(tmp_path / "vitality/client.sock", handler)
+        await server.start()
+        try:
+            return await asyncio.to_thread(main, ["capture"])
+        finally:
+            await server.close()
+
+    return asyncio.run(scenario()), requests
+
+
+def test_capture_asks_the_daemon_and_prints_the_path(tmp_path, monkeypatch, capsys):
+    code, requests = _capture_against(tmp_path, monkeypatch, {"ok": True, "path": "/d/c.webp"})
+    assert code == 0 and requests == [{"cmd": "capture"}]
+    assert capsys.readouterr().out.strip() == "/d/c.webp"
+
+
+def test_capture_reports_the_daemons_error(tmp_path, monkeypatch, capsys):
+    code, _ = _capture_against(tmp_path, monkeypatch, {"ok": False, "error": "no screen frame"})
+    assert code == 1 and "no screen frame" in capsys.readouterr().err
+
+
+def test_capture_when_daemon_not_running(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    assert main(["capture"]) == 1
     assert "vitality-client daemon is not running" in capsys.readouterr().err
