@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from vitality_client.cli import main
-from vitality_client.shared.channel import ControlServer
+from vitality_client.shared.channel import UnixControlServer
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ def test_reset_refuses_while_daemon_is_running(dirs, tmp_path, monkeypatch, caps
         return {"ok": True}
 
     async def scenario():
-        server = ControlServer(tmp_path / "run/vitality/client.sock", handler)
+        server = UnixControlServer(tmp_path / "run/vitality/client.sock", handler)
         await server.start()
         try:
             return await asyncio.to_thread(main, ["reset", "--all", "--yes"])

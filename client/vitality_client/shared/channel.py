@@ -1,7 +1,10 @@
 """The Unix-socket channel between the CLI and the running daemon.
 
-Protocol: UTF-8 JSON, one object per line in each direction, one request and one
+Wire format: UTF-8 JSON, one object per line in each direction, one request and one
 response per connection; the server closes the connection after replying.
+
+The contract (`ControlServer`, `Handler`, `DaemonNotRunning`) comes first; the
+implementation (`UnixControlServer`, `send_command`) follows.
 """
 
 import asyncio
@@ -12,6 +15,39 @@ import os
 import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Protocol
+
+
+# == Contract =============================================================================
+
+Handler = Callable[[dict], Awaitable[dict]]
+"""Answers one request dict with one response dict (the daemon's `handle`)."""
+
+
+class DaemonNotRunning(RuntimeError):
+    """Raised by `send_command` when nothing answers on the socket."""
+
+    def __init__(self) -> None:
+        super().__init__("vitality-client daemon is not running")
+
+
+class ControlServer(Protocol):
+    """The daemon's end of the channel: answers each request on the socket with its handler.
+
+    The CLI's end is `send_command(socket_path, request) -> dict`.
+    """
+
+    async def start(self) -> None:
+        """Create the socket and start answering. Raises RuntimeError if another daemon
+        is already answering on it; a stale socket left by a crash is replaced."""
+        ...
+
+    async def close(self) -> None:
+        """Stop answering and remove the socket."""
+        ...
+
+
+# == Implementation =======================================================================
 
 log = logging.getLogger(__name__)
 
@@ -19,15 +55,7 @@ RESPONSE_TIMEOUT = 5.0
 REQUEST_TIMEOUT = 5.0
 
 
-class DaemonNotRunning(RuntimeError):
-    def __init__(self) -> None:
-        super().__init__("vitality-client daemon is not running")
-
-
-Handler = Callable[[dict], Awaitable[dict]]
-
-
-class ControlServer:
+class UnixControlServer(ControlServer):
     def __init__(self, socket_path: Path, handler: Handler) -> None:
         self.socket_path = Path(socket_path)
         self._handler = handler

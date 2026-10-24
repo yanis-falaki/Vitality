@@ -56,7 +56,7 @@ def test_format_status_paused_until_and_unavailable():
 
 def test_status_json_is_one_line_without_ok(tmp_path, monkeypatch, capsys):
     import asyncio
-    from vitality_client.shared.channel import ControlServer
+    from vitality_client.shared.channel import UnixControlServer
 
     sock = tmp_path / "vitality/client.sock"
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
@@ -65,7 +65,7 @@ def test_status_json_is_one_line_without_ok(tmp_path, monkeypatch, capsys):
         return dict(STATUS)
 
     async def scenario():
-        server = ControlServer(sock, handler)
+        server = UnixControlServer(sock, handler)
         await server.start()
         try:
             return await asyncio.to_thread(main, ["status", "--json"])
@@ -121,7 +121,7 @@ def test_doctor_prints_saved_pause_state(tmp_path, monkeypatch, capsys):
 
 def _toggle_against(tmp_path, monkeypatch, state):
     import asyncio
-    from vitality_client.shared.channel import ControlServer
+    from vitality_client.shared.channel import UnixControlServer
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     requests = []
@@ -133,7 +133,7 @@ def _toggle_against(tmp_path, monkeypatch, state):
         return dict(STATUS, state="idle" if req["cmd"] == "resume" else "paused")
 
     async def scenario():
-        server = ControlServer(tmp_path / "vitality/client.sock", handler)
+        server = UnixControlServer(tmp_path / "vitality/client.sock", handler)
         await server.start()
         try:
             return await asyncio.to_thread(main, ["toggle"])
@@ -164,7 +164,7 @@ def test_toggle_when_daemon_not_running(tmp_path, monkeypatch, capsys):
 
 def _capture_against(tmp_path, monkeypatch, reply):
     import asyncio
-    from vitality_client.shared.channel import ControlServer
+    from vitality_client.shared.channel import UnixControlServer
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     requests = []
@@ -174,7 +174,7 @@ def _capture_against(tmp_path, monkeypatch, reply):
         return reply
 
     async def scenario():
-        server = ControlServer(tmp_path / "vitality/client.sock", handler)
+        server = UnixControlServer(tmp_path / "vitality/client.sock", handler)
         await server.start()
         try:
             return await asyncio.to_thread(main, ["capture"])

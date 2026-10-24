@@ -21,7 +21,7 @@ from PIL import Image
 
 from vitality_client.daemon.activity import ActivitySource
 from vitality_client.shared.config import Config, Paths
-from vitality_client.shared.channel import ControlServer
+from vitality_client.shared.channel import ControlServer, UnixControlServer
 from vitality_client.shared.state import State, StateFile, StateStore
 from vitality_client.daemon.frames import FrameSource
 from vitality_client.daemon.policy import CapturePolicy, SnapshotPolicy, SnapshotRequest
@@ -124,7 +124,7 @@ class CaptureDaemon(Daemon):
         )
         self._store: CaptureIndex = Store(paths.data_dir / "index.sqlite")
         self._writer: CaptureWriter = Writer(paths.data_dir, self._store, config.webp_quality, _new_id)
-        self._server = ControlServer(paths.socket_path, self.handle)
+        self._server: ControlServer = UnixControlServer(paths.socket_path, self.handle)
         self._watcher = watcher_factory(self.handle_activity)
         # Pending saves; the future (if any) receives the saved row, for `capture`.
         self._writes: asyncio.Queue[

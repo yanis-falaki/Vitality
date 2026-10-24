@@ -215,7 +215,7 @@ def test_frames_are_converted_only_when_requested(monkeypatch):
     conversions = []
     real = stream.sample_to_image
     monkeypatch.setattr(stream, "sample_to_image", lambda s: conversions.append(s) or real(s))
-    src = stream.FrameStreams(max_fps=5)
+    src = stream.GstFrameStreams(max_fps=5)
     src._streams = [Stream(node_id=1, position=(0, 0), size=None)]
     caps = Gst.Caps.from_string("video/x-raw,format=BGRx,width=1,height=1")
     for value in (1, 2, 3):

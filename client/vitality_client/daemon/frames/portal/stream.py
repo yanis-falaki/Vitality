@@ -1,9 +1,7 @@
 """GStreamer pipelines reading the portal's PipeWire streams, keeping the newest frame of each.
 
-`FrameStreams(max_fps).start(fd, streams)` builds one pipeline per monitor;
-`latest_frame()` returns the whole desktop as one RGB image (or None until every
-stream has delivered a frame); `failure()` reports a pipeline error or end of
-stream; `stop()` tears everything down.
+The contract (`FrameStreams`) comes first; the implementation (`GstFrameStreams`)
+follows, after the helpers that turn GStreamer samples into images.
 
 The appsink callback runs on a GStreamer thread and only stores a reference to the
 newest sample under a lock. Conversion to RGB happens in `latest_frame()`, i.e. only
@@ -12,6 +10,7 @@ when a snapshot needs an image. Never logged: image contents.
 
 import logging
 import threading
+from typing import Protocol
 
 import gi
 
@@ -22,6 +21,35 @@ from PIL import Image  # noqa: E402
 
 from vitality_client.daemon.frames.compose import composite, layout_frames  # noqa: E402
 from vitality_client.daemon.frames.portal.session import Stream  # noqa: E402
+
+
+# == Contract =============================================================================
+
+class FrameStreams(Protocol):
+    """One pipeline per monitor stream, each keeping only its newest frame."""
+
+    def __len__(self) -> int:
+        """How many pipelines are running."""
+        ...
+
+    def start(self, fd: int, streams: list[Stream]) -> None:
+        """Build and start one pipeline per stream, reading from the PipeWire connection `fd`."""
+        ...
+
+    def latest_frame(self) -> Image.Image | None:
+        """The whole desktop as one RGB image, or None until every stream has a frame."""
+        ...
+
+    def failure(self) -> str | None:
+        """A pipeline error or end of stream since the last call, or None."""
+        ...
+
+    def stop(self) -> None:
+        """Tear down every pipeline and forget their frames."""
+        ...
+
+
+# == Implementation =======================================================================
 
 log = logging.getLogger(__name__)
 
@@ -81,7 +109,7 @@ def sample_to_image(sample) -> Image.Image:
         buffer.unmap(mapinfo)
 
 
-class FrameStreams:
+class GstFrameStreams(FrameStreams):
     def __init__(self, max_fps: int) -> None:
         self._max_fps = max_fps
         self._pipelines: list[Gst.Pipeline] = []

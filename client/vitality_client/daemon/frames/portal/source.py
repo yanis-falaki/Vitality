@@ -27,7 +27,7 @@ from vitality_client.daemon.frames.portal.session import (
     ScreenCastSession,
     Stream,
 )
-from vitality_client.daemon.frames.portal.stream import FrameStreams
+from vitality_client.daemon.frames.portal.stream import FrameStreams, GstFrameStreams
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class PortalFrameSource(FrameSource):
         self._task: asyncio.Task | None = None
         self._first_attempt = asyncio.Event()
         self._session: PortalSession | None = None
-        self._streams = FrameStreams(max_fps)
+        self._streams: FrameStreams = GstFrameStreams(max_fps)
 
     # -- FrameSource -------------------------------------------------------------------
 
