@@ -8,8 +8,8 @@ from pathlib import Path
 
 from vitality_server.cli.display import format_bytes, format_received
 from vitality_server.cli.paths import path_lines
-from vitality_server.config import load_server_config
-from vitality_server.storage import DeviceSummary, read_summary
+from vitality_server.shared.config import load_server_config
+from vitality_server.shared.storage import DeviceSummary, read_summary
 
 
 GROUP_HINT = "are you in the vitality group? log in again after install.sh adds you"

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from vitality_server.cli.doctor import doctor
 from vitality_server.cli.status import status
-from vitality_server.config import DEFAULT_CONFIG
+from vitality_server.shared.config import DEFAULT_CONFIG
 
 
 def main(argv: Sequence[str] | None = None) -> int:

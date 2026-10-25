@@ -13,10 +13,10 @@ from pathlib import Path
 
 import uvicorn
 
-from vitality_server.app import create_app
-from vitality_server.config import DEFAULT_CONFIG, load_server_config
-from vitality_server.identity import TailscaleIdentity, tailscale_ipv4
-from vitality_server.storage import FileStore
+from vitality_server.daemon.app import create_app
+from vitality_server.shared.config import DEFAULT_CONFIG, load_server_config
+from vitality_server.shared.identity import TailscaleIdentity, tailscale_ipv4
+from vitality_server.shared.storage import FileStore
 
 log = logging.getLogger(__name__)
 

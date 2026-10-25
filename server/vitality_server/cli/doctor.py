@@ -4,7 +4,7 @@ from pathlib import Path
 
 from vitality_server.cli.checks import run_checks
 from vitality_server.cli.paths import path_lines
-from vitality_server.config import load_server_config
+from vitality_server.shared.config import load_server_config
 
 
 def doctor(config_path: Path) -> int:

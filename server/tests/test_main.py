@@ -1,4 +1,4 @@
-from vitality_server import main as server_main
+from vitality_server.daemon import main as server_main
 
 
 def test_bad_config_returns_1(tmp_path):

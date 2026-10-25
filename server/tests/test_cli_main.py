@@ -3,9 +3,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from vitality_server import main as serverd
+from vitality_server.daemon import main as serverd
 from vitality_server.cli import main as run_cli
-from vitality_server.config import DEFAULT_CONFIG
+from vitality_server.shared.config import DEFAULT_CONFIG
 
 cli_module = importlib.import_module("vitality_server.cli.main")  # `cli.main` is the function
 PYPROJECT = Path(__file__).parent.parent / "pyproject.toml"
@@ -13,7 +13,7 @@ PYPROJECT = Path(__file__).parent.parent / "pyproject.toml"
 
 def test_entry_points():
     scripts = tomllib.loads(PYPROJECT.read_text())["project"]["scripts"]
-    assert scripts == {"vitality-serverd": "vitality_server.main:main",
+    assert scripts == {"vitality-serverd": "vitality_server.daemon.main:main",
                        "vitality-server": "vitality_server.cli:main"}
 
 

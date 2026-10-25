@@ -31,11 +31,11 @@ from collections.abc import Collection
 
 from fastapi import FastAPI
 
-from vitality_server.errors import add_error_handlers
-from vitality_server.gate import UploadGate
-from vitality_server.identity import Identity
-from vitality_server.routes import health, interactions
-from vitality_server.storage import InteractionStore
+from vitality_server.daemon.errors import add_error_handlers
+from vitality_server.daemon.gate import UploadGate
+from vitality_server.shared.identity import Identity
+from vitality_server.daemon.routes import health, interactions
+from vitality_server.shared.storage import InteractionStore
 
 
 def create_app(store: InteractionStore, identity: Identity,

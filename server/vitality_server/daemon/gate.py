@@ -14,8 +14,8 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from vitality_protocol.routes import INTERACTIONS_PATH, MAX_UPLOAD_BYTES
 
-from vitality_server.errors import error
-from vitality_server.identity import Identity
+from vitality_server.daemon.errors import error
+from vitality_server.shared.identity import Identity
 
 log = logging.getLogger(__name__)
 

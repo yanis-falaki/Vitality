@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 from vitality_protocol.messages import Interaction
-from vitality_server.storage import FileStore
+from vitality_server.shared.storage import FileStore
 
 WEBP = b"RIFF\x10\x00\x00\x00WEBPVP8 " + b"\x00" * 8
 """A 20-byte file that passes the store's WebP header check."""

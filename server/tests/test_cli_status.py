@@ -77,7 +77,7 @@ def test_last_received_is_shown_in_local_time(tmp_path, capsys, monkeypatch):
 
 
 def test_empty_index(tmp_path, capsys):
-    from vitality_server.storage import FileStore
+    from vitality_server.shared.storage import FileStore
     data = tmp_path / "data"
     FileStore(data).close()
     config = config_for(tmp_path, data)

@@ -14,8 +14,8 @@ from pydantic import Json
 from vitality_protocol.messages import ErrorReply, Interaction, UploadReply
 from vitality_protocol.routes import INTERACTIONS_PATH
 
-from vitality_server.errors import ERROR_STATUSES
-from vitality_server.storage import ConflictingUpload, InvalidUpload
+from vitality_server.daemon.errors import ERROR_STATUSES
+from vitality_server.shared.storage import ConflictingUpload, InvalidUpload
 
 log = logging.getLogger(__name__)
 

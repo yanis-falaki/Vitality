@@ -8,8 +8,8 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 from test_storage import META, WEBP  # reuse fixtures
-from vitality_server.app import create_app
-from vitality_server.storage import FileStore
+from vitality_server.daemon.app import create_app
+from vitality_server.shared.storage import FileStore
 
 
 class FakeIdentity:
@@ -66,7 +66,7 @@ def test_conflict_is_409(tmp_path):
 
 
 def test_too_large_is_413(tmp_path, monkeypatch):
-    monkeypatch.setattr("vitality_server.gate.MAX_UPLOAD_BYTES", 10)
+    monkeypatch.setattr("vitality_server.daemon.gate.MAX_UPLOAD_BYTES", 10)
     r = post(client(tmp_path))
     assert r.status_code == 413 and r.json()["ok"] is False
 
@@ -136,7 +136,7 @@ def test_transfer_encoding_is_411_even_with_content_length(tmp_path):
 
 
 def test_content_length_that_lies_cannot_bypass_the_cap(tmp_path, monkeypatch):
-    monkeypatch.setattr("vitality_server.gate.MAX_UPLOAD_BYTES", 100)
+    monkeypatch.setattr("vitality_server.daemon.gate.MAX_UPLOAD_BYTES", 100)
     r = client(tmp_path).post("/interactions", content=b"x" * 501,
                               headers={**MULTIPART, "Content-Length": "1"})
     assert r.status_code == 413 and r.json() == {"ok": False, "error": "request larger than 100 bytes"}
@@ -155,7 +155,7 @@ def test_garbage_from_a_device_not_allowed_is_403_not_422(tmp_path):
 
 
 def test_oversize_is_413_before_identity_is_asked(tmp_path, monkeypatch):
-    monkeypatch.setattr("vitality_server.gate.MAX_UPLOAD_BYTES", 10)
+    monkeypatch.setattr("vitality_server.daemon.gate.MAX_UPLOAD_BYTES", 10)
     identity = CountingIdentity("doer")
     c = TestClient(create_app(FileStore(tmp_path), identity, ["laptop"]))
     assert post(c).status_code == 413 and identity.calls == 0
@@ -206,7 +206,7 @@ def _raw_exchange(port: int, request: bytes) -> bytes:
 
 def test_real_server_chunked_with_content_length_cannot_bypass_cap(tmp_path, monkeypatch):
     """The reviewer's repro: h11 frames by Transfer-Encoding when both headers are present."""
-    monkeypatch.setattr("vitality_server.gate.MAX_UPLOAD_BYTES", 100)
+    monkeypatch.setattr("vitality_server.daemon.gate.MAX_UPLOAD_BYTES", 100)
     app = create_app(FileStore(tmp_path), FakeIdentity("laptop"), ["laptop"])
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)

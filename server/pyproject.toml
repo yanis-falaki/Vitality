@@ -22,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-vitality-serverd = "vitality_server.main:main"
+vitality-serverd = "vitality_server.daemon.main:main"
 vitality-server = "vitality_server.cli:main"
 
 [build-system]

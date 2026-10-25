@@ -3,7 +3,7 @@
 Interaction storage on the local filesystem, indexed in SQLite. Besides the Protocol's
 methods, `FileStore` has only its constructor, `FileStore(data_dir, clock=time.time)`; the
 `clock` stamps `received_at` in the index. The layout it writes is described in
-`vitality_server.storage`.
+`vitality_server.shared.storage`.
 """
 
 import os
@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from vitality_protocol.layout import INTERACTION_FILE, name_matches_start
 from vitality_protocol.messages import Interaction
 
-from vitality_server.storage.interface import ConflictingUpload, InteractionStore, InvalidUpload
+from vitality_server.shared.storage.interface import ConflictingUpload, InteractionStore, InvalidUpload
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS interactions (

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from vitality_server.config import ServerConfig, load_server_config
+from vitality_server.shared.config import ServerConfig, load_server_config
 
 
 def write(tmp_path, text):

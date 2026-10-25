@@ -16,9 +16,9 @@ Layout under the data directory (names are UTC; see `vitality_protocol.layout`):
 The index has two tables, `interactions` and `shots`, both keyed by client as well.
 """
 
-from vitality_server.storage.files import FileStore
-from vitality_server.storage.summary import DeviceSummary, read_summary
-from vitality_server.storage.interface import ConflictingUpload, InteractionStore, InvalidUpload
+from vitality_server.shared.storage.files import FileStore
+from vitality_server.shared.storage.summary import DeviceSummary, read_summary
+from vitality_server.shared.storage.interface import ConflictingUpload, InteractionStore, InvalidUpload
 
 __all__ = ["ConflictingUpload", "DeviceSummary", "FileStore", "InteractionStore", "InvalidUpload",
            "read_summary"]

@@ -4,7 +4,7 @@ import stat
 from datetime import UTC, datetime
 
 import pytest
-from vitality_server.storage import DeviceSummary, FileStore, read_summary
+from vitality_server.shared.storage import DeviceSummary, FileStore, read_summary
 
 from stored import WEBP, store_interaction
 

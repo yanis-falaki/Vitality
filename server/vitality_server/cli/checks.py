@@ -17,8 +17,8 @@ from vitality_protocol.messages import Health
 from vitality_protocol.routes import HEALTH_PATH
 
 from vitality_server.cli.display import format_bytes
-from vitality_server.config import ServerConfig, load_server_config
-from vitality_server.identity import tailscale_ipv4
+from vitality_server.shared.config import ServerConfig, load_server_config
+from vitality_server.shared.identity import tailscale_ipv4
 
 NEEDS_CONFIG = "needs a valid config"
 TAILSCALE_HINT = "sudo tailscale up --hostname=vitality-librarian"

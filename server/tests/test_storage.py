@@ -2,7 +2,7 @@ import threading
 
 import pytest
 from vitality_protocol.messages import Interaction
-from vitality_server.storage import ConflictingUpload, FileStore, InvalidUpload
+from vitality_server.shared.storage import ConflictingUpload, FileStore, InvalidUpload
 
 WEBP = b"RIFF\x10\x00\x00\x00WEBPVP8 " + b"\x00" * 8
 META = Interaction.model_validate({

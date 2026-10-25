@@ -5,7 +5,7 @@ Implementation: `TailscaleIdentity` (tailscale.py), which asks the local Tailsca
 `tailscale_ipv4` finds the address the server should listen on.
 """
 
-from vitality_server.identity.interface import Identity
-from vitality_server.identity.tailscale import TailscaleIdentity, tailscale_ipv4
+from vitality_server.shared.identity.interface import Identity
+from vitality_server.shared.identity.tailscale import TailscaleIdentity, tailscale_ipv4
 
 __all__ = ["Identity", "TailscaleIdentity", "tailscale_ipv4"]

@@ -11,7 +11,7 @@ import ipaddress
 import json
 from collections.abc import Awaitable, Callable, Sequence
 
-from vitality_server.identity.interface import Identity
+from vitality_server.shared.identity.interface import Identity
 
 
 Runner = Callable[[Sequence[str]], Awaitable[tuple[int, bytes]]]

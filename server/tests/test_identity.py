@@ -1,8 +1,8 @@
 import json
 
 import pytest
-from vitality_server.identity import TailscaleIdentity
-from vitality_server.identity.tailscale import run_command, tailscale_ipv4
+from vitality_server.shared.identity import TailscaleIdentity
+from vitality_server.shared.identity.tailscale import run_command, tailscale_ipv4
 
 
 def raw_runner(code, stdout, calls=None):
