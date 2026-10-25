@@ -287,7 +287,7 @@ New dependencies: `httpx`, `vitality-protocol` (path dependency).
 server/
   pyproject.toml
   install.sh                     sets up the VM (§7.5)
-  systemd/vitality-server.service
+  systemd/vitality-serverd.service
   vitality_server/
     app.py                       create_app(): builds the FastAPI app from the parts below
     routes/                      interactions.py (POST /interactions), health.py (GET /health)
@@ -358,7 +358,7 @@ port 8000 by default) cannot reach it.
 `server/install.sh`, run on the VM from a checkout of the repo:
 1. installs Python 3.14 with `uv` and creates the server's virtual environment;
 2. creates the `vitality` system user, `/srv/vitality` and `/etc/vitality/server.toml`;
-3. installs and enables `vitality-server.service` (`After=tailscaled.service`,
+3. installs and enables `vitality-serverd.service` (`After=tailscaled.service`,
    `User=vitality`, `Restart=on-failure`), whose `ExecStart` is `vitality-serverd`;
 4. links the `vitality-server` command line (`status`, `doctor`: read-only checks of the
    setup and a summary of what has been received) into `/usr/local/bin`.

@@ -10,7 +10,7 @@ APP_DIR=/opt/vitality-server            # the server's virtual environment
 PYTHON_DIR=/opt/vitality-python         # uv's Python, kept where the vitality user can read it
 DATA_DIR=/srv/vitality
 CONFIG_DIR=/etc/vitality
-UNIT=vitality-server.service
+UNIT=vitality-serverd.service
 
 if [[ ! -d protocol || ! -d server || ! -f protocol/pyproject.toml || ! -f server/pyproject.toml ]]; then
     echo "usage: run ./server/install.sh from the root of the Vitality repo (the directory with protocol/ and server/)" >&2
@@ -82,14 +82,14 @@ if ! tailscale ip -4 >/dev/null 2>&1; then
 fi
 sleep 2
 if ! systemctl is-active --quiet "$UNIT"; then
-    echo "warning: $UNIT is not running; see: journalctl -u vitality-server -n 50" >&2
+    echo "warning: $UNIT is not running; see: journalctl -u vitality-serverd -n 50" >&2
 fi
 
 cat <<NEXT
 
 Done. Next:
   1. Edit $CONFIG_DIR/server.toml: set allowed_clients to the Tailscale names of the
-     devices that may upload, then: sudo systemctl restart vitality-server
+     devices that may upload, then: sudo systemctl restart vitality-serverd
   2. Check it: vitality-server doctor
      and see what has arrived: vitality-server status
      (log in again once if install.sh just added you to the vitality group)

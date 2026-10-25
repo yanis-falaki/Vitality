@@ -13,7 +13,7 @@ NOT_RUNNING = "vitality-client daemon is not running"
 """What a command prints when the daemon does not answer."""
 
 DAEMON_RUNNING = ("vitality-client daemon is running; stop it first "
-                  "(systemctl --user stop vitality-client)")
+                  "(systemctl --user stop vitality-clientd)")
 """What a command prints when the daemon must be stopped first but is running."""
 
 

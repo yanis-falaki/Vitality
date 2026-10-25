@@ -49,7 +49,7 @@ In the commands below, `<vm>` is the VM's exe.dev name; the SSH name is `<vm>.ex
 
    ```sh
    sudo nano /etc/vitality/server.toml
-   sudo systemctl restart vitality-server
+   sudo systemctl restart vitality-serverd
    ```
 
    An empty list refuses every upload (and the server logs a warning at startup).
@@ -71,10 +71,10 @@ allowed_clients = ["laptop"]     # Tailscale device names allowed to upload
 ```
 
 `data_dir` must stay under `/srv/vitality`: the service can write nowhere else. To move it,
-also change `ReadWritePaths` in `/etc/systemd/system/vitality-server.service` (and
+also change `ReadWritePaths` in `/etc/systemd/system/vitality-serverd.service` (and
 `systemctl daemon-reload`); note that `install.sh` overwrites the unit on each run.
 
-Changes take effect after `sudo systemctl restart vitality-server`. To use another file,
+Changes take effect after `sudo systemctl restart vitality-serverd`. To use another file,
 run `vitality-serverd --config PATH`.
 
 ## Commands
@@ -100,8 +100,8 @@ data:     /srv/vitality
 captures: /srv/vitality/captures
 index:    /srv/vitality/index.sqlite
 program:  /opt/vitality-server
-service:  /etc/systemd/system/vitality-server.service
-logs:     journalctl -u vitality-server
+service:  /etc/systemd/system/vitality-serverd.service
+logs:     journalctl -u vitality-serverd
 
 $ vitality-server doctor
 ✓ config loads
@@ -109,7 +109,7 @@ $ vitality-server doctor
 ✓ service running
 ✓ /health answers on 100.101.102.103:8100
 ✓ data folder present
-✗ allowed_clients set — edit /etc/vitality/server.toml, then sudo systemctl restart vitality-server
+✗ allowed_clients set — edit /etc/vitality/server.toml, then sudo systemctl restart vitality-serverd
 ✓ disk space (19.7 GB free)
 config:   /etc/vitality/server.toml
 ...                                   (the same paths as status)
@@ -123,8 +123,8 @@ cannot read the data folder or the index.
 
 ```sh
 vitality-server doctor
-systemctl status vitality-server
-journalctl -u vitality-server -f        # logs: the device, the interaction name, any rejection
+systemctl status vitality-serverd
+journalctl -u vitality-serverd -f        # logs: the device, the interaction name, any rejection
 curl http://vitality-librarian:8100/health      # from a device on the tailnet
 ```
 

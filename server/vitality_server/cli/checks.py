@@ -22,8 +22,8 @@ from vitality_server.identity import tailscale_ipv4
 
 NEEDS_CONFIG = "needs a valid config"
 TAILSCALE_HINT = "sudo tailscale up --hostname=vitality-librarian"
-SERVICE_HINT = "sudo systemctl start vitality-server; logs: journalctl -u vitality-server -n 50"
-HEALTH_HINT = "is the service running? see journalctl -u vitality-server"
+SERVICE_HINT = "sudo systemctl start vitality-serverd; logs: journalctl -u vitality-serverd -n 50"
+HEALTH_HINT = "is the service running? see journalctl -u vitality-serverd"
 DISK_HINT = "grow the VM's disk"
 MIN_FREE_BYTES = 1_000_000_000
 """Below this much free space, `disk space` fails."""
@@ -45,9 +45,9 @@ def tailscale_address() -> str:
 
 
 def service_active() -> bool:
-    """Whether `systemctl is-active --quiet vitality-server` succeeds; False if it cannot be asked."""
+    """Whether `systemctl is-active --quiet vitality-serverd` succeeds; False if it cannot be asked."""
     try:
-        result = subprocess.run(["systemctl", "is-active", "--quiet", "vitality-server"],
+        result = subprocess.run(["systemctl", "is-active", "--quiet", "vitality-serverd"],
                                 capture_output=True, timeout=PROBE_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return False
@@ -160,7 +160,7 @@ def _check_allowed_clients(config: ServerConfig | None, config_path: Path) -> Ch
         return Check(name, False, NEEDS_CONFIG)
     if not config.allowed_clients:
         return Check(name, False,
-                     f"edit {config_path}, then sudo systemctl restart vitality-server")
+                     f"edit {config_path}, then sudo systemctl restart vitality-serverd")
     return Check(f"{name} ({', '.join(config.allowed_clients)})", True, "")
 
 

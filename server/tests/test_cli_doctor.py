@@ -67,7 +67,7 @@ def test_tailscale_down(tmp_path):
 
 def test_service_not_running(tmp_path):
     c = failing(run(make_config(tmp_path), service_probe=lambda: False), "service running")
-    assert c.hint == "sudo systemctl start vitality-server; logs: journalctl -u vitality-server -n 50"
+    assert c.hint == "sudo systemctl start vitality-serverd; logs: journalctl -u vitality-serverd -n 50"
 
 
 def test_service_probe_raising_is_a_failed_check(tmp_path):
@@ -78,7 +78,7 @@ def test_service_probe_raising_is_a_failed_check(tmp_path):
 def test_health_not_answering(tmp_path):
     c = failing(run(make_config(tmp_path), health_probe=lambda ip, port: False), "/health")
     assert c.name == "/health answers on 100.64.0.9:9123"
-    assert c.hint == "is the service running? see journalctl -u vitality-server"
+    assert c.hint == "is the service running? see journalctl -u vitality-serverd"
 
 
 def test_health_probe_raising_is_a_failed_check(tmp_path):
@@ -101,7 +101,7 @@ def test_data_folder_that_is_a_file(tmp_path):
 def test_allowed_clients_empty(tmp_path):
     c = failing(run(make_config(tmp_path, clients="[]")), "allowed_clients")
     assert c.name == "allowed_clients set"
-    assert c.hint == "edit {}/server.toml, then sudo systemctl restart vitality-server".format(tmp_path)
+    assert c.hint == "edit {}/server.toml, then sudo systemctl restart vitality-serverd".format(tmp_path)
 
 
 def test_disk_space_below_1_gb(tmp_path):
@@ -207,16 +207,16 @@ def test_doctor_prints_each_check_then_the_paths_and_exits_0(tmp_path, capsys, m
     assert lines[7:] == [
         f"config:   {config}", f"data:     {data}", f"captures: {data}/captures",
         f"index:    {data}/index.sqlite", "program:  /opt/vitality-server",
-        "service:  /etc/systemd/system/vitality-server.service",
-        "logs:     journalctl -u vitality-server"]
+        "service:  /etc/systemd/system/vitality-serverd.service",
+        "logs:     journalctl -u vitality-serverd"]
 
 
 def test_doctor_failure_line_has_the_hint_and_exit_1(tmp_path, capsys, monkeypatch):
     patch_checks(monkeypatch, service_probe=lambda: False)
     assert doctor(make_config(tmp_path)) == 1
     out = capsys.readouterr().out
-    assert ("✗ service running — sudo systemctl start vitality-server; "
-            "logs: journalctl -u vitality-server -n 50") in out
+    assert ("✗ service running — sudo systemctl start vitality-serverd; "
+            "logs: journalctl -u vitality-serverd -n 50") in out
     assert "✓ config loads" in out
 
 

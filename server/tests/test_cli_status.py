@@ -32,8 +32,8 @@ def paths_block(config, data):
         f"captures: {data}/captures",
         f"index:    {data}/index.sqlite",
         "program:  /opt/vitality-server",
-        "service:  /etc/systemd/system/vitality-server.service",
-        "logs:     journalctl -u vitality-server",
+        "service:  /etc/systemd/system/vitality-serverd.service",
+        "logs:     journalctl -u vitality-serverd",
     ]
 
 

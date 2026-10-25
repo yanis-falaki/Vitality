@@ -51,9 +51,9 @@ Tailscale. Without `upload_server` set, nothing leaves the machine. Wayland only
 5. Run the daemon as a user service, started with your graphical session:
 
    ```sh
-   systemctl --user link "$PWD/systemd/vitality-client.service"
+   systemctl --user link "$PWD/systemd/vitality-clientd.service"
    systemctl --user enable --now vitality-client
-   journalctl --user -u vitality-client -f     # logs
+   journalctl --user -u vitality-clientd -f     # logs
    ```
 
    The unit is tied to `graphical-session.target`, which only some setups start (for
@@ -68,7 +68,7 @@ Tailscale. Without `upload_server` set, nothing leaves the machine. Wayland only
    environment-import line (`systemctl --user enable` is then optional):
 
    ```
-   exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE && systemctl --user start vitality-client.service
+   exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE && systemctl --user start vitality-clientd.service
    ```
 
    The service needs the compositor's environment (`WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`) in
@@ -143,7 +143,7 @@ Without `upload_server` in `client.toml`, nothing is uploaded and `status` shows
    ```
 
    ```sh
-   systemctl --user restart vitality-client
+   systemctl --user restart vitality-clientd
    ```
 
    The name `vitality-librarian` is resolved by Tailscale's MagicDNS; if your setup does not

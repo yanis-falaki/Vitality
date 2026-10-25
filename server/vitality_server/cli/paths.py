@@ -5,10 +5,10 @@ from pathlib import Path
 PROGRAM_DIR = Path("/opt/vitality-server")
 """Where `install.sh` puts the server's virtual environment."""
 
-SERVICE_FILE = Path("/etc/systemd/system/vitality-server.service")
+SERVICE_FILE = Path("/etc/systemd/system/vitality-serverd.service")
 """The installed systemd unit."""
 
-LOGS_COMMAND = "journalctl -u vitality-server"
+LOGS_COMMAND = "journalctl -u vitality-serverd"
 """How to read the server's logs."""
 
 

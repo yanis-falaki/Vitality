@@ -158,7 +158,7 @@ disk_warning_gb = 20
 # upload_server = "http://vitality-librarian:8100"   # unset: no uploads
 ```
 
-**Service:** systemd user unit `vitality-client.service` running `vitality-clientd`, `Restart=on-failure`, started with the graphical session. Logs to the journal.
+**Service:** systemd user unit `vitality-clientd.service` running `vitality-clientd`, `Restart=on-failure`, started with the graphical session. Logs to the journal.
 
 ## 8. Setup
 
@@ -216,7 +216,7 @@ client/
     cli/               # vitality-client: one module per command group; checks.py holds doctor's
                        #   checks, duration.py parses pause durations
   tests/
-  systemd/vitality-client.service
+  systemd/vitality-clientd.service
 ```
 
 The folder layout and the upload messages live in the shared `protocol/` package at the repo root (`vitality_protocol`), which `client/` depends on as a local path dependency, as does `server/`.
