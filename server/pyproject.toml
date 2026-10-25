@@ -7,7 +7,6 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "python-multipart",
-    "httpx",
     "vitality-protocol",
 ]
 
@@ -16,6 +15,7 @@ vitality-protocol = { path = "../protocol", editable = true }
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16.0",
     "pyright>=1.1.414",
     "pytest",
     "pytest-asyncio",
