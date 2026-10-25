@@ -534,3 +534,28 @@ async def test_run_closes_interrupted_interaction_at_startup(daemon_env, caplog)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+def old_layout(data, with_table=True, with_file=True):
+    """The pre-interaction layout: a `captures` table and/or shots at captures/<date>/."""
+    data.mkdir(parents=True, exist_ok=True)
+    if with_table:
+        conn = sqlite3.connect(data / "index.sqlite")
+        conn.execute("CREATE TABLE captures (capture_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
+        conn.commit(); conn.close()
+    if with_file:
+        shot = data / "captures/2025-10-21/01JAB0000000000000000000.webp"
+        shot.parent.mkdir(parents=True); shot.write_bytes(b"RIFF....WEBP")
+    return {p.relative_to(data).as_posix(): p.read_bytes() for p in data.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("with_table, with_file", [(True, True), (True, False), (False, True)])
+async def test_refuses_to_start_on_the_old_layout_and_touches_nothing(
+        daemon_env, tmp_path, with_table, with_file):
+    from vitality_client.daemon.storage import OldLayoutError
+    before = old_layout(tmp_path / "data", with_table, with_file)
+    with pytest.raises(OldLayoutError, match="run the one-time migration first"):
+        daemon_env()
+    after = {p.relative_to(tmp_path / "data").as_posix(): p.read_bytes()
+             for p in (tmp_path / "data").rglob("*") if p.is_file()}
+    assert after == before  # no file deleted, no new tables, no -wal/-shm

@@ -136,21 +136,22 @@ class Writer(CaptureWriter):
         self._store.end_interaction(name)
 
     def cleanup_orphans(self) -> int:
-        """Delete stray temp files and WebP files the index does not know about,
-        then the interaction folders that are left empty."""
+        """Delete stray temp files and WebP files the index does not know about, then the
+        interaction and date folders that are left empty. Only files at the interaction
+        depth, captures/<date>/<time>/<file>, are considered; anything elsewhere is kept."""
         if not self._captures.is_dir():
             return 0
         known = self._store.shot_paths()
         deleted = 0
-        for p in self._captures.rglob("*"):
+        for p in self._captures.glob("*/*/*"):
             if not p.is_file():
                 continue
             rel = p.relative_to(self._data_dir).as_posix()
             if p.suffix == ".tmp" or (p.suffix == ".webp" and rel not in known):
                 p.unlink()
                 deleted += 1
-        for d in sorted((p for p in self._captures.rglob("*") if p.is_dir()), reverse=True):
-            if not any(d.iterdir()):
+        for d in [*self._captures.glob("*/*"), *self._captures.glob("*")]:  # times, then dates
+            if d.is_dir() and not any(d.iterdir()):
                 d.rmdir()
         return deleted
 

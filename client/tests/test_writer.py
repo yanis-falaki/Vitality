@@ -187,3 +187,22 @@ def test_cleanup_and_usage_without_captures_dir(tmp_path):
 ])
 def test_format_ts(epoch, expected):
     assert format_ts(epoch) == expected
+
+
+def test_cleanup_only_looks_at_the_interaction_depth(tmp_path):
+    _, w = make(tmp_path)
+    elsewhere = [
+        "captures/2025-10-21/01JAB0000000000000000000.webp",       # the old layout's depth
+        "captures/2025-10-21/01JAC0000000000000000000.webp.tmp",
+        "captures/stray.webp",
+        "captures/2025-10-25/17-00-00/deeper/0000.webp",
+        "captures/2025-10-25/17-00-00/deeper/0001.webp.tmp",
+        "elsewhere.webp",
+    ]
+    for rel in elsewhere:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(b"x")
+    orphan = tmp_path / "captures/2025-10-25/17-09-09/0000.webp"
+    orphan.parent.mkdir(parents=True); orphan.write_bytes(b"x")
+    assert w.cleanup_orphans() == 1 and not orphan.parent.exists()
+    assert all((tmp_path / rel).exists() for rel in elsewhere)

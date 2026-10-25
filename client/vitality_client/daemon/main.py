@@ -56,7 +56,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         asyncio.run(run())
-    except RuntimeError as exc:  # e.g. another daemon is already running
+    except RuntimeError as exc:  # another daemon is already running, or OldLayoutError:
+        # the data directory needs the one-time migration (nothing was touched)
         print(f"vitality-clientd: {exc}", file=sys.stderr)
         return 1
     return 0

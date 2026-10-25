@@ -46,6 +46,7 @@ from vitality_client.daemon.storage import (
     ShotRow,
     Store,
     Writer,
+    check_layout,
     format_ts,
     local_tz_name,
 )
@@ -59,7 +60,9 @@ class Daemon(Protocol):
 
     It is built from a frame source, an activity source and, optionally, an uploader
     factory (given the capture index); it creates its own capture policy, writer and
-    control server. When it runs, it hands each part a callback or drives it:
+    control server. Building it raises `OldLayoutError` (storage) if the data directory
+    still has the layout from before interactions; nothing is opened or touched then.
+    When it runs, it hands each part a callback or drives it:
 
         activity.run(self.handle_activity)      input happened
         server.start(self.handle)               a CLI request arrived
@@ -136,6 +139,9 @@ class CaptureDaemon(Daemon):
         self._paths = paths
         self._frames = frames
         self._clock = clock
+        # Before anything opens the index: on the old layout, startup cleanup would take
+        # every old screenshot for an orphan and delete it.
+        check_layout(paths.data_dir)
         # The concrete parts are chosen here; everything below uses them only
         # through their interfaces.
         self._state_file: StateStore = StateFile(paths.state_file)

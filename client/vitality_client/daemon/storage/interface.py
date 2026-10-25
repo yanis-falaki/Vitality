@@ -7,6 +7,13 @@ from PIL import Image
 from vitality_protocol.messages import Interaction
 
 
+class OldLayoutError(RuntimeError):
+    """The data directory still holds the layout from before interactions: a `captures`
+    table in index.sqlite, or screenshots directly under captures/<date>/. The one-time
+    migration has to run first; until then nothing may open the index or clean up files,
+    since every old screenshot would look like an orphan. Raised by `check_layout`."""
+
+
 @dataclass(frozen=True)
 class ShotRow:
     """One saved screenshot, as recorded in the index."""
@@ -116,7 +123,11 @@ class CaptureWriter(Protocol):
         ...
 
     def cleanup_orphans(self) -> int:
-        """Delete files left without an index row by a crash; return how many. Startup only."""
+        """Delete files left without an index row by a crash; return how many. Startup only.
+
+        Only files at the interaction depth (captures/<date>/<time>/<file>) are considered,
+        so files of the old layout or anything else in the tree are never deleted.
+        """
         ...
 
     def disk_usage_bytes(self) -> int:

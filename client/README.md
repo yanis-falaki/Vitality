@@ -106,6 +106,19 @@ Tailscale. Without `upload_server` set, nothing leaves the machine. Wayland only
    top -p $(pgrep -f vitality-clientd)
    ```
 
+### Upgrading from the old capture layout
+
+Before interactions, captures were stored as `captures/<date>/<ULID>.webp` with a `captures`
+table in `index.sqlite`. The current daemon refuses to start on that layout and exits with
+`old capture layout found; run the one-time migration first`, without touching any file,
+because its startup cleanup would otherwise take every old screenshot for an orphan.
+
+The migration is a one-time script kept outside this repository (design: section 8 of
+`docs/superpowers/specs/2026-10-25-server-ingest-design.md`): stop the service, back up
+`~/.local/share/vitality/client`, run the script (it renames the files into interaction
+folders, fills the new tables and drops the old one), check the counts, then start the
+service again.
+
 ## Upload to a server
 
 Optional. Each interaction is uploaded as soon as it ends, to a `vitality-server` that is
