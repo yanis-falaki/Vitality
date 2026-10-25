@@ -38,7 +38,8 @@ In the commands below, `<vm>` is the VM's exe.dev name; the SSH name is `<vm>.ex
    ssh <vm>.exe.xyz 'cd Vitality && ./server/install.sh'
    ```
 
-   The script installs Python 3.14 with `uv` into `/opt/vitality-server`, creates the
+   The script installs Python 3.14 with `uv` and the server, with its dependencies at the
+   exact versions (and hashes) in `server/uv.lock`, into `/opt/vitality-server`, creates the
    `vitality` system user, `/srv/vitality` and `/etc/vitality/server.toml`, installs the
    systemd unit, and starts it. It never overwrites an existing `server.toml`. Repeat
    steps 2 and 3 to upgrade: the code is reinstalled and the service restarted.

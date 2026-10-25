@@ -30,10 +30,18 @@ export UV_PYTHON_INSTALL_DIR="$PYTHON_DIR"
 sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" "$APP_DIR" "$PYTHON_DIR"
 uv python install 3.14
 [[ -x "$APP_DIR/bin/python" ]] || uv venv --python 3.14 "$APP_DIR"
+# The third-party dependencies at exactly the versions in server/uv.lock, with their hashes
+# (uv checks every hash given). --locked stops here if the lock is out of date with
+# server/pyproject.toml. The two local packages are left out of the export: they have no
+# hash and are installed from this checkout below.
+REQUIREMENTS=$(mktemp)
+trap 'rm -f "$REQUIREMENTS"' EXIT
+(cd server && uv export --locked --no-dev --no-editable --no-emit-project --no-emit-local \
+    --quiet) > "$REQUIREMENTS"
 # Reinstall both packages every time: the version number does not change between upgrades.
 # --no-sources: ignore server/pyproject.toml's editable path source for vitality-protocol, so
 # both are copied into the venv and nothing under /opt depends on this checkout.
-uv pip install --python "$APP_DIR/bin/python" --no-sources \
+uv pip install --python "$APP_DIR/bin/python" --no-sources -r "$REQUIREMENTS" \
     --reinstall-package vitality-protocol --refresh-package vitality-protocol \
     --reinstall-package vitality-server --refresh-package vitality-server \
     ./protocol ./server
