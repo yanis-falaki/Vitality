@@ -54,6 +54,13 @@ echo "==> creating the vitality user and its directories"
 if ! id vitality >/dev/null 2>&1; then
     sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin vitality
 fi
+# The data folder is 750 vitality:vitality. Group membership lets the installing user read it
+# (vitality-server status, browsing captures) without sudo; it is read-only for the group.
+# (Asked of the group database, not `id`, which shows only the groups of this login.)
+if ! getent group vitality | cut -d: -f4 | tr ',' '\n' | grep -qx "$(id -un)"; then
+    sudo usermod -aG vitality "$(id -un)"
+    echo "    added $(id -un) to the vitality group; it takes effect at your next login"
+fi
 sudo install -d -m 750 -o vitality -g vitality "$DATA_DIR"
 sudo install -d -m 755 "$CONFIG_DIR"
 if [[ -e "$CONFIG_DIR/server.toml" ]]; then
@@ -84,7 +91,8 @@ Done. Next:
   1. Edit $CONFIG_DIR/server.toml: set allowed_clients to the Tailscale names of the
      devices that may upload, then: sudo systemctl restart vitality-server
   2. Check it: vitality-server doctor
-     and see what has arrived: sudo vitality-server status   (the data folder is private)
+     and see what has arrived: vitality-server status
+     (log in again once if install.sh just added you to the vitality group)
   3. From any device on the tailnet: curl http://vitality-librarian:8100/health
      (use the hostname and port you set in Tailscale and server.toml)
 NEXT

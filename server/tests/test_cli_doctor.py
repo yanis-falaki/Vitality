@@ -39,6 +39,11 @@ def test_all_ok_in_order_with_details_in_the_names(tmp_path):
     assert all(isinstance(c, Check) and c.ok and c.hint == "" for c in checks), checks
 
 
+def test_missing_config_file_is_ok_but_says_it_uses_defaults(tmp_path):
+    checks = run(tmp_path / "absent.toml")
+    assert checks[0] == Check("config loads (no file; using defaults)", True, "")
+
+
 def test_health_probe_gets_the_tailscale_address_and_port(tmp_path):
     seen = []
     run(make_config(tmp_path), health_probe=lambda ip, port: seen.append((ip, port)) or True)

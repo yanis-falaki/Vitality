@@ -12,6 +12,9 @@ from vitality_server.config import load_server_config
 from vitality_server.storage import DeviceSummary, read_summary
 
 
+GROUP_HINT = "are you in the vitality group? log in again after install.sh adds you"
+
+
 def status(config_path: Path) -> int:
     """Print one line per device in the index (sorted by name), the free disk space and the
     paths block; return the exit code.
@@ -70,6 +73,7 @@ def _device_line(device: DeviceSummary, now: datetime) -> str:
 
 def _reason(exc: Exception) -> str:
     """Why a read failed, short: `Permission denied`, `No such file or directory`, ...;
-    a permission problem also says to use sudo, since the data folder is the server user's."""
+    a permission problem also says what to check: the data folder is readable by the
+    `vitality` group, which `install.sh` adds the installing user to."""
     text = (exc.strerror or str(exc)) if isinstance(exc, OSError) else str(exc)
-    return text + ("; try sudo vitality-server status" if isinstance(exc, PermissionError) else "")
+    return text + (f"; {GROUP_HINT}" if isinstance(exc, PermissionError) else "")

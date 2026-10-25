@@ -87,11 +87,12 @@ run `vitality-serverd --config PATH`.
 
 Both `vitality-server` commands take `--config PATH` (default `/etc/vitality/server.toml`).
 `install.sh` links `vitality-server` into `/usr/local/bin`. They only read: they never change
-the data folder or the service. The data folder belongs to the `vitality` user, so run
-`status` with `sudo`; `doctor` works without it.
+the data folder or the service. `status` needs no `sudo` for members of the `vitality` group,
+which `install.sh` makes the installing user (log in again once for that to take effect);
+`doctor` needs no group at all.
 
 ```
-$ sudo vitality-server status
+$ vitality-server status
 laptop: 595 interactions · 1835 shots · 201.0 MB · last received 21:30:37
 disk: 19.7 GB free
 config:   /etc/vitality/server.toml
@@ -144,8 +145,9 @@ server refuses to listen anywhere else. Logs never contain image contents.
       interaction.json              times, time zone and the list of shots
 ```
 
-The data directory is readable by the `vitality` user and root only; use `sudo` to browse
-it. Files are **not encrypted** on the VM and exe.dev does not back it up: the laptop keeps
+The data directory is readable by the `vitality` user and group (read-only for the group), and
+`install.sh` adds you to that group, so you can browse it without `sudo` after one re-login.
+Files are **not encrypted** on the VM and exe.dev does not back it up: the laptop keeps
 every capture, so the laptop is the backup for now.
 
 Never put a future agent or "doer" VM in `allowed_clients`: whatever is listed there can write

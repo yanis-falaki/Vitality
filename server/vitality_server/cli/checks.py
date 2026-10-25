@@ -82,7 +82,8 @@ def run_checks(
 ) -> list[Check]:
     """Run every check; each probe argument replaces the real machine in tests.
 
-    Returns, in this order: config loads, tailscale up (<ip>), service running, /health
+    Returns, in this order: config loads (named `config loads (no file; using defaults)` when
+    the file does not exist, which is allowed but worth seeing), tailscale up (<ip>), service running, /health
     answers on <ip>:<port>, data folder present, allowed_clients set (<names>), disk space
     (<free> free). `tailscale_probe` returns the address or raises; `health_probe` gets that
     address and the configured port; `disk_probe` gets the data folder. If the config does not
@@ -95,7 +96,8 @@ def run_checks(
     except (ValueError, OSError) as exc:
         config, config_check = None, Check("config loads", False, str(exc))
     else:
-        config_check = Check("config loads", True, "")
+        defaults = "" if config_path.exists() else " (no file; using defaults)"
+        config_check = Check(f"config loads{defaults}", True, "")
     address = _address(tailscale_probe)
     return [
         config_check,

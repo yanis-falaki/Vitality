@@ -32,12 +32,12 @@ def read_summary(data_dir: Path) -> list[DeviceSummary]:
     that SQLite refuses (for example the server's files belong to another user) is retried
     that way too, which can miss uploads the server has not yet checkpointed.
 
-    Raises FileNotFoundError if there is no index, and `sqlite3.Error` if it cannot be read
+    Raises FileNotFoundError if there is no index, PermissionError if the folder cannot be
+    entered (the server's folder is private to the `vitality` group), and `sqlite3.Error` if it cannot be read
     or is not an index.
     """
     index = Path(data_dir) / "index.sqlite"
-    if not index.is_file():
-        raise FileNotFoundError(2, "No such file or directory", str(index))
+    index.stat()  # raises FileNotFoundError, or PermissionError if the folder is not readable
     if not Path(f"{index}-wal").exists():
         return _read(_uri(index, "mode=ro&immutable=1"))
     try:

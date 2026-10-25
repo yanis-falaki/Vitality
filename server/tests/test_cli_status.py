@@ -124,3 +124,17 @@ def test_bad_config_goes_to_stderr_and_exits_1(tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.err.startswith("vitality-server: ") and "bogus" in captured.err
     assert captured.out == ""
+
+
+def test_permission_problem_hints_at_the_vitality_group(tmp_path, capsys, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+
+    def denied(data_dir):
+        raise PermissionError(13, "Permission denied", str(data_dir / "index.sqlite"))
+    monkeypatch.setattr(status_module, "read_summary", denied)
+    assert status(config_for(tmp_path, data)) == 1
+    err = capsys.readouterr().err
+    assert err == (f"cannot read {data}/index.sqlite: Permission denied; "
+                   "are you in the vitality group? log in again after install.sh adds you\n")
+    assert "sudo" not in err

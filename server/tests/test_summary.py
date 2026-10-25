@@ -96,3 +96,15 @@ def test_works_while_a_store_is_open_and_writing(tmp_path):
         assert read_summary(tmp_path)[0].interactions == 2
     finally:
         store.close()
+
+
+def test_unreadable_folder_raises_permission_error_not_file_not_found(tmp_path):
+    make_store(tmp_path)
+    tmp_path.chmod(0o000)
+    try:
+        if os.access(tmp_path, os.R_OK):
+            pytest.skip("running as a user that ignores directory permissions")
+        with pytest.raises(PermissionError):
+            read_summary(tmp_path)
+    finally:
+        tmp_path.chmod(stat.S_IRWXU)
