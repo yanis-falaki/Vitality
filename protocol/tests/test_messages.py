@@ -1,3 +1,6 @@
+import json
+from datetime import datetime
+
 import pytest
 from pydantic import ValidationError
 
@@ -38,3 +41,22 @@ def test_invalid_shot_rejected(change):
 
 def test_upload_reply_defaults_ok():
     assert UploadReply(stored="new").model_dump() == {"ok": True, "stored": "new"}
+
+
+def test_timestamps_serialize_with_milliseconds():
+    data = json.loads(Interaction.model_validate({
+        **INTERACTION, "start": "2026-10-25T17:00:00.449999Z",
+        "shots": [{**SHOT, "ts": "2026-10-25T17:00:04.1Z"}]}).model_dump_json())
+    assert data["start"] == "2026-10-25T17:00:00.449Z"             # truncated, not rounded
+    assert data["end"] == "2026-10-25T17:00:04.120Z"
+    assert data["local_start"] == "2026-10-25T10:00:00.449-07:00"
+    assert data["shots"][0]["ts"] == "2026-10-25T17:00:04.100Z"
+
+
+def test_utc_written_as_z_from_any_zone():
+    i = Interaction.model_validate({**INTERACTION, "start": "2026-10-25T17:00:00.449+00:00"})
+    assert json.loads(i.model_dump_json())["start"] == "2026-10-25T17:00:00.449Z"
+
+
+def test_python_dump_keeps_datetimes():
+    assert isinstance(Interaction.model_validate(INTERACTION).model_dump()["start"], datetime)
