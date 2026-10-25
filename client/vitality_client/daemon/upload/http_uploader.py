@@ -76,7 +76,7 @@ class HttpUploader(Uploader):
         self._idle_wait = idle_wait
         self._wake = asyncio.Event()
         self._state: State = "ok"
-        self._last_upload: str | None = None
+        self._last_upload = index.last_uploaded_at()  # so status survives a restart
 
     # -- Uploader ------------------------------------------------------------------------
 

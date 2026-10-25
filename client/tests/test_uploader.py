@@ -425,3 +425,12 @@ def failed_reason(tmp_path, name):
         return conn.execute("SELECT upload_error FROM interactions WHERE name = ?", (name,)).fetchone()[0]
     finally:
         conn.close()
+
+
+async def test_last_upload_survives_a_restart(tmp_path):
+    store, up = setup(tmp_path, lambda r: httpx.Response(201, json={"ok": True, "stored": "new"}))
+    await up.upload_once()
+    last = up.status["last_upload"]
+    assert last is not None
+    restarted = HttpUploader("http://srv", store, tmp_path)
+    assert restarted.status["last_upload"] == last

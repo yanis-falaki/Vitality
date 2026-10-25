@@ -142,6 +142,10 @@ class Store(CaptureIndex):
             self._conn.execute(
                 "UPDATE interactions SET uploaded_at = ? WHERE name = ?", (ts, name))
 
+    def last_uploaded_at(self) -> str | None:
+        with self._lock:
+            return self._conn.execute("SELECT MAX(uploaded_at) FROM interactions").fetchone()[0]
+
     def mark_failed(self, name: str, error: str) -> None:
         with self._lock, self._conn:
             self._conn.execute(

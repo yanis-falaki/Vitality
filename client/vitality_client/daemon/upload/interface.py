@@ -23,5 +23,6 @@ class Uploader(Protocol):
     @property
     def status(self) -> UploadStatus:
         """The upload state, the number of pending interactions, and when the last upload
-        succeeded (None if none has this run)."""
+        succeeded (the newest one recorded in the index, so it survives restarts; None if
+        nothing has been uploaded)."""
         ...

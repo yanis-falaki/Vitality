@@ -91,6 +91,11 @@ class CaptureIndex(Protocol):
 
     def mark_uploaded(self, name: str, ts: str) -> None: ...
 
+    def last_uploaded_at(self) -> str | None:
+        """When the newest upload was confirmed (the latest `ts` given to `mark_uploaded`),
+        or None if nothing has been uploaded."""
+        ...
+
     def mark_failed(self, name: str, error: str) -> None:
         """Record that the server rejected an interaction; it is no longer pending."""
         ...

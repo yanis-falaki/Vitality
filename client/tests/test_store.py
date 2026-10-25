@@ -73,3 +73,13 @@ def test_shots_in_insertion_order_within_a_timestamp(tmp_path):
     b = ShotRow(I.name, "0004-2.webp", a.ts, "manual", 1, 1, 1)
     s.insert_shot(a); s.insert_shot(b)
     assert [x.file for x in s.interaction(I.name).shots] == ["0000.webp", "0004.webp", "0004-2.webp"]
+
+
+def test_last_uploaded_at(tmp_path):
+    s = Store(tmp_path / "i.sqlite"); assert s.last_uploaded_at() is None
+    late = InteractionRow("2025-10-25/18-00-00", "2025-10-25T18:00:00.000Z", I.local_start, I.tz)
+    s.insert_shot(S, I); s.insert_shot(ShotRow(late.name, "0000.webp", late.start, "activity", 1, 1, 1), late)
+    s.end_interaction(I.name); s.end_interaction(late.name)
+    assert s.last_uploaded_at() is None
+    s.mark_uploaded(late.name, "2025-10-25T18:01:00.000Z"); s.mark_uploaded(I.name, "2025-10-25T18:02:00.000Z")
+    assert s.last_uploaded_at() == "2025-10-25T18:02:00.000Z"
