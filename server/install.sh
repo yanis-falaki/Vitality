@@ -46,6 +46,9 @@ uv pip install --python "$APP_DIR/bin/python" --no-sources -r "$REQUIREMENTS" \
     --reinstall-package vitality-server --refresh-package vitality-server \
     ./protocol ./server
 chmod -R a+rX "$APP_DIR" "$PYTHON_DIR"   # the vitality user must be able to run it
+# vitality-serverd is the server (run by systemd); vitality-server is the command line
+# (status, doctor), put on the PATH so it works from any directory.
+sudo ln -sf "$APP_DIR/bin/vitality-server" /usr/local/bin/vitality-server
 
 echo "==> creating the vitality user and its directories"
 if ! id vitality >/dev/null 2>&1; then
@@ -80,7 +83,8 @@ cat <<NEXT
 Done. Next:
   1. Edit $CONFIG_DIR/server.toml: set allowed_clients to the Tailscale names of the
      devices that may upload, then: sudo systemctl restart vitality-server
-  2. Check it: systemctl status vitality-server
-     and from any device on the tailnet: curl http://vitality-librarian:8100/health
+  2. Check it: vitality-server doctor
+     and see what has arrived: sudo vitality-server status   (the data folder is private)
+  3. From any device on the tailnet: curl http://vitality-librarian:8100/health
      (use the hostname and port you set in Tailscale and server.toml)
 NEXT

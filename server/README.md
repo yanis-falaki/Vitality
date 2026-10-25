@@ -8,7 +8,7 @@ uploads only from devices named in `allowed_clients`. The device is identified b
 Tailscale, not by anything the sender says.
 
 It runs on an exe.dev VM (Ubuntu 24.04, with `uv` and `tailscale` preinstalled) as a
-systemd service, `vitality-server`.
+systemd service, `vitality-server`, which runs the program `vitality-serverd`.
 
 ## Setup
 
@@ -75,11 +75,53 @@ also change `ReadWritePaths` in `/etc/systemd/system/vitality-server.service` (a
 `systemctl daemon-reload`); note that `install.sh` overwrites the unit on each run.
 
 Changes take effect after `sudo systemctl restart vitality-server`. To use another file,
-run `vitality-server --config PATH`.
+run `vitality-serverd --config PATH`.
+
+## Commands
+
+| Command | What it is |
+|---|---|
+| `vitality-serverd` | the server itself; systemd runs it, you never need to |
+| `vitality-server status` | what each device has uploaded, free disk space, where things live |
+| `vitality-server doctor` | checks the setup, one line per check, and says what to do about a failure |
+
+Both `vitality-server` commands take `--config PATH` (default `/etc/vitality/server.toml`).
+`install.sh` links `vitality-server` into `/usr/local/bin`. They only read: they never change
+the data folder or the service. The data folder belongs to the `vitality` user, so run
+`status` with `sudo`; `doctor` works without it.
+
+```
+$ sudo vitality-server status
+laptop: 595 interactions · 1835 shots · 201.0 MB · last received 21:30:37
+disk: 19.7 GB free
+config:   /etc/vitality/server.toml
+data:     /srv/vitality
+captures: /srv/vitality/captures
+index:    /srv/vitality/index.sqlite
+program:  /opt/vitality-server
+service:  /etc/systemd/system/vitality-server.service
+logs:     journalctl -u vitality-server
+
+$ vitality-server doctor
+✓ config loads
+✓ tailscale up (100.101.102.103)
+✓ service running
+✓ /health answers on 100.101.102.103:8100
+✓ data folder present
+✗ allowed_clients set — edit /etc/vitality/server.toml, then sudo systemctl restart vitality-server
+✓ disk space (19.7 GB free)
+config:   /etc/vitality/server.toml
+...                                   (the same paths as status)
+```
+
+`status` shows the last time each device uploaded in your local time (`HH:MM:SS` for
+today, otherwise the date). `doctor` exits 1 if any check fails; `status` exits 1 if it
+cannot read the data folder or the index.
 
 ## Check that it works
 
 ```sh
+vitality-server doctor
 systemctl status vitality-server
 journalctl -u vitality-server -f        # logs: the device, the interaction name, any rejection
 curl http://vitality-librarian:8100/health      # from a device on the tailnet

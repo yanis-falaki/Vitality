@@ -293,7 +293,9 @@ server/
     routes/                      interactions.py (POST /interactions), health.py (GET /health)
     gate.py                      UploadGate: size headers and sending device, before parsing
     errors.py                    ErrorReply helper and the exception handlers
-    main.py                      entry point: load config, run uvicorn
+    main.py                      vitality-serverd, the server: load config, run uvicorn
+    cli/                         vitality-server status / doctor (read-only; main.py, status.py,
+                                 doctor.py, checks.py, paths.py)
     config.py                    server.toml
     identity/                    interface.py (Identity), tailscale.py (TailscaleIdentity)
     storage/                     interface.py (InteractionStore), files.py (FileStore)
@@ -357,7 +359,9 @@ port 8000 by default) cannot reach it.
 1. installs Python 3.14 with `uv` and creates the server's virtual environment;
 2. creates the `vitality` system user, `/srv/vitality` and `/etc/vitality/server.toml`;
 3. installs and enables `vitality-server.service` (`After=tailscaled.service`,
-   `User=vitality`, `Restart=on-failure`).
+   `User=vitality`, `Restart=on-failure`), whose `ExecStart` is `vitality-serverd`;
+4. links the `vitality-server` command line (`status`, `doctor`: read-only checks of the
+   setup and a summary of what has been received) into `/usr/local/bin`.
 
 Once per VM, by the user: `sudo tailscale up` (opens a login link), then rename the device
 `vitality-librarian`. The laptop joins the same Tailscale network and is renamed `laptop`.
