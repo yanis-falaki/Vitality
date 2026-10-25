@@ -6,6 +6,7 @@ from pathlib import Path
 
 from vitality_server.cli.doctor import doctor
 from vitality_server.cli.status import status
+from vitality_server.cli.upgrade import upgrade
 from vitality_server.shared.config import DEFAULT_CONFIG
 
 
@@ -18,6 +19,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         status    what each device has uploaded, disk space, paths
         doctor    check the setup
+        upgrade   pull the latest main from GitHub, reinstall, then run doctor
 
     Exit codes: 0 on success; 1 when the command fails (unusable settings or data, failed
     checks; the reason is reported on stderr or in the output); 2 for a bad command line,
@@ -29,6 +31,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return status(args.config)
         case "doctor":
             return doctor(args.config)
+        case "upgrade":
+            return upgrade(args.config)
     return 2  # unreachable: argparse requires a known command
 
 
@@ -36,7 +40,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="vitality-server")
     sub = parser.add_subparsers(dest="command", required=True)
     for name, help_text in [("status", "show what each device has uploaded, and where things live"),
-                            ("doctor", "check the setup")]:
+                            ("doctor", "check the setup"),
+                            ("upgrade", "pull the latest main from GitHub, reinstall, then run doctor")]:
         command = sub.add_parser(name, help=help_text)
         command.add_argument("--config", type=Path, default=DEFAULT_CONFIG,
                              help=f"settings file (default: {DEFAULT_CONFIG})")

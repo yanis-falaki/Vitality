@@ -5,6 +5,10 @@ from pathlib import Path
 PROGRAM_DIR = Path("/opt/vitality-server")
 """Where `install.sh` puts the server's virtual environment."""
 
+SOURCE_FILE = PROGRAM_DIR / "source"
+"""Holds the absolute path of the repo checkout `install.sh` last installed from; `upgrade`
+pulls and reinstalls from there."""
+
 SERVICE_FILE = Path("/etc/systemd/system/vitality-serverd.service")
 """The installed systemd unit."""
 

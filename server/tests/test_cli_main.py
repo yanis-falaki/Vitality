@@ -28,7 +28,7 @@ def test_serverd_names_itself_vitality_serverd(capsys):
     assert "usage: vitality-serverd" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("command", ["status", "doctor"])
+@pytest.mark.parametrize("command", ["status", "doctor", "upgrade"])
 def test_commands_dispatch_with_the_default_config(monkeypatch, command):
     seen = []
     monkeypatch.setattr(cli_module, command, lambda config: seen.append(config) or 7)
@@ -36,7 +36,7 @@ def test_commands_dispatch_with_the_default_config(monkeypatch, command):
     assert seen == [DEFAULT_CONFIG]
 
 
-@pytest.mark.parametrize("command", ["status", "doctor"])
+@pytest.mark.parametrize("command", ["status", "doctor", "upgrade"])
 def test_config_option(monkeypatch, command):
     seen = []
     monkeypatch.setattr(cli_module, command, lambda config: seen.append(config) or 0)
