@@ -1,0 +1,3 @@
+data_dir = "/srv/vitality"       # where captures/, tmp/ and index.sqlite are kept
+port = 8100                      # served on the VM's Tailscale address only
+allowed_clients = ["laptop"]     # Tailscale device names allowed to upload

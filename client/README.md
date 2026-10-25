@@ -1,8 +1,9 @@
 # vitality-client
 
-A small Wayland daemon that takes a "before" and an "after" screenshot around each burst of
-keyboard or mouse activity and stores them locally (WebP files plus a SQLite index).
-Nothing leaves the machine. Wayland only.
+A small Wayland daemon that takes screenshots around each burst of keyboard or mouse
+activity, groups them into one folder per interaction (WebP files plus an `interaction.json`
+and a SQLite index), and can upload each finished interaction to a Vitality server over
+Tailscale. Without `upload_server` set, nothing leaves the machine. Wayland only.
 
 ## Install
 
@@ -105,6 +106,45 @@ Nothing leaves the machine. Wayland only.
    top -p $(pgrep -f vitality-clientd)
    ```
 
+## Upload to a server
+
+Optional. Each interaction is uploaded as soon as it ends, to a `vitality-server` that is
+only reachable over Tailscale (set it up with [`server/README.md`](../server/README.md)).
+Without `upload_server` in `client.toml`, nothing is uploaded and `status` shows
+`upload: disabled`.
+
+1. Join the laptop to the same tailnet as the server, under the name the server's
+   `allowed_clients` lists (`laptop`):
+
+   ```sh
+   sudo pacman -S tailscale
+   sudo systemctl enable --now tailscaled
+   sudo tailscale up
+   sudo tailscale set --hostname=laptop
+   ```
+
+2. Add the server's address to `~/.config/vitality/client.toml` and restart the daemon:
+
+   ```toml
+   upload_server = "http://vitality-librarian:8100"
+   ```
+
+   ```sh
+   systemctl --user restart vitality-client
+   ```
+
+   The name `vitality-librarian` is resolved by Tailscale's MagicDNS; if your setup does not
+   resolve it, use the address from `tailscale ip -4 vitality-librarian` instead.
+
+3. Check it: `vitality-client doctor` should pass the `tailscale` and `upload server`
+   checks, and `vitality-client status` should show `upload: ok`.
+
+Uploads retry on their own: offline or a server error backs off from 5 s to 5 min, and a
+refusal because the laptop is not in `allowed_clients` is retried every 5 min. An
+interaction the server rejects as invalid or too large (or whose files are missing) is skipped and
+logged, not retried. Uploads continue while capture is paused. Captures are always kept
+locally after they upload.
+
 ## Commands
 
 `vitality-clientd` is the daemon itself (what the service runs). Everything else goes
@@ -115,14 +155,29 @@ through `vitality-client`, which talks to the running daemon:
 | `vitality-client pause [DURATION]` | Pause, optionally for e.g. `30s`, `30m`, `2h` |
 | `vitality-client resume` | Resume |
 | `vitality-client toggle` | Pause if capturing, resume if paused (for a bar button or keybind) |
-| `vitality-client status` | State, captures today, last capture, disk use, warnings, paths |
+| `vitality-client status` | State, captures today, last capture, disk use, upload state, warnings, paths |
 | `vitality-client status --json` | The same as one line of JSON |
-| `vitality-client doctor` | Check the setup |
-| `vitality-client capture` | Take a screenshot now (even while paused) and print its path |
+| `vitality-client doctor` | Check the setup (with `upload_server` set, also Tailscale and the server) |
+| `vitality-client capture` | Take a screenshot now (even while paused) and print its path. It joins the open interaction, or is its own one-shot interaction when idle |
 | `vitality-client reset [--all] [--yes]` | Delete all captures and the index (asks first; the daemon must be stopped). `--all` also deletes state, so the screen-sharing picker appears again |
 
 Pausing takes one final capture if an interaction is in progress, so pause before sensitive
 content appears, not after.
+
+`status` includes the upload state:
+
+```
+capturing · 42 captures today · last 17:00:41 · 38.2 MB
+activity: available
+capture: available
+upload: ok · 0 pending · last 17:00:43
+```
+
+The upload state is `disabled` (no `upload_server`), `ok`, `offline` (the server cannot be
+reached; interactions queue up) or `rejected` (the server refused this laptop: check
+`allowed_clients`). `pending` counts finished interactions not yet uploaded; `last` is the
+time of the last successful upload. With no server set, the line is just `upload: disabled`.
+`status --json` carries it as an `upload` object (`state`, `pending`, `last_upload`).
 
 ### Pause keybinding (Hyprland)
 
@@ -134,7 +189,7 @@ bind = SUPER SHIFT, F12, exec, vitality-client resume
 ### Status bar (Waybar)
 
 `status --json` prints one line with `state` (`idle`, `active` or `paused`),
-`captures_today`, `disk_warning` and more, and exits 1 with no output on stdout when the
+`captures_today` (shots taken today), `disk_warning`, `upload` and more, and exits 1 with no output on stdout when the
 daemon is not running:
 
 ```json
@@ -156,9 +211,11 @@ uv run pyright    # type check: implementations must match their interfaces
 ```
 
 Layout: `daemon/` is `vitality-clientd` and the parts only it uses (policy, activity,
-frames, storage); `cli/` is `vitality-client`; `shared/` holds what both use: `config.py`
+frames, storage, upload); `cli/` is `vitality-client`; `shared/` holds what both use: `config.py`
 (paths and settings), `state.py` (saved pause state) and `channel.py` (the socket
-protocol). Neither `daemon/` nor `cli/` imports the other.
+protocol). Neither `daemon/` nor `cli/` imports the other. The folder layout and the upload
+messages are shared with the server through the `protocol/` package at the repo root, a path
+dependency of this project.
 
 Each package's `interface.py` holds its contract (`Protocol`s plus the data types they use);
 the implementations inherit from it and pyright checks they match. Start reading at a
@@ -176,10 +233,11 @@ package's `__init__.py`; `daemon/daemon.py` opens with the daemon's own contract
 Optional `~/.config/vitality/client.toml` (defaults shown):
 
 ```toml
-settle_seconds = 2     # quiet time after the last input before the "after" capture
-max_gap_seconds = 10   # longest an interaction can run before it is split
+settle_seconds = 2     # quiet time after the last input that ends an interaction (last shot)
+max_gap_seconds = 10   # longest gap between shots while activity continues
 webp_quality = 85
 disk_warning_gb = 20   # status and the log warn above this; nothing is deleted
+# upload_server = "http://vitality-librarian:8100"   # unset = no uploads (see above)
 ```
 
 Files follow the XDG convention; `status` and `doctor` print the exact paths.
@@ -187,9 +245,28 @@ Files follow the XDG convention; `status` and `doctor` print the exact paths.
 | What | Default location |
 |---|---|
 | Config | `~/.config/vitality/client.toml` |
-| Captures and `index.sqlite` | `~/.local/share/vitality/client/` |
+| Captures and `index.sqlite` | `~/.local/share/vitality/client/` (layout below) |
 | Pause state, portal restore token | `~/.local/state/vitality/client/state.json` |
 | Control socket | `$XDG_RUNTIME_DIR/vitality/client.sock` |
+
+### Stored captures
+
+Each burst of activity is one **interaction**, a folder named by its UTC start time:
+
+```
+~/.local/share/vitality/client/
+  index.sqlite                     tables: interactions, shots
+  captures/2026-10-25/17-00-00/
+    0000.webp                      the screen just before the first input
+    0004.webp                      later shots: whole seconds since the start
+    0014.webp
+    interaction.json               start/end, local time and zone, the list of shots
+```
+
+`interaction.json` appears when the interaction ends, so a folder without one is still in
+progress (an interrupted one is closed the next time the daemon starts). The same layout is
+what the server stores, and it is what gets uploaded. A manual `capture` while idle is an
+interaction of its own with a single shot.
 
 ## Security note
 
@@ -199,3 +276,7 @@ single-user machine you own. The input watcher reduces each event to a timestamp
 leaves its module, so it can later be split into a separate process running as a dedicated
 system user; that split is required before this runs on anyone else's machine. Logs never
 contain key data, pointer data or image contents.
+
+With `upload_server` set, your screenshots leave the laptop, over Tailscale, to the server
+named there (see its [README](../server/README.md) for how they are stored). They are not
+encrypted at rest on the server.
