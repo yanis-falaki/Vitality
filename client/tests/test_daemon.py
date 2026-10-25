@@ -285,7 +285,7 @@ async def test_run_refuses_second_instance_without_touching_files(daemon_env):
 
 
 def test_disk_usage_skips_files_that_vanish_during_scan(tmp_path):
-    w = Writer(tmp_path, Store(tmp_path / "i.sqlite"), 85, "UTC")
+    w = Writer(tmp_path, Store(tmp_path / "i.sqlite"), 85, tz=lambda: "UTC")
     row = w.write(img, 0.0, 0.0, "activity")
     (tmp_path / "captures/1970-01-01/00-00-00/G.webp.tmp").write_bytes(b"x")
     real_stat = Path.stat

@@ -5,6 +5,7 @@ Shots are grouped into interaction folders; `end` closes one and writes interact
 
 import os
 import stat
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -60,13 +61,15 @@ class _IndexedNames:
 
 
 class Writer(CaptureWriter):
-    def __init__(self, data_dir: Path, store: CaptureIndex, quality: int, tz: str) -> None:
+    def __init__(self, data_dir: Path, store: CaptureIndex, quality: int,
+                 tz: Callable[[], str] = local_tz_name) -> None:
+        """`tz` gives the system's IANA time zone; it is asked when each interaction opens,
+        so a zone change (travel, DST setup) applies from the next interaction on."""
         self._data_dir = Path(data_dir)
         self._captures = self._data_dir / "captures"
         self._store = store
         self._quality = quality
-        self._tz = ZoneInfo(tz)
-        self._tz_name = tz
+        self._tz = tz
         # start -> folder name, for interactions this run has recorded a shot for.
         self._open: dict[float, str] = {}
 
@@ -78,10 +81,11 @@ class Writer(CaptureWriter):
         new: InteractionRow | None = None
         if name is None:
             name = interaction_name(datetime.fromtimestamp(start, UTC), _IndexedNames(self._store))
+            tz = self._tz()
             new = InteractionRow(
                 name, format_ts(start),
-                datetime.fromtimestamp(start, self._tz).isoformat(timespec="milliseconds"),
-                self._tz_name,
+                datetime.fromtimestamp(start, ZoneInfo(tz)).isoformat(timespec="milliseconds"),
+                tz,
             )
             taken: set[str] = set()
         else:

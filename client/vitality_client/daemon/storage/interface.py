@@ -106,7 +106,10 @@ class CaptureWriter(Protocol):
         """Save one screenshot crash-safely (file first, then index row); return its row.
 
         `start` (epoch seconds) identifies the interaction the shot belongs to; the first
-        shot for a `start` opens the interaction. `ts` is the capture time.
+        shot for a `start` opens the interaction, and records the system's time zone at
+        that moment (its `tz` and `local_start`). `ts` is the capture time. Raises what
+        encoding, the disk or the index raise; the index then has no row for the shot
+        (a file it leaves is removed by `cleanup_orphans` at the next start).
         """
         ...
 

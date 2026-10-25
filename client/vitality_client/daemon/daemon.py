@@ -48,7 +48,6 @@ from vitality_client.daemon.storage import (
     Writer,
     check_layout,
     format_ts,
-    local_tz_name,
 )
 from vitality_client.daemon.upload import Uploader
 
@@ -151,8 +150,7 @@ class CaptureDaemon(Daemon):
             paused=self._state.paused, paused_until=self._state.paused_until,
         )
         self._store: CaptureIndex = Store(paths.data_dir / "index.sqlite")
-        self._writer: CaptureWriter = Writer(
-            paths.data_dir, self._store, config.webp_quality, tz=local_tz_name())
+        self._writer: CaptureWriter = Writer(paths.data_dir, self._store, config.webp_quality)
         self._server: ControlServer = UnixControlServer(paths.socket_path)
         self._watcher = activity
         self._uploader: Uploader | None = None if uploader is None else uploader(self._store)

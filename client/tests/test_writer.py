@@ -13,7 +13,7 @@ T0 = 1761411600.449                      # 2025-10-25T17:00:00.449Z
 
 def make(tmp_path):
     store = Store(tmp_path / "index.sqlite")
-    return store, Writer(tmp_path, store, 85, "America/Vancouver")
+    return store, Writer(tmp_path, store, 85, tz=lambda: "America/Vancouver")
 
 
 def test_shots_go_into_interaction_folder(tmp_path):
@@ -84,7 +84,7 @@ def test_failed_first_shot_leaves_no_interaction(tmp_path):                 # Re
 def test_close_interrupted_ends_open_interactions(tmp_path):
     store, w = make(tmp_path)
     w.write(img, T0, T0, "activity")
-    store2 = Store(tmp_path / "index.sqlite"); w2 = Writer(tmp_path, store2, 85, "UTC")
+    store2 = Store(tmp_path / "index.sqlite"); w2 = Writer(tmp_path, store2, 85, tz=lambda: "UTC")
     assert w2.close_interrupted() == 1
     assert (tmp_path / "captures/2025-10-25/17-00-00/interaction.json").exists()
     assert store2.open_interactions() == []
@@ -106,7 +106,7 @@ def test_json_write_failure_leaves_interaction_open_and_repairable(tmp_path):
 def test_close_interrupted_ends_at_last_shot(tmp_path):
     store, w = make(tmp_path)
     w.write(img, T0, T0, "activity"); w.write(img, T0, T0 + 4.7, "manual")
-    w2 = Writer(tmp_path, Store(tmp_path / "index.sqlite"), 85, "UTC")
+    w2 = Writer(tmp_path, Store(tmp_path / "index.sqlite"), 85, tz=lambda: "UTC")
     w2.close_interrupted()
     data = json.loads((tmp_path / "captures/2025-10-25/17-00-00/interaction.json").read_text())
     assert data["end"] == data["shots"][-1]["ts"] == "2025-10-25T17:00:05.149Z"
@@ -206,3 +206,29 @@ def test_cleanup_only_looks_at_the_interaction_depth(tmp_path):
     orphan.parent.mkdir(parents=True); orphan.write_bytes(b"x")
     assert w.cleanup_orphans() == 1 and not orphan.parent.exists()
     assert all((tmp_path / rel).exists() for rel in elsewhere)
+
+
+def test_time_zone_is_read_when_each_interaction_opens(tmp_path):
+    zones = ["America/Vancouver", "Asia/Tokyo"]
+    calls = []
+
+    def tz():
+        calls.append(True)
+        return zones[len(calls) - 1]
+
+    store = Store(tmp_path / "index.sqlite")
+    w = Writer(tmp_path, store, 85, tz=tz)
+    w.write(img, T0, T0, "activity"); w.write(img, T0, T0 + 4, "activity"); w.end(T0)
+    w.write(img, T0 + 100, T0 + 100, "activity"); w.end(T0 + 100)
+    first = store.interaction("2025-10-25/17-00-00")
+    second = store.interaction("2025-10-25/17-01-40")
+    assert len(calls) == 2                       # once per interaction, not per shot
+    assert first.tz == "America/Vancouver" and first.local_start.isoformat().endswith("-07:00")
+    assert second.tz == "Asia/Tokyo" and second.local_start.isoformat().endswith("+09:00")
+
+
+def test_time_zone_defaults_to_the_system_zone(tmp_path, monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    store = Store(tmp_path / "index.sqlite")
+    Writer(tmp_path, store, 85).write(img, T0, T0, "activity")
+    assert store.interaction("2025-10-25/17-00-00").tz == "Europe/Paris"

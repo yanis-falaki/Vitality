@@ -25,7 +25,7 @@ def close_stores():
 def make_uploader(tmp_path, handler, **options):
     store = Store(tmp_path / "i.sqlite")
     stores.append(store)
-    writer = Writer(tmp_path, store, 85, "UTC")
+    writer = Writer(tmp_path, store, 85, tz=lambda: "UTC")
     writer.write(Image.new("RGB", (8, 8)), T0, T0, "activity")
     writer.end(T0)
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://srv")
