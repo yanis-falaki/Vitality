@@ -1,0 +1,41 @@
+[project]
+name = "vitality-server"
+version = "0.1.0"
+description = "Receives interactions uploaded by Vitality clients and stores them"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "httpx",
+    "vitality-protocol",
+]
+
+[tool.uv.sources]
+vitality-protocol = { path = "../protocol", editable = true }
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest",
+    "pytest-asyncio",
+]
+
+[project.scripts]
+vitality-server = "vitality_server.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vitality_server"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.pyright]
+include = ["vitality_server", "tests"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
