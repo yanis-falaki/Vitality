@@ -8,7 +8,11 @@ dependencies = [
     "dbus-fast",
     "Pillow",
     "python-ulid",
+    "vitality-protocol",
 ]
+
+[tool.uv.sources]
+vitality-protocol = { path = "../protocol", editable = true }
 
 [dependency-groups]
 dev = [

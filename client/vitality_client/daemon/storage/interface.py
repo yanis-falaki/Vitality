@@ -4,52 +4,112 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from PIL import Image
+from vitality_protocol.messages import Interaction
 
 
 @dataclass(frozen=True)
-class CaptureRow:
+class ShotRow:
     """One saved screenshot, as recorded in the index."""
 
-    capture_id: str
-    interaction_id: str
-    kind: str        # "before" or "after"
-    source: str      # "screen"
-    ts: str          # UTC ISO 8601 with milliseconds, e.g. 2026-10-21T14:02:05.312Z
-    path: str        # relative to the data directory
+    interaction: str   # "2026-10-25/17-00-00"
+    file: str          # "0004.webp"
+    ts: str            # UTC ISO 8601 with milliseconds, e.g. 2026-10-21T14:02:05.312Z
+    trigger: Literal["activity", "manual"]
     width: int
     height: int
     bytes: int
 
+    @property
+    def path(self) -> str:
+        """Relative to the data directory."""
+        return f"captures/{self.interaction}/{self.file}"
+
+
+@dataclass(frozen=True)
+class InteractionRow:
+    """The start of an interaction, recorded with its first shot."""
+
+    name: str          # "2026-10-25/17-00-00"
+    start: str         # UTC ISO 8601 with milliseconds
+    local_start: str   # ISO 8601 with offset and milliseconds, e.g. 2026-10-25T10:00:00.449-07:00
+    tz: str            # IANA name, e.g. "America/Vancouver"
+    source: str = "screen"
+
 
 class CaptureIndex(Protocol):
-    """The searchable record of saved screenshots (one row each). Thread-safe."""
+    """The searchable record of interactions and their shots. Thread-safe."""
 
-    def insert(self, row: CaptureRow) -> None: ...
-
-    def paths(self) -> set[str]:
-        """Every indexed file path."""
+    def insert_shot(self, shot: ShotRow, new_interaction: InteractionRow | None = None) -> None:
+        """Record a shot; with `new_interaction`, its interaction too, in one transaction."""
         ...
 
-    def count_since(self, ts: str) -> int:
-        """How many captures have a timestamp at or after `ts`."""
+    def has_interaction(self, name: str) -> bool: ...
+
+    def shot_files(self, name: str) -> set[str]:
+        """The file names already recorded for an interaction."""
         ...
 
-    def last_ts(self) -> str | None:
-        """The newest capture's timestamp, or None if there are none."""
+    def end_interaction(self, name: str) -> None:
+        """Close an interaction: its `end` becomes its last shot's `ts`."""
+        ...
+
+    def open_interactions(self) -> list[str]:
+        """Names of interactions that have no `end` yet."""
+        ...
+
+    def interaction(self, name: str) -> Interaction:
+        """An ended interaction with its shots in time order (the content of interaction.json)."""
+        ...
+
+    def shot_paths(self) -> set[str]:
+        """Every indexed file path, relative to the data directory."""
+        ...
+
+    def count_shots_since(self, ts: str) -> int:
+        """How many shots have a timestamp at or after `ts`."""
+        ...
+
+    def last_shot_ts(self) -> str | None:
+        """The newest shot's timestamp, or None if there are none."""
+        ...
+
+    def pending_uploads(self) -> list[str]:
+        """Ended interactions not yet uploaded and not rejected; oldest first."""
+        ...
+
+    def pending_count(self) -> int: ...
+
+    def mark_uploaded(self, name: str, ts: str) -> None: ...
+
+    def mark_failed(self, name: str, error: str) -> None:
+        """Record that the server rejected an interaction; it is no longer pending."""
         ...
 
     def close(self) -> None: ...
 
 
 class CaptureWriter(Protocol):
-    """Saves screenshots to disk and indexes them."""
+    """Saves screenshots to disk, groups them into interactions and indexes them."""
 
-    def write(self, image: Image.Image, kind: Literal["before", "after"],
-              interaction_id: str, ts: float) -> CaptureRow:
+    def write(self, image: Image.Image, start: float, ts: float,
+              trigger: Literal["activity", "manual"]) -> ShotRow:
         """Save one screenshot crash-safely (file first, then index row); return its row.
 
-        `ts` is the capture time in epoch seconds; it also picks the day folder.
+        `start` (epoch seconds) identifies the interaction the shot belongs to; the first
+        shot for a `start` opens the interaction. `ts` is the capture time.
         """
+        ...
+
+    def end(self, start: float) -> str | None:
+        """Close the interaction opened for `start` and write its interaction.json.
+
+        Returns the interaction's name, or None if it has no shots.
+        """
+        ...
+
+    def close_interrupted(self) -> int:
+        """Close interactions a crash left open (end + interaction.json); return how many.
+        Startup only."""
         ...
 
     def cleanup_orphans(self) -> int:
