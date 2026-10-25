@@ -12,6 +12,7 @@ STATUS: Status = {
     "last_capture": "2026-10-21T14:02:05.312Z", "disk_bytes": 3_100_000_000, "disk_warning": False,
     "activity": "available", "capture": "available",
     "paths": {"config": "/c", "data": "/d", "state": "/s"},
+    "upload": {"state": "disabled", "pending": 0, "last_upload": None},
 }
 
 

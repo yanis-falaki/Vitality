@@ -51,19 +51,28 @@ class StatusPaths(TypedDict):
     state: str   # state.json
 
 
+class UploadStatus(TypedDict):
+    """How sending ended interactions to the server is going."""
+
+    state: Literal["disabled", "ok", "offline", "rejected"]
+    pending: int                     # ended interactions not yet uploaded
+    last_upload: str | None          # UTC ISO timestamp
+
+
 class Status(TypedDict):
     """The reply to `status`, `pause` and `resume`: what the daemon is doing now."""
 
     ok: Literal[True]
     state: Literal["idle", "active", "paused"]
     paused_until: str | None   # UTC ISO timestamp when a timed pause ends
-    captures_today: int        # since local midnight
-    last_capture: str | None   # UTC ISO timestamp
+    captures_today: int        # screenshots since local midnight
+    last_capture: str | None   # UTC ISO timestamp of the newest screenshot
     disk_bytes: int            # total size of saved captures
     disk_warning: bool         # above disk_warning_gb
     activity: Literal["available", "unavailable"]  # can input be read?
     capture: Literal["available", "unavailable"]   # is the screen stream up?
     paths: StatusPaths
+    upload: UploadStatus
 
 
 class CaptureReply(TypedDict):
