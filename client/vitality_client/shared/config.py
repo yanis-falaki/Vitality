@@ -8,6 +8,8 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Mapping
 
+import httpx
+
 
 @dataclass(frozen=True)
 class Config:
@@ -53,8 +55,18 @@ def _is_number(value: object) -> bool:
 
 
 def _check_url(key: str, value: object) -> str:
-    if not isinstance(value, str) or not value.startswith(("http://", "https://")):
-        raise ValueError(f"config key {key} must be an http:// or https:// URL, got {value!r}")
+    """An http(s) URL with a host and, if given, a port in 1-65535; without a trailing /."""
+    problem = f"config key {key} must be an http:// or https:// URL with a host"
+    if not isinstance(value, str):
+        raise ValueError(f"{problem}, got {value!r}")
+    try:
+        url = httpx.URL(value)
+    except httpx.InvalidURL as exc:
+        raise ValueError(f"{problem}, got {value!r} ({exc})") from None
+    if url.scheme not in ("http", "https") or not url.host:
+        raise ValueError(f"{problem}, got {value!r}")
+    if url.port is not None and not 1 <= url.port <= 65535:
+        raise ValueError(f"config key {key} has an invalid port {url.port}, got {value!r}")
     return value.rstrip("/")
 
 

@@ -127,3 +127,21 @@ def test_upload_server_must_be_http_url(tmp_path, value):
     p.write_text(f"upload_server = {value}\n")
     with pytest.raises(ValueError, match="upload_server"):
         load_config(p)
+
+
+@pytest.mark.parametrize("value", [
+    "http://", "http:///", "https://:8100", "http://host:81000", "http://host:0",
+    "ftp://host", "http://host:port", "http://[::1",
+])
+def test_upload_server_must_have_a_host_and_a_valid_port(tmp_path, value):
+    p = tmp_path / "client.toml"
+    p.write_text(f'upload_server = "{value}"\n')
+    with pytest.raises(ValueError, match="upload_server"):
+        load_config(p)
+
+
+@pytest.mark.parametrize("value", ["http://100.101.102.103:8100", "https://host", "http://host:65535"])
+def test_upload_server_valid_urls(tmp_path, value):
+    p = tmp_path / "client.toml"
+    p.write_text(f'upload_server = "{value}"\n')
+    assert load_config(p).upload_server == value
