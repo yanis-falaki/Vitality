@@ -35,4 +35,21 @@ def test_serves_on_the_tailscale_address(tmp_path, monkeypatch):
     served = {}
     monkeypatch.setattr(server_main.uvicorn, "run", lambda app, **k: served.update(k))
     assert server_main.main(["--config", str(path)]) == 0
-    assert served == {"host": "100.64.0.9", "port": 9123}
+    assert served == {"host": "100.64.0.9", "port": 9123, "proxy_headers": False}
+
+
+def test_unusable_data_dir_returns_1(tmp_path, capsys):
+    (tmp_path / "afile").write_text("")
+    path = tmp_path / "server.toml"
+    path.write_text(f'data_dir = "{tmp_path / "afile" / "data"}"\n')
+    assert server_main.main(["--config", str(path)]) == 1
+    assert capsys.readouterr().err.startswith("vitality-server: ")
+
+
+def test_recover_failure_returns_1(tmp_path, capsys, monkeypatch):
+    path = tmp_path / "server.toml"
+    path.write_text(f'data_dir = "{tmp_path / "data"}"\n')
+    monkeypatch.setattr(server_main.FileStore, "recover", lambda self: (_ for _ in ()).throw(OSError(5, "I/O error")))
+    monkeypatch.setattr(server_main.uvicorn, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not serve")))
+    assert server_main.main(["--config", str(path)]) == 1
+    assert capsys.readouterr().err.startswith("vitality-server: ")

@@ -49,7 +49,8 @@ async def test_tailscale_ipv4_is_first_line():
     assert calls == [["tailscale", "ip", "-4"]]
 
 
-@pytest.mark.parametrize("code,stdout", [(1, b"100.64.0.1\n"), (127, b""), (0, b"\n")])
+@pytest.mark.parametrize("code,stdout", [(1, b"100.64.0.1\n"), (127, b""), (0, b"\n"), (0, b"hello\n"),
+                                         (0, b"fd7a::1\n"), (0, b"100.64.0.1.5\n"), (0, b"0.0.0.0 x\n")])
 async def test_tailscale_ipv4_failure_raises(code, stdout):
     with pytest.raises(RuntimeError):
         await tailscale_ipv4(raw_runner(code, stdout))
@@ -61,3 +62,10 @@ async def test_run_command_missing_binary_is_127():
 
 async def test_run_command_captures_stdout():
     assert await run_command(["echo", "hi"]) == (0, b"hi\n")
+
+
+async def test_run_command_unexecutable_is_127(tmp_path):
+    not_executable = tmp_path / "tailscale"
+    not_executable.write_text("#!/bin/sh\n")
+    not_executable.chmod(0o644)
+    assert await run_command([str(not_executable)]) == (127, b"")

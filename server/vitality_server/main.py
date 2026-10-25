@@ -35,7 +35,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     try:
-        recovered = store.recover()
+        try:
+            recovered = store.recover()
+        except OSError as e:
+            print(f"vitality-server: {e}", file=sys.stderr)
+            return 1
         if recovered:
             log.info("recovery indexed %d interactions the index was missing", recovered)
         if not config.allowed_clients:
@@ -47,7 +51,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         log.info("serving on %s:%d for %s", ip, config.port, ", ".join(config.allowed_clients) or "nobody")
         uvicorn.run(create_app(store, TailscaleIdentity(), config.allowed_clients),
-                    host=ip, port=config.port)
+                    host=ip, port=config.port,
+                    proxy_headers=False)  # identity is the socket's address; never a header's
         return 0
     finally:
         store.close()

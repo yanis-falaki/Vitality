@@ -1,6 +1,7 @@
 """Identity from the local Tailscale daemon, by running the `tailscale` command."""
 
 import asyncio
+import ipaddress
 import json
 from collections.abc import Awaitable, Callable, Sequence
 
@@ -17,14 +18,14 @@ _TIMED_OUT = 124  # the exit code of timeout(1)
 async def run_command(argv: Sequence[str]) -> tuple[int, bytes]:
     """Run a command and return (exit code, stdout); stderr is discarded.
 
-    A missing program gives exit code 127, and a command that takes longer than
+    A program that cannot be started (missing, not executable) gives exit code 127, and a command that takes longer than
     5 seconds is killed and gives 124, so a stuck `tailscale` cannot hang a request.
     """
     try:
         process = await asyncio.create_subprocess_exec(
             *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL)
-    except FileNotFoundError:
+    except OSError:  # no such program, or not executable
         return _NOT_FOUND, b""
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), _TIMEOUT_S)
@@ -63,11 +64,15 @@ class TailscaleIdentity(Identity):
 async def tailscale_ipv4(run: Runner = run_command) -> str:
     """This machine's Tailscale IPv4 address (`tailscale ip -4`, first line).
 
-    Raises RuntimeError if Tailscale is missing, not running, or gives no address.
+    Raises RuntimeError if Tailscale is missing, not running, or does not give an IPv4
+    address: the server binds exactly what this returns, so it must be an address.
     """
     code, stdout = await run(["tailscale", "ip", "-4"])
-    lines = stdout.decode(errors="replace").split() if code == 0 else []
+    lines = stdout.decode(errors="replace").splitlines() if code == 0 else []
     if not lines:
         raise RuntimeError(f"`tailscale ip -4` gave no address (exit code {code}); "
                            "is Tailscale installed and running?")
-    return lines[0]
+    try:
+        return str(ipaddress.IPv4Address(lines[0].strip()))
+    except ValueError:
+        raise RuntimeError(f"`tailscale ip -4` gave {lines[0].strip()!r}, not an IPv4 address") from None
