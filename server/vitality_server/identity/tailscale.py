@@ -14,8 +14,6 @@ from collections.abc import Awaitable, Callable, Sequence
 from vitality_server.identity.interface import Identity
 
 
-# == Contract =============================================================================
-
 Runner = Callable[[Sequence[str]], Awaitable[tuple[int, bytes]]]
 """Runs a command; returns (exit code, stdout). Replaced by a fake in tests."""
 
@@ -65,14 +63,6 @@ async def tailscale_ipv4(run: Runner = run_command) -> str:
     return str(address)
 
 
-# == Implementation =======================================================================
-
-_TIMEOUT_S = 5.0
-_NOT_FOUND = 127  # the shell's exit code for "command not found"
-_TIMED_OUT = 124  # the exit code of timeout(1)
-_TAILSCALE_RANGE = ipaddress.IPv4Network("100.64.0.0/10")  # the CGNAT block Tailscale assigns
-
-
 class TailscaleIdentity(Identity):
     """Asks `tailscale whois` which device owns an address, and accepts only devices on this
     server's own tailnet.
@@ -108,6 +98,12 @@ class TailscaleIdentity(Identity):
             _, rest = _split_dns_name(me.get("DNSName") if isinstance(me, dict) else None)
             self._suffix = rest or None
         return self._suffix
+
+
+_TIMEOUT_S = 5.0
+_NOT_FOUND = 127  # the shell's exit code for "command not found"
+_TIMED_OUT = 124  # the exit code of timeout(1)
+_TAILSCALE_RANGE = ipaddress.IPv4Network("100.64.0.0/10")  # the CGNAT block Tailscale assigns
 
 
 def _field(stdout: bytes, key: str) -> object:

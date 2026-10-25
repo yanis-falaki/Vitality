@@ -9,8 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-# == Contract =============================================================================
-
 @dataclass(frozen=True)
 class ServerConfig:
     data_dir: Path = Path("/srv/vitality")      # holds captures/, tmp/ and index.sqlite

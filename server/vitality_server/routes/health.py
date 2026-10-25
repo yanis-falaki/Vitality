@@ -5,8 +5,6 @@ from vitality_protocol.messages import Health
 from vitality_protocol.routes import HEALTH_PATH
 
 
-# == Contract =============================================================================
-
 router = APIRouter()
 """Serves `GET /health`: `200` `Health`, the free disk space of the data directory. Needs
 no device check, so any tailnet peer can call it."""

@@ -1,8 +1,4 @@
-"""Configuration and filesystem path resolution.
-
-The contract (`Config`, `Paths`, `resolve_paths`, `load_config`) comes first; the key
-checks they use follow.
-"""
+"""Configuration and filesystem path resolution."""
 
 from __future__ import annotations
 
@@ -14,8 +10,6 @@ from typing import Mapping
 
 import httpx
 
-
-# == Contract =============================================================================
 
 @dataclass(frozen=True)
 class Config:
@@ -109,8 +103,6 @@ def load_config(path: Path) -> Config:
         values[key] = number
     return Config(**values)  # pyright: ignore[reportArgumentType]  # types validated above
 
-
-# == Implementation =======================================================================
 
 def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)

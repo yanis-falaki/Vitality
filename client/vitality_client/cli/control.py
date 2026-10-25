@@ -20,8 +20,6 @@ from vitality_client.shared.channel import (
 )
 
 
-# == Contract =============================================================================
-
 def format_status(status: Status) -> str:
     """The text `status` prints: state, captures today, last capture and disk use; then the
     activity, capture and upload lines, a disk warning if there is one, and the paths."""
@@ -107,8 +105,6 @@ def capture(env: Mapping[str, str]) -> int:
     print(reply["path"])
     return 0
 
-
-# == Implementation =======================================================================
 
 def _upload_line(upload: UploadStatus) -> str:
     if upload["state"] == "disabled":

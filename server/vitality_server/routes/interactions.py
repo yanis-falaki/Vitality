@@ -17,8 +17,8 @@ from vitality_protocol.routes import INTERACTIONS_PATH
 from vitality_server.errors import ERROR_STATUSES
 from vitality_server.storage import ConflictingUpload, InvalidUpload
 
+log = logging.getLogger(__name__)
 
-# == Contract =============================================================================
 
 router = APIRouter()
 """Serves `POST /interactions`, which answers:
@@ -66,8 +66,3 @@ async def post_interaction(request: Request, response: Response,
     log.info("stored %s %s: %s", device, interaction.name, stored)
     response.status_code = 201 if stored == "new" else 200
     return UploadReply(stored=stored)
-
-
-# == Implementation =======================================================================
-
-log = logging.getLogger(__name__)

@@ -14,8 +14,6 @@ from collections.abc import Container
 from datetime import UTC, datetime
 
 
-# == Contract =============================================================================
-
 INTERACTION_FILE = "interaction.json"
 """The file that marks an interaction folder complete; holds an `Interaction` as JSON."""
 
@@ -48,8 +46,6 @@ def shot_filename(offset_s: int, taken: Container[str] = ()) -> str:
         raise ValueError("shot offset must not be negative")
     return _first_free(f"{offset_s:04d}", ".webp", taken)
 
-
-# == Implementation =======================================================================
 
 _NAME_FORMAT = "%Y-%m-%d/%H-%M-%S"
 

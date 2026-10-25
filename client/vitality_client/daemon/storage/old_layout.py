@@ -11,8 +11,6 @@ from pathlib import Path
 from vitality_client.daemon.storage.interface import OldLayoutError
 
 
-# == Contract =============================================================================
-
 MESSAGE = "old capture layout found; run the one-time migration first (see client/README.md)"
 """The message of the `OldLayoutError` that `check_layout` raises."""
 
@@ -28,8 +26,6 @@ def check_layout(data_dir: Path) -> None:
     if _has_old_table(data_dir / "index.sqlite") or _has_old_shots(data_dir / "captures"):
         raise OldLayoutError(MESSAGE)
 
-
-# == Implementation =======================================================================
 
 def _has_old_table(db: Path) -> bool:
     if not db.is_file():

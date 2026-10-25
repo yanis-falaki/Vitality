@@ -16,9 +16,6 @@ from vitality_client.shared.config import load_config, resolve_paths
 from vitality_client.shared.state import StateFile
 
 
-
-# == Contract =============================================================================
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the daemon until it is stopped; return the process exit code.
 

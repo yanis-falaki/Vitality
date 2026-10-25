@@ -14,8 +14,8 @@ from vitality_server.config import load_server_config
 from vitality_server.identity import TailscaleIdentity, tailscale_ipv4
 from vitality_server.storage import FileStore
 
+log = logging.getLogger(__name__)
 
-# == Contract =============================================================================
 
 DEFAULT_CONFIG = Path("/etc/vitality/server.toml")
 """The settings file used when `--config` is not given."""
@@ -77,8 +77,3 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     finally:
         store.close()
-
-
-# == Implementation =======================================================================
-
-log = logging.getLogger(__name__)

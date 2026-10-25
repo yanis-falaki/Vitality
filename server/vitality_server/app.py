@@ -38,8 +38,6 @@ from vitality_server.routes import health, interactions
 from vitality_server.storage import InteractionStore
 
 
-# == Contract =============================================================================
-
 def create_app(store: InteractionStore, identity: Identity,
                allowed_clients: Collection[str]) -> FastAPI:
     """The server's ASGI app, serving the routes above on top of `store`.

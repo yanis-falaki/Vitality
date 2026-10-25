@@ -39,8 +39,6 @@ uploader relies on that.
 """
 
 
-# == Contract =============================================================================
-
 INTERACTIONS_PATH = "/interactions"
 """The path of `POST /interactions`."""
 

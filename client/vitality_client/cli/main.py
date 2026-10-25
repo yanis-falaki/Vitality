@@ -8,8 +8,6 @@ from collections.abc import Sequence
 from vitality_client.cli import control, doctor, reset
 
 
-# == Contract =============================================================================
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one `vitality-client` command; return the process exit code.
 
@@ -52,8 +50,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     return 2  # unreachable: argparse requires a known command
 
-
-# == Implementation =======================================================================
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="vitality-client")

@@ -8,8 +8,6 @@ from pathlib import Path
 from vitality_client.cli.common import DAEMON_RUNNING, daemon_is_running, format_bytes, paths_from
 
 
-# == Contract =============================================================================
-
 def reset(env: Mapping[str, str], include_state: bool, assume_yes: bool) -> int:
     """Delete the captures directory (and, with `include_state`, the state directory),
     after listing what goes and asking for a typed `yes` unless `assume_yes`.
@@ -47,8 +45,6 @@ def reset(env: Mapping[str, str], include_state: bool, assume_yes: bool) -> int:
         print(f"deleted {path}")
     return 0
 
-
-# == Implementation =======================================================================
 
 def _describe_data(data_dir: Path) -> str:
     captures = [p for p in (data_dir / "captures").rglob("*.webp") if p.is_file()]

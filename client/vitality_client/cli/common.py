@@ -9,8 +9,6 @@ from vitality_client.shared.config import Paths, resolve_paths
 from vitality_client.shared.channel import DaemonNotRunning, StatusPaths, send_command
 
 
-# == Contract =============================================================================
-
 NOT_RUNNING = "vitality-client daemon is not running"
 """What a command prints when the daemon does not answer."""
 

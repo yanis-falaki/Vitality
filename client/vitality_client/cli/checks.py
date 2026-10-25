@@ -20,8 +20,6 @@ from vitality_protocol.routes import HEALTH_PATH
 from vitality_client.shared.config import Paths, load_config
 
 
-# == Contract =============================================================================
-
 INPUT_GROUP_HINT = "sudo usermod -aG input $USER, then log out and back in"
 PORTAL_HINT = ("install xdg-desktop-portal and a ScreenCast backend for your compositor "
                "(e.g. xdg-desktop-portal-hyprland), and make sure it is running")
@@ -220,8 +218,6 @@ def run_checks(
         checks += [check_tailscale(tailscale_probe), check_upload_server(server, health_probe)]
     return checks
 
-
-# == Implementation =======================================================================
 
 PORTAL_BUS_NAME = "org.freedesktop.portal.Desktop"
 PORTAL_PATH = "/org/freedesktop/portal/desktop"

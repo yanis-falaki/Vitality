@@ -12,10 +12,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PlainSerialize
 from vitality_protocol.layout import INTERACTION_NAME_RE, SHOT_FILE_RE
 
 
-# == Contract =============================================================================
-
 # `Timestamp` needs its serializer to exist when it is defined, so that one helper sits
-# here, above it, rather than under Implementation.
+# here, above it.
 def _format_timestamp(value: datetime) -> str:
     """ISO 8601 with milliseconds (truncated, not rounded); `Z` for UTC, else `+HH:MM`."""
     text = value.isoformat(timespec="milliseconds")

@@ -3,8 +3,6 @@
 from PIL import Image
 
 
-# == Contract =============================================================================
-
 def composite(frames: list[tuple[Image.Image, tuple[int, int]]]) -> Image.Image:
     """Place each frame at its (x, y) on a black canvas sized to the bounding box.
 

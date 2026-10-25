@@ -9,8 +9,8 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from vitality_protocol.messages import ErrorReply
 
+log = logging.getLogger(__name__)
 
-# == Contract =============================================================================
 
 # The statuses a route can answer with an `ErrorReply`, for the OpenAPI `responses` of a route.
 ERROR_STATUSES = (403, 409, 411, 413, 422, 507)
@@ -46,11 +46,6 @@ def add_error_handlers(app: FastAPI) -> None:
     async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
         log.error("failed %s %s", request.method, request.url.path, exc_info=exc)
         return error(500, "internal server error")
-
-
-# == Implementation =======================================================================
-
-log = logging.getLogger(__name__)
 
 
 def _peer(request: Request) -> str:

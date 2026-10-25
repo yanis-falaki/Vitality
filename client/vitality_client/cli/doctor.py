@@ -9,8 +9,6 @@ from vitality_client.shared.channel import DaemonNotRunning, Status, send_comman
 from vitality_client.shared.state import State, StateFile
 
 
-# == Contract =============================================================================
-
 def capture_state_line(status: Status | None, saved: State) -> str:
     """One line saying whether capture is paused: live from the daemon (`status`) if it
     runs, else from the saved state; local times, `HH:MM`."""
@@ -49,8 +47,6 @@ def doctor(env: Mapping[str, str]) -> int:
     })))
     return 0 if all(c.ok for c in checks) else 1
 
-
-# == Implementation =======================================================================
 
 def _pause_text(paused: bool, until: str | None) -> str:
     if not paused:
