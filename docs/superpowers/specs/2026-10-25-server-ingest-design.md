@@ -289,7 +289,10 @@ server/
   install.sh                     sets up the VM (§7.5)
   systemd/vitality-server.service
   vitality_server/
-    app.py                       FastAPI routes; wires identity + storage
+    app.py                       create_app(): builds the FastAPI app from the parts below
+    routes/                      interactions.py (POST /interactions), health.py (GET /health)
+    gate.py                      UploadGate: size headers and sending device, before parsing
+    errors.py                    ErrorReply helper and the exception handlers
     main.py                      entry point: load config, run uvicorn
     config.py                    server.toml
     identity/                    interface.py (Identity), tailscale.py (TailscaleIdentity)
