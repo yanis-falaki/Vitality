@@ -12,7 +12,7 @@ def test_bad_config_message_goes_to_stderr(tmp_path, capsys):
     path.write_text("bogus = 1\n")
     server_main.main(["--config", str(path)])
     err = capsys.readouterr().err
-    assert err.startswith("vitality-server: ") and "bogus" in err
+    assert err.startswith("vitality-serverd: ") and "bogus" in err
 
 
 def test_no_tailscale_never_falls_back_to_all_interfaces(tmp_path, capsys, monkeypatch):
@@ -43,7 +43,7 @@ def test_unusable_data_dir_returns_1(tmp_path, capsys):
     path = tmp_path / "server.toml"
     path.write_text(f'data_dir = "{tmp_path / "afile" / "data"}"\n')
     assert server_main.main(["--config", str(path)]) == 1
-    assert capsys.readouterr().err.startswith("vitality-server: ")
+    assert capsys.readouterr().err.startswith("vitality-serverd: ")
 
 
 def test_recover_failure_returns_1(tmp_path, capsys, monkeypatch):
@@ -52,4 +52,4 @@ def test_recover_failure_returns_1(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(server_main.FileStore, "recover", lambda self: (_ for _ in ()).throw(OSError(5, "I/O error")))
     monkeypatch.setattr(server_main.uvicorn, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not serve")))
     assert server_main.main(["--config", str(path)]) == 1
-    assert capsys.readouterr().err.startswith("vitality-server: ")
+    assert capsys.readouterr().err.startswith("vitality-serverd: ")

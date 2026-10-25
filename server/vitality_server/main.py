@@ -1,4 +1,8 @@
-"""`vitality-server [--config PATH]`: load the settings, open the store, serve on Tailscale."""
+"""`vitality-serverd [--config PATH]`: load the settings, open the store, serve on Tailscale.
+
+This is the server itself, run by systemd. The `vitality-server` command, which inspects it,
+is in `vitality_server.cli`.
+"""
 
 import argparse
 import asyncio
@@ -10,15 +14,11 @@ from pathlib import Path
 import uvicorn
 
 from vitality_server.app import create_app
-from vitality_server.config import load_server_config
+from vitality_server.config import DEFAULT_CONFIG, load_server_config
 from vitality_server.identity import TailscaleIdentity, tailscale_ipv4
 from vitality_server.storage import FileStore
 
 log = logging.getLogger(__name__)
-
-
-DEFAULT_CONFIG = Path("/etc/vitality/server.toml")
-"""The settings file used when `--config` is not given."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -41,7 +41,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     a failed recovery, or no Tailscale address (the reason goes to stderr, nothing is
     served). A bad command line exits 2 (argparse).
     """
-    parser = argparse.ArgumentParser(prog="vitality-server", description=__doc__)
+    parser = argparse.ArgumentParser(prog="vitality-serverd", description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG,
                         help=f"settings file (default: {DEFAULT_CONFIG})")
     args = parser.parse_args(argv)
@@ -52,14 +52,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = load_server_config(args.config)
         store = FileStore(config.data_dir)
     except (ValueError, OSError) as e:  # bad settings, or a data directory we cannot use
-        print(f"vitality-server: {e}", file=sys.stderr)
+        print(f"vitality-serverd: {e}", file=sys.stderr)
         return 1
 
     try:
         try:
             recovered = store.recover()
         except OSError as e:
-            print(f"vitality-server: {e}", file=sys.stderr)
+            print(f"vitality-serverd: {e}", file=sys.stderr)
             return 1
         if recovered:
             log.info("recovery indexed %d interactions the index was missing", recovered)
@@ -68,7 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             ip = asyncio.run(tailscale_ipv4())
         except RuntimeError as e:  # never fall back to listening on every interface
-            print(f"vitality-server: cannot find the Tailscale address: {e}", file=sys.stderr)
+            print(f"vitality-serverd: cannot find the Tailscale address: {e}", file=sys.stderr)
             return 1
         log.info("serving on %s:%d for %s", ip, config.port, ", ".join(config.allowed_clients) or "nobody")
         uvicorn.run(create_app(store, TailscaleIdentity(), config.allowed_clients),

@@ -1,12 +1,17 @@
 """The server's settings, read from a TOML file.
 
 Recognised keys: `data_dir`, `port`, `allowed_clients`. Anything omitted keeps the
-default of `ServerConfig`.
+default of `ServerConfig`. `DEFAULT_CONFIG` is where the server and its command line look for
+the file when `--config` is not given.
 """
 
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+
+DEFAULT_CONFIG = Path("/etc/vitality/server.toml")
+"""The settings file used when `--config` is not given."""
 
 
 @dataclass(frozen=True)

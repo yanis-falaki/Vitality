@@ -22,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-vitality-server = "vitality_server.main:main"
+vitality-serverd = "vitality_server.main:main"
 
 [build-system]
 requires = ["hatchling"]

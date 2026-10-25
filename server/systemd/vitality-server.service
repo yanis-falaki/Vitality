@@ -5,7 +5,7 @@ Wants=network-online.target tailscaled.service
 
 [Service]
 User=vitality
-ExecStart=/opt/vitality-server/bin/vitality-server
+ExecStart=/opt/vitality-server/bin/vitality-serverd
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
