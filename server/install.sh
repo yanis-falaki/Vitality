@@ -12,7 +12,7 @@ DATA_DIR=/srv/vitality
 CONFIG_DIR=/etc/vitality
 UNIT=vitality-server.service
 
-if [[ ! -d protocol || ! -d server ]]; then
+if [[ ! -d protocol || ! -d server || ! -f protocol/pyproject.toml || ! -f server/pyproject.toml ]]; then
     echo "usage: run ./server/install.sh from the root of the Vitality repo (the directory with protocol/ and server/)" >&2
     exit 1
 fi
@@ -31,7 +31,9 @@ sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" "$APP_DIR" "$PYTHON_DIR"
 uv python install 3.14
 [[ -x "$APP_DIR/bin/python" ]] || uv venv --python 3.14 "$APP_DIR"
 # Reinstall both packages every time: the version number does not change between upgrades.
-uv pip install --python "$APP_DIR/bin/python" \
+# --no-sources: ignore server/pyproject.toml's editable path source for vitality-protocol, so
+# both are copied into the venv and nothing under /opt depends on this checkout.
+uv pip install --python "$APP_DIR/bin/python" --no-sources \
     --reinstall-package vitality-protocol --refresh-package vitality-protocol \
     --reinstall-package vitality-server --refresh-package vitality-server \
     ./protocol ./server
@@ -39,7 +41,7 @@ chmod -R a+rX "$APP_DIR" "$PYTHON_DIR"   # the vitality user must be able to run
 
 echo "==> creating the vitality user and its directories"
 if ! id vitality >/dev/null 2>&1; then
-    sudo useradd --system --no-create-home --shell /usr/sbin/nologin vitality
+    sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin vitality
 fi
 sudo install -d -m 750 -o vitality -g vitality "$DATA_DIR"
 sudo install -d -m 755 "$CONFIG_DIR"

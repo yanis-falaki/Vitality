@@ -25,7 +25,7 @@
 - Dedupe, denylists, redaction, tray icon.
 - X11 sessions (a direct-capture backend can be added behind the same frame-source interface).
 - Other sources (camera, audio) — the index has a `source` column so they can be added.
-- Client identity (assigned server-side later).
+- Client identity in the daemon: the server learns which device uploaded from Tailscale, so the client sends none (server-ingest spec §7.2).
 - Encryption at rest (relies on full-disk encryption).
 - Isolating input-device access into a separate privileged process (§9).
 
@@ -177,6 +177,7 @@ First run: approve the screen-capture dialog once.
 - Membership in the `input` group lets **every** process of the user read all input devices, weakening Wayland's protection against keylogging. Accepted for v0 on the author's own machine.
 - The input watcher is a small, self-contained module that reduces each event to a timestamp before it leaves the module, so it can later be split into a separate process running as a dedicated system user. That split is required before Vitality runs on anyone else's machine.
 - Logs never contain key data, pointer data, or image contents.
+- With `upload_server` set, screenshots now leave the laptop for the server, over Tailscale (see the server-ingest spec §9).
 - Pausing captures one final frame if an interaction is active; the user should pause before, not after, sensitive content appears.
 
 ## 10. Errors

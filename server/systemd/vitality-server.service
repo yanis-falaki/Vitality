@@ -1,7 +1,7 @@
 [Unit]
 Description=Vitality server
 After=network-online.target tailscaled.service
-Wants=tailscaled.service
+Wants=network-online.target tailscaled.service
 
 [Service]
 User=vitality

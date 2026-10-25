@@ -65,6 +65,10 @@ port = 8100                      # served on the VM's Tailscale address only
 allowed_clients = ["laptop"]     # Tailscale device names allowed to upload
 ```
 
+`data_dir` must stay under `/srv/vitality`: the service can write nowhere else. To move it,
+also change `ReadWritePaths` in `/etc/systemd/system/vitality-server.service` (and
+`systemctl daemon-reload`); note that `install.sh` overwrites the unit on each run.
+
 Changes take effect after `sudo systemctl restart vitality-server`. To use another file,
 run `vitality-server --config PATH`.
 
@@ -96,6 +100,9 @@ server refuses to listen anywhere else. Logs never contain image contents.
 The data directory is readable by the `vitality` user and root only; use `sudo` to browse
 it. Files are **not encrypted** on the VM and exe.dev does not back it up: the laptop keeps
 every capture, so the laptop is the backup for now.
+
+Never put a future agent or "doer" VM in `allowed_clients`: whatever is listed there can write
+into this store.
 
 Uploads are checked (name, file list and sizes, WebP headers). A repeated upload of the same
 interaction changes nothing and is answered as already stored. Uploads over 50 MB are refused.
