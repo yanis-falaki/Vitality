@@ -38,11 +38,20 @@ nothing. Unlike HTTP's usual assumption for `POST`, this route is idempotent, an
 uploader relies on that.
 """
 
+
+# == Contract =============================================================================
+
 INTERACTIONS_PATH = "/interactions"
+"""The path of `POST /interactions`."""
+
 HEALTH_PATH = "/health"
+"""The path of `GET /health`."""
 
 INTERACTION_FIELD = "interaction"
+"""The multipart part that carries the `Interaction` JSON."""
+
 SHOTS_FIELD = "shots"
+"""The multipart part name used once per shot file."""
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 """The largest request body the server accepts (50 MiB); larger is `413`."""

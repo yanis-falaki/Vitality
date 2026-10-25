@@ -13,12 +13,17 @@ import re
 from collections.abc import Container
 from datetime import UTC, datetime
 
+
+# == Contract =============================================================================
+
 INTERACTION_FILE = "interaction.json"
+"""The file that marks an interaction folder complete; holds an `Interaction` as JSON."""
 
 INTERACTION_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}/\d{2}-\d{2}-\d{2}(-[1-9]\d*)?$")
-SHOT_FILE_RE = re.compile(r"^\d{4,}(-[1-9]\d*)?\.webp$")
+"""Matches an interaction's folder name: `2026-10-25/17-00-00`, with an optional `-<n>`."""
 
-_NAME_FORMAT = "%Y-%m-%d/%H-%M-%S"
+SHOT_FILE_RE = re.compile(r"^\d{4,}(-[1-9]\d*)?\.webp$")
+"""Matches a shot's file name: `0014.webp`, with an optional `-<n>` before the extension."""
 
 
 def interaction_name(start: datetime, taken: Container[str] = ()) -> str:
@@ -42,6 +47,11 @@ def shot_filename(offset_s: int, taken: Container[str] = ()) -> str:
     if offset_s < 0:
         raise ValueError("shot offset must not be negative")
     return _first_free(f"{offset_s:04d}", ".webp", taken)
+
+
+# == Implementation =======================================================================
+
+_NAME_FORMAT = "%Y-%m-%d/%H-%M-%S"
 
 
 def _first_free(base: str, extension: str, taken: Container[str]) -> str:

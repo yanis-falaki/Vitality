@@ -12,6 +12,10 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PlainSerialize
 from vitality_protocol.layout import INTERACTION_NAME_RE, SHOT_FILE_RE
 
 
+# == Contract =============================================================================
+
+# `Timestamp` needs its serializer to exist when it is defined, so that one helper sits
+# here, above it, rather than under Implementation.
 def _format_timestamp(value: datetime) -> str:
     """ISO 8601 with milliseconds (truncated, not rounded); `Z` for UTC, else `+HH:MM`."""
     text = value.isoformat(timespec="milliseconds")
@@ -24,11 +28,15 @@ def _format_timestamp(value: datetime) -> str:
 Timestamp = Annotated[AwareDatetime, PlainSerializer(_format_timestamp, return_type=str, when_used="json")]
 
 
+# Comments, not docstrings, describe the models below: pydantic copies a class docstring
+# into the OpenAPI schema, and that output must not change.
 class _Message(BaseModel):
+    # Base of every message: immutable, and unknown fields are rejected.
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class Shot(_Message):
+    # One screenshot of an interaction.
     file: Annotated[str, Field(pattern=SHOT_FILE_RE.pattern)]  # "0004.webp"
     ts: Timestamp  # exact time of the capture
     trigger: Literal["activity", "manual"]
@@ -50,15 +58,18 @@ class Interaction(_Message):
 
 
 class UploadReply(_Message):
+    # The reply to a stored upload: `stored` says whether it was new or already there.
     ok: Literal[True] = True
     stored: Literal["new", "existing"]
 
 
 class ErrorReply(_Message):
+    # The reply to a refused or failed request; `error` is the human-readable reason.
     ok: Literal[False] = False
     error: str
 
 
 class Health(_Message):
+    # The reply to `GET /health`.
     ok: Literal[True] = True
     disk_free_bytes: int
