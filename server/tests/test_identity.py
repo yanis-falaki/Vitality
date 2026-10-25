@@ -141,3 +141,14 @@ async def test_run_command_unexecutable_is_127(tmp_path):
     not_executable.write_text("#!/bin/sh\n")
     not_executable.chmod(0o644)
     assert await run_command([str(not_executable)]) == (127, b"")
+
+
+@pytest.mark.parametrize("address", ["0.0.0.0", "127.0.0.1", "192.168.1.5", "100.63.255.255", "100.128.0.0"])
+async def test_tailscale_ipv4_outside_tailscales_range_raises(address):
+    with pytest.raises(RuntimeError, match="100.64.0.0/10"):
+        await tailscale_ipv4(raw_runner(0, f"{address}\n".encode()))
+
+
+@pytest.mark.parametrize("address", ["100.101.102.103", "100.64.0.0", "100.127.255.255"])
+async def test_tailscale_ipv4_inside_tailscales_range(address):
+    assert await tailscale_ipv4(raw_runner(0, f"{address}\n".encode())) == address
