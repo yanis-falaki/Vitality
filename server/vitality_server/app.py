@@ -11,7 +11,7 @@
 
 Every error is an `ErrorReply`:
 
-    403  the sending device is unknown to Tailscale or not in `allowed_clients`
+    403  the sending device is not on this server's tailnet or not in `allowed_clients`
     409  an interaction with this name is stored with different content
     411  a request with a `Transfer-Encoding` header, or a POST without a `Content-Length`
     413  the request is larger than `MAX_UPLOAD_BYTES`: by its `Content-Length`, or, because
