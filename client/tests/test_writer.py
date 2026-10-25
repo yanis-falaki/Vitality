@@ -90,6 +90,29 @@ def test_close_interrupted_ends_open_interactions(tmp_path):
     assert store2.open_interactions() == []
 
 
+def test_json_write_failure_leaves_interaction_open_and_repairable(tmp_path):
+    store, w = make(tmp_path)
+    w.write(img, T0, T0, "activity"); w.write(img, T0, T0 + 4.7, "manual")
+    with patch("vitality_client.daemon.storage.writer.os.replace", side_effect=OSError("no space")):
+        with pytest.raises(OSError): w.end(T0)
+    name = "2025-10-25/17-00-00"
+    assert store.open_interactions() == [name] and store.pending_uploads() == []
+    assert not list(tmp_path.rglob("interaction.json*"))
+    assert w.close_interrupted() == 1
+    assert (tmp_path / "captures" / name / "interaction.json").exists()
+    assert store.open_interactions() == [] and store.pending_uploads() == [name]
+
+
+def test_close_interrupted_ends_at_last_shot(tmp_path):
+    store, w = make(tmp_path)
+    w.write(img, T0, T0, "activity"); w.write(img, T0, T0 + 4.7, "manual")
+    w2 = Writer(tmp_path, Store(tmp_path / "index.sqlite"), 85, "UTC")
+    w2.close_interrupted()
+    data = json.loads((tmp_path / "captures/2025-10-25/17-00-00/interaction.json").read_text())
+    assert data["end"] == data["shots"][-1]["ts"] == "2025-10-25T17:00:05.149Z"
+    assert data == json.loads(store.interaction("2025-10-25/17-00-00").model_dump_json())
+
+
 def test_cleanup_removes_unindexed_files_and_empty_folders(tmp_path):
     _, w = make(tmp_path)
     stray = tmp_path / "captures/2025-10-25/17-09-09/0000.webp"; stray.parent.mkdir(parents=True)

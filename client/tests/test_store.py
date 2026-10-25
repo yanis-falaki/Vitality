@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from vitality_client.daemon.storage import InteractionRow, ShotRow, Store
 
 I = InteractionRow("2025-10-25/17-00-00", "2025-10-25T17:00:00.449Z",
@@ -45,8 +49,6 @@ def test_open_interactions_and_shot_files(tmp_path):
 
 
 def test_first_shot_and_interaction_commit_together(tmp_path):
-    import sqlite3
-    import pytest
     s = Store(tmp_path / "i.sqlite"); s.insert_shot(S, I)
     dup = ShotRow(I.name, "0000.webp", S.ts, "manual", 1, 1, 1)
     with pytest.raises(sqlite3.IntegrityError): s.insert_shot(dup)
@@ -54,3 +56,20 @@ def test_first_shot_and_interaction_commit_together(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         s.insert_shot(ShotRow(other.name, "0000.webp", S.ts, "bogus", 1, 1, 1), other)  # type: ignore[arg-type]
     assert not s.has_interaction(other.name)         # rolled back with the bad shot
+
+
+def test_open_interaction_model_ends_at_last_shot(tmp_path):
+    s = Store(tmp_path / "i.sqlite"); s.insert_shot(S, I)
+    later = ShotRow(I.name, "0004.webp", "2025-10-25T17:00:04.100Z", "manual", 1, 1, 1)
+    s.insert_shot(later)
+    m = s.interaction(I.name)
+    assert m.end.isoformat() == "2025-10-25T17:00:04.100000+00:00"
+    assert s.open_interactions() == [I.name]          # reading does not end it
+
+
+def test_shots_in_insertion_order_within_a_timestamp(tmp_path):
+    s = Store(tmp_path / "i.sqlite"); s.insert_shot(S, I)
+    a = ShotRow(I.name, "0004.webp", "2025-10-25T17:00:04.100Z", "activity", 1, 1, 1)
+    b = ShotRow(I.name, "0004-2.webp", a.ts, "manual", 1, 1, 1)
+    s.insert_shot(a); s.insert_shot(b)
+    assert [x.file for x in s.interaction(I.name).shots] == ["0000.webp", "0004.webp", "0004-2.webp"]

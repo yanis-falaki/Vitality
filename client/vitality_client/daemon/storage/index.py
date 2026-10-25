@@ -94,14 +94,16 @@ class Store(CaptureIndex):
     def interaction(self, name: str) -> Interaction:
         with self._lock:
             head = self._conn.execute(
-                "SELECT source, start, end, local_start, tz FROM interactions WHERE name = ?",
-                (name,),
+                "SELECT source, start, "
+                "COALESCE(end, (SELECT MAX(ts) FROM shots WHERE interaction = ?)), "
+                "local_start, tz FROM interactions WHERE name = ?",
+                (name, name),
             ).fetchone()
             if head is None:
                 raise KeyError(name)
             shots = self._conn.execute(
                 "SELECT file, ts, trigger, width, height, bytes FROM shots "
-                "WHERE interaction = ? ORDER BY ts, file", (name,),
+                "WHERE interaction = ? ORDER BY ts, rowid", (name,),
             ).fetchall()
         source, start, end, local_start, tz = head
         return Interaction(

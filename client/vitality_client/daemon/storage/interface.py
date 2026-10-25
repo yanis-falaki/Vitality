@@ -58,7 +58,10 @@ class CaptureIndex(Protocol):
         ...
 
     def interaction(self, name: str) -> Interaction:
-        """An ended interaction with its shots in time order (the content of interaction.json)."""
+        """An interaction with its shots in time order (the content of interaction.json).
+
+        One that is still open is returned as if it ended at its last shot.
+        """
         ...
 
     def shot_paths(self) -> set[str]:

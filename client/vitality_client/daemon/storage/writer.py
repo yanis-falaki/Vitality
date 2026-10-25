@@ -3,10 +3,9 @@
 Shots are grouped into interaction folders; `end` closes one and writes interaction.json.
 """
 
-import json
 import os
 import stat
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -29,15 +28,6 @@ def format_ts(epoch: float) -> str:
     """UTC ISO 8601, truncated (not rounded) to milliseconds, with a Z suffix."""
     dt = datetime.fromtimestamp(epoch, UTC)
     return dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{dt.microsecond // 1000:03d}Z"
-
-
-def _json_default(value: object) -> str:
-    """Write datetimes at millisecond precision (pydantic's own JSON gives microseconds)."""
-    if isinstance(value, datetime):
-        if value.utcoffset() == timedelta(0):
-            return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        return value.isoformat(timespec="milliseconds")
-    raise TypeError(f"not JSON serializable: {type(value).__name__}")
 
 
 def _valid_zone(key: str) -> bool:
@@ -132,17 +122,18 @@ class Writer(CaptureWriter):
         return len(names)
 
     def _finish(self, name: str) -> None:
-        self._store.end_interaction(name)
+        """Write interaction.json, and only then commit the end. If this fails or the
+        process dies part-way, the interaction stays open and `close_interrupted` redoes it."""
         final = self._captures / name / INTERACTION_FILE
         tmp = final.with_name(final.name + ".tmp")
         try:
             final.parent.mkdir(parents=True, exist_ok=True)
-            interaction = self._store.interaction(name).model_dump()
-            tmp.write_text(json.dumps(interaction, indent=2, default=_json_default))
+            tmp.write_text(self._store.interaction(name).model_dump_json(indent=2))
             os.replace(tmp, final)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
+        self._store.end_interaction(name)
 
     def cleanup_orphans(self) -> int:
         """Delete stray temp files and WebP files the index does not know about,
