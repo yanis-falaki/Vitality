@@ -129,6 +129,17 @@ async def test_repeated_offline_logs_one_state_change(tmp_path, caplog):
     assert len([r for r in caplog.records if "offline" in r.getMessage()]) == 1
 
 
+async def test_refusal_while_offline_leaves_the_state_alone(tmp_path, caplog):
+    caplog.set_level("INFO")
+    responses = [httpx.Response(503), httpx.Response(422, json={"ok": False, "error": "bad"})]
+    store, up = setup(tmp_path, lambda r: responses.pop(0))
+    assert await up.upload_once() == "offline"
+    caplog.clear()
+    assert await up.upload_once() == "failed"
+    assert up.status["state"] == "offline"
+    assert "->" not in caplog.text
+
+
 async def test_recovery_is_logged_once(tmp_path, caplog):
     caplog.set_level("INFO")
     responses = [httpx.Response(503), httpx.Response(201, json={"ok": True, "stored": "new"})]
@@ -200,7 +211,7 @@ async def test_wake_triggers_prompt_upload(tmp_path):
 
 async def test_offline_backs_off_then_resets_after_success(tmp_path):
     attempts = []
-    outcomes = [503, 503, 503, 201]
+    outcomes = [503, 503, 503, 201, 503, 201]
 
     def handler(req):
         attempts.append(asyncio.get_running_loop().time())
@@ -214,12 +225,76 @@ async def test_offline_backs_off_then_resets_after_success(tmp_path):
         async with asyncio.timeout(2):
             while len(attempts) < 4:
                 await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)  # the upload loop is idle again
+            writer.write(Image.new("RGB", (8, 8)), T0 + 100, T0 + 100, "activity")
+            writer.end(T0 + 100)
+            up.wake()
+            while len(attempts) < 6:
+                await asyncio.sleep(0.01)
     finally:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-    gaps = [b - a for a, b in zip(attempts, attempts[1:])]
-    assert 0.04 <= gaps[0] < 0.09 and gaps[1] >= 0.09 and gaps[2] >= 0.09  # 0.05, 0.1, capped at 0.1
+    gaps = [b - a for a, b in zip(attempts[:4], attempts[1:4])]
+    assert 0.04 <= gaps[0] < 0.15 and 0.09 <= gaps[1] < 0.3 and 0.09 <= gaps[2] < 0.3  # 0.05, 0.1, capped
+    assert 0.04 <= attempts[5] - attempts[4] < 0.15  # back to retry_initial after the success
+
+
+@pytest.mark.parametrize("response, wait_option", [
+    (httpx.Response(503), "retry_initial"),
+    (httpx.Response(403, json={"ok": False, "error": "no"}), "rejected_wait"),
+])
+async def test_wake_does_not_cut_short_offline_or_rejected_waits(tmp_path, response, wait_option):
+    attempts = []
+
+    def handler(req):
+        attempts.append(asyncio.get_running_loop().time())
+        return response
+
+    store, writer, up = make_uploader(tmp_path, handler, **{wait_option: 0.3})
+    task = asyncio.create_task(up.run())
+    try:
+        async with asyncio.timeout(2):
+            while not attempts:
+                await asyncio.sleep(0.01)
+            for _ in range(5):  # interactions keep ending during the wait
+                up.wake()
+                await asyncio.sleep(0.03)
+            assert len(attempts) == 1
+            while len(attempts) < 2:
+                await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert attempts[1] - attempts[0] >= 0.28
+
+
+async def test_failed_resets_the_backoff(tmp_path):
+    attempts = []
+    outcomes = [503, 503, 422, 503, 201]
+
+    def handler(req):
+        attempts.append(asyncio.get_running_loop().time())
+        return httpx.Response(outcomes.pop(0) if outcomes else 201,
+                              json={"ok": False, "error": "bad"})
+
+    store, writer, up = make_uploader(tmp_path, handler, retry_initial=0.05, retry_max=1.0,
+                                      idle_wait=3600)
+    writer.write(Image.new("RGB", (8, 8)), T0 + 100, T0 + 100, "activity")
+    writer.end(T0 + 100)
+    writer.write(Image.new("RGB", (8, 8)), T0 + 200, T0 + 200, "activity")
+    writer.end(T0 + 200)
+    task = asyncio.create_task(up.run())
+    try:
+        async with asyncio.timeout(3):
+            while len(attempts) < 5:
+                await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert 0.04 <= attempts[4] - attempts[3] < 0.15  # retry_initial again, not 0.2
 
 
 async def test_rejected_waits_before_retrying(tmp_path):

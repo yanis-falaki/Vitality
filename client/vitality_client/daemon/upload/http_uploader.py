@@ -1,12 +1,15 @@
 """Uploading ended interactions to the server over HTTP.
 
-The loop (`run`), until cancelled: `upload_once()`, then wait — until `wake()` or the
-timeout, whichever comes first — before the next round:
+The loop (`run`), until cancelled: `upload_once()`, then wait before the next round:
 
-    uploaded, failed   no wait (look at the next pending interaction)
-    offline            the current backoff: 5 s, doubling to 300 s, reset by an upload
-    rejected           `rejected_wait` (300 s)
-    idle               `idle_wait` (60 s)
+    uploaded, failed   no wait (look at the next pending interaction); resets the backoff
+    offline            the current backoff, in full: 5 s, doubling to 300 s
+    rejected           `rejected_wait` (300 s), in full
+    idle               `idle_wait` (60 s), or until `wake()` — whichever comes first
+
+Only the idle wait is cut short by `wake()` (an interaction just ended). Retrying during an
+outage or after a 403 keeps its own pace however often interactions end; a `wake()` that
+arrives meanwhile is not lost, as the next round looks at everything pending anyway.
 
 `upload_once()` sends the oldest pending interaction: one `POST /interactions` with the
 interaction's JSON and its shot files. What the server's answer means (spec section 6.4):
@@ -72,25 +75,24 @@ class HttpUploader(Uploader):
     # -- Uploader ------------------------------------------------------------------------
 
     async def run(self) -> None:
+        """Upload until cancelled. Only the idle wait ends early on `wake()`; the offline
+        backoff and the rejected wait always run in full (see the module docstring)."""
         backoff = self._retry_initial
         try:
             while True:
                 self._wake.clear()  # before the upload, so a wake() during it is not lost
                 outcome = await self.upload_once()
-                if outcome == "uploaded":
+                if outcome in ("uploaded", "failed"):  # the server answered
                     backoff = self._retry_initial
-                if outcome in ("uploaded", "failed"):
-                    continue
-                if outcome == "offline":
-                    wait = backoff
+                elif outcome == "offline":
+                    await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, self._retry_max)
                 elif outcome == "rejected":
-                    wait = self._rejected_wait
+                    await asyncio.sleep(self._rejected_wait)
                 else:
-                    wait = self._idle_wait
-                with contextlib.suppress(TimeoutError):
-                    async with asyncio.timeout(wait):
-                        await self._wake.wait()
+                    with contextlib.suppress(TimeoutError):
+                        async with asyncio.timeout(self._idle_wait):
+                            await self._wake.wait()
         finally:
             if self._owns_client and self._client is not None:
                 client, self._client = self._client, None
@@ -143,7 +145,6 @@ class HttpUploader(Uploader):
             self._set_state("rejected", _reason(response))
             return "rejected"
         if code in (409, 413, 422):
-            self._set_state("ok", "the server is reachable")
             return self._fail(name, f"the server refused it (HTTP {code}): {_reason(response)}")
         self._set_state("offline", f"HTTP {code}: {_reason(response)}")
         return "offline"
