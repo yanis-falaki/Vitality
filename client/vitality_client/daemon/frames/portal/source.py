@@ -1,8 +1,11 @@
-"""PortalFrameSource: whole-desktop frames from the screen-capture portal, kept alive.
+"""Implements `FrameSource` (see interface.py).
+
+PortalFrameSource: whole-desktop frames from the screen-capture portal, kept alive.
+`PortalFrameSource` has no public methods beyond the Protocol's. The module's other public
+functions are the retry rules, `backoff_delay(failures)` and `should_retry(exc)`.
 
 Combines a `ScreenCastSession` (permission and PipeWire streams, over D-Bus) with
-`FrameStreams` (GStreamer pipelines holding the newest frame). Implements the
-`FrameSource` interface: `start()`, `latest_frame()`, `available`, `close()`.
+`FrameStreams` (GStreamer pipelines holding the newest frame).
 
 If the session cannot be opened, or later breaks, it is torn down and reopened with
 backoff (2, 4, 8 ... 60 s). If the user cancels the permission dialog, it stops

@@ -16,7 +16,29 @@ from vitality_client.shared.config import load_config, resolve_paths
 from vitality_client.shared.state import StateFile
 
 
+
+# == Contract =============================================================================
+
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the daemon until it is stopped; return the process exit code.
+
+    `argv` is the argument list (default: `sys.argv[1:]`); only `--help` is recognised.
+    At startup, in order:
+
+        1. Parse the arguments (a bad one exits 2, argparse).
+        2. Require a Wayland session (`XDG_SESSION_TYPE`).
+        3. Resolve the paths and load `client.toml`.
+        4. Set up logging to stderr.
+        5. Read the saved screen-sharing token from the state file.
+        6. Build the parts: the portal frame source, the evdev activity watcher and, when
+           `upload_server` is configured, the HTTP uploader.
+        7. Run a `CaptureDaemon` with them until SIGTERM/SIGINT, then shut down cleanly.
+
+    Exit codes: 0 after a clean stop; 1 for a non-Wayland session, a missing
+    XDG_RUNTIME_DIR, bad settings, another daemon already running, or a data directory
+    still in the old layout (the reason goes to stderr; in the last case nothing was
+    touched).
+    """
     argparse.ArgumentParser(
         prog="vitality-clientd",
         description="Record screenshots of each burst of keyboard and mouse activity as an "

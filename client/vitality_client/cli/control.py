@@ -20,15 +20,11 @@ from vitality_client.shared.channel import (
 )
 
 
-def _upload_line(upload: UploadStatus) -> str:
-    if upload["state"] == "disabled":
-        return "upload: disabled"
-    last = upload["last_upload"]
-    return (f"upload: {upload['state']} · {upload['pending']} pending · "
-            f"last {'never' if last is None else local_time(last)}")
-
+# == Contract =============================================================================
 
 def format_status(status: Status) -> str:
+    """The text `status` prints: state, captures today, last capture and disk use; then the
+    activity, capture and upload lines, a disk warning if there is one, and the paths."""
     if status["state"] == "paused":
         until = status["paused_until"]
         state = "paused" if until is None else f"paused until {local_time(until, '%H:%M')}"
@@ -59,22 +55,11 @@ def ask(env: Mapping[str, str], request: Request) -> Reply | None:
         return None
 
 
-def _status(reply: Reply | None) -> Status | None:
-    """The `Status` in a reply; prints the daemon's error (and returns None) otherwise."""
-    if reply is None:
-        return None
-    if reply["ok"] is False:
-        print(f"vitality-client: {reply['error']}", file=sys.stderr)
-        return None
-    if "state" not in reply:
-        print("vitality-client: unexpected reply from the daemon", file=sys.stderr)
-        return None
-    return reply
-
-
 def command(env: Mapping[str, str], request: StatusRequest | PauseRequest | ResumeRequest,
             as_json: bool = False) -> int:
-    """Send a status/pause/resume request and print the daemon's status."""
+    """Send a status/pause/resume request and print the daemon's status (one line of JSON
+    without `ok` if `as_json`). Returns 0, or 1 if the daemon is not running, replies with
+    an error or replies with something unexpected (each says so on stderr)."""
     status = _status(ask(env, request))
     if status is None:
         return 1
@@ -84,6 +69,8 @@ def command(env: Mapping[str, str], request: StatusRequest | PauseRequest | Resu
 
 
 def pause(env: Mapping[str, str], duration: str | None) -> int:
+    """Pause capture for `duration` (`45s`, `30m`, `2h`), or until resumed if None; prints
+    the daemon's status. Returns 0, 1 as `command`, or 2 (printing why) for a bad duration."""
     request: PauseRequest = {"cmd": "pause"}
     if duration is not None:
         try:
@@ -95,7 +82,8 @@ def pause(env: Mapping[str, str], duration: str | None) -> int:
 
 
 def toggle(env: Mapping[str, str]) -> int:
-    """Pause if capturing, resume if paused."""
+    """Pause if capturing, resume if paused; prints the daemon's status. Returns 0, or 1 as
+    `command`."""
     status = _status(ask(env, {"cmd": "status"}))
     if status is None:
         return 1
@@ -105,7 +93,8 @@ def toggle(env: Mapping[str, str]) -> int:
 
 
 def capture(env: Mapping[str, str]) -> int:
-    """Ask the daemon for one screenshot now and print where it was saved."""
+    """Ask the daemon for one screenshot now (even while paused) and print where it was
+    saved. Returns 0, or 1 if the daemon is not running or cannot do it."""
     reply = ask(env, {"cmd": "capture"})
     if reply is None:
         return 1
@@ -117,3 +106,26 @@ def capture(env: Mapping[str, str]) -> int:
         return 1
     print(reply["path"])
     return 0
+
+
+# == Implementation =======================================================================
+
+def _upload_line(upload: UploadStatus) -> str:
+    if upload["state"] == "disabled":
+        return "upload: disabled"
+    last = upload["last_upload"]
+    return (f"upload: {upload['state']} · {upload['pending']} pending · "
+            f"last {'never' if last is None else local_time(last)}")
+
+
+def _status(reply: Reply | None) -> Status | None:
+    """The `Status` in a reply; prints the daemon's error (and returns None) otherwise."""
+    if reply is None:
+        return None
+    if reply["ok"] is False:
+        print(f"vitality-client: {reply['error']}", file=sys.stderr)
+        return None
+    if "state" not in reply:
+        print("vitality-client: unexpected reply from the daemon", file=sys.stderr)
+        return None
+    return reply

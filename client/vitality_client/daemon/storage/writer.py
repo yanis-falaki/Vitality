@@ -1,6 +1,14 @@
-"""Crash-safe screenshot writer: encode to a temp file, rename, then index.
+"""Implements `CaptureWriter` (see interface.py).
+
+Crash-safe screenshot writer: encode to a temp file, rename, then index.
 
 Shots are grouped into interaction folders; `end` closes one and writes interaction.json.
+`Writer` has no public methods beyond the Protocol's; its constructor takes the data
+directory, the index, the WebP quality and the time-zone lookup. Public helpers of this
+module, not on the Protocol:
+
+    format_ts(epoch)   the UTC ISO 8601 timestamp (milliseconds, `Z`) the index stores
+    local_tz_name()    the IANA name of the system time zone
 """
 
 import logging

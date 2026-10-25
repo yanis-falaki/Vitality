@@ -1,4 +1,9 @@
-"""Input-activity watcher.
+"""Implements `ActivitySource` (see interface.py).
+
+Input-activity watcher. `ActivityWatcher` has no public methods beyond the Protocol's; its
+constructor takes the device list/open functions, the clock and the timing, so tests can
+fake them. The module's other public function is `is_activity_device(capabilities)`, which
+says whether an input device is a keyboard, mouse or touchpad.
 
 Reports ONLY that input happened and when (a float timestamp). Event objects are
 inspected for their type inside the read loop and never passed on, stored, or

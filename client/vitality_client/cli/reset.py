@@ -8,13 +8,16 @@ from pathlib import Path
 from vitality_client.cli.common import DAEMON_RUNNING, daemon_is_running, format_bytes, paths_from
 
 
-def _describe_data(data_dir: Path) -> str:
-    captures = [p for p in (data_dir / "captures").rglob("*.webp") if p.is_file()]
-    size = sum(p.stat().st_size for p in captures)
-    return f"{data_dir}  ({len(captures)} captures, {format_bytes(size)})"
-
+# == Contract =============================================================================
 
 def reset(env: Mapping[str, str], include_state: bool, assume_yes: bool) -> int:
+    """Delete the captures directory (and, with `include_state`, the state directory),
+    after listing what goes and asking for a typed `yes` unless `assume_yes`.
+
+    Refuses while the daemon is running. Returns 0 when deleted or when there is nothing
+    to delete; 1 when the daemon is running or the answer was not `yes` (nothing is
+    deleted). Raises RuntimeError if XDG_RUNTIME_DIR is not set.
+    """
     paths = paths_from(env)
     if daemon_is_running(paths.socket_path):
         print(DAEMON_RUNNING, file=sys.stderr)
@@ -43,3 +46,11 @@ def reset(env: Mapping[str, str], include_state: bool, assume_yes: bool) -> int:
         shutil.rmtree(path)
         print(f"deleted {path}")
     return 0
+
+
+# == Implementation =======================================================================
+
+def _describe_data(data_dir: Path) -> str:
+    captures = [p for p in (data_dir / "captures").rglob("*.webp") if p.is_file()]
+    size = sum(p.stat().st_size for p in captures)
+    return f"{data_dir}  ({len(captures)} captures, {format_bytes(size)})"

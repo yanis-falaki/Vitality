@@ -1,4 +1,10 @@
-"""Pure timing logic deciding when to take screenshots and where interactions end. No I/O."""
+"""Implements `SnapshotPolicy` (see interface.py).
+
+Pure timing logic deciding when to take screenshots and where interactions end. No I/O.
+`CapturePolicy` has no public methods beyond the Protocol's; its constructor takes the
+`settle_seconds` and `max_gap_seconds` from the config and, to restart paused, the saved
+pause state.
+"""
 
 from __future__ import annotations
 

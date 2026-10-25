@@ -1,4 +1,9 @@
-"""SQLite metadata index: interactions and their screenshots."""
+"""Implements `CaptureIndex` (see interface.py).
+
+SQLite metadata index: interactions and their screenshots. `Store` has no public methods
+beyond the Protocol's; its constructor takes the path of the database file and creates it
+(and its folder) if needed.
+"""
 
 import sqlite3
 import threading

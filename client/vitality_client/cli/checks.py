@@ -19,11 +19,8 @@ from vitality_protocol.routes import HEALTH_PATH
 
 from vitality_client.shared.config import Paths, load_config
 
-PORTAL_BUS_NAME = "org.freedesktop.portal.Desktop"
-PORTAL_PATH = "/org/freedesktop/portal/desktop"
-SCREENCAST_IFACE = "org.freedesktop.portal.ScreenCast"
-PROBE_TIMEOUT = 5.0
-HEALTH_TIMEOUT = 5.0
+
+# == Contract =============================================================================
 
 INPUT_GROUP_HINT = "sudo usermod -aG input $USER, then log out and back in"
 PORTAL_HINT = ("install xdg-desktop-portal and a ScreenCast backend for your compositor "
@@ -32,12 +29,12 @@ GI_HINT = ("sudo pacman -S python-gobject (and the virtualenv must use system si
            "uv venv --python /usr/bin/python3 --system-site-packages)")
 TAILSCALE_HINT = "start Tailscale: sudo systemctl enable --now tailscaled && sudo tailscale up"
 GST_HINT = "sudo pacman -S gst-plugins-base gst-plugin-pipewire"
-# Every element the capture pipeline (frames/portal.py pipeline_description) uses.
-GST_ELEMENTS = ("pipewiresrc", "appsink")
 
 
 @dataclass
 class Check:
+    """One line of `doctor`: what was checked, whether it passed, and what to do if not."""
+
     name: str
     ok: bool
     hint: str
@@ -55,40 +52,39 @@ def current_groups() -> list[str]:
 
 
 def check_input_group(groups: Iterable[str]) -> Check:
+    """Passes if `input` is among `groups` (needed to read keyboard and mouse events)."""
     ok = "input" in set(groups)
     return Check("input group", ok, "" if ok else INPUT_GROUP_HINT)
 
 
 def check_wayland(env: Mapping[str, str]) -> Check:
+    """Passes if `XDG_SESSION_TYPE` in `env` is `wayland`."""
     session = env.get("XDG_SESSION_TYPE", "")
     ok = session == "wayland"
     return Check("wayland session", ok, "" if ok else
                  f"XDG_SESSION_TYPE={session}; log in to a Wayland session")
 
 
-def _probe_check(name: str, probe: Callable[[], bool], hint: str) -> Check:
-    try:
-        ok = bool(probe())
-    except Exception as exc:
-        return Check(name, False, f"{hint} ({str(exc) or type(exc).__name__})")
-    return Check(name, ok, "" if ok else hint)
-
-
 def check_portal(probe: Callable[[], bool]) -> Check:
+    """Passes if `probe()` is true; a probe that raises fails, with its message in the hint."""
     return _probe_check("portal", probe, PORTAL_HINT)
 
 
 def check_tailscale(probe: Callable[[], bool]) -> Check:
+    """Passes if `probe()` is true; a probe that raises fails, with its message in the hint."""
     return _probe_check("tailscale", probe, TAILSCALE_HINT)
 
 
 def check_upload_server(server: str, probe: Callable[[str], bool]) -> Check:
+    """Passes if `probe(server)` is true; a probe that raises fails, with its message in
+    the hint."""
     return _probe_check("upload server", lambda: probe(server),
                         f"cannot reach {server}{HEALTH_PATH} over Tailscale; "
                         "is vitality-server running?")
 
 
 def check_pipewire(env: Mapping[str, str]) -> Check:
+    """Passes if PipeWire's socket exists in `XDG_RUNTIME_DIR` of `env`."""
     runtime = env.get("XDG_RUNTIME_DIR")
     ok = bool(runtime) and (Path(runtime) / "pipewire-0").exists()
     return Check("pipewire", ok, "" if ok else
@@ -96,11 +92,16 @@ def check_pipewire(env: Mapping[str, str]) -> Check:
 
 
 def check_gi(probe: Callable[[], bool]) -> Check:
+    """Passes if `probe()` is true; a probe that raises fails, with its message in the hint."""
     return _probe_check("python gobject", probe, GI_HINT)
 
 
 def check_gst_elements(probe: Callable[[], Iterable[str]]) -> Check:
-    """`probe` returns the names of the pipeline's GStreamer elements that are missing."""
+    """`probe` returns the names of the pipeline's GStreamer elements that are missing.
+
+    Passes if it returns none; fails naming the missing ones, or with the probe's message
+    if it raises.
+    """
     name = "gstreamer elements"
     try:
         missing = list(probe())
@@ -111,15 +112,8 @@ def check_gst_elements(probe: Callable[[], Iterable[str]]) -> Check:
     return Check(name, False, f"missing {', '.join(missing)}: {GST_HINT}")
 
 
-def _writable(directory: Path) -> bool:
-    """Writable now, or creatable: the nearest existing ancestor is a writable directory."""
-    for candidate in (directory, *directory.parents):
-        if candidate.exists():
-            return candidate.is_dir() and os.access(candidate, os.W_OK | os.X_OK)
-    return False
-
-
 def check_directories(paths: Paths) -> Check:
+    """Passes if the data, state and socket directories are writable or can be created."""
     dirs = [paths.data_dir, paths.state_file.parent, paths.socket_path.parent]
     bad = [str(d) for d in dirs if not _writable(d)]
     return Check("directories writable", not bad, "" if not bad else
@@ -127,7 +121,9 @@ def check_directories(paths: Paths) -> Check:
 
 
 def portal_has_screencast() -> bool:
-    """Introspect the portal on the session bus; opens no session and shows no dialog."""
+    """Whether the desktop portal offers ScreenCast, by introspecting it on the session bus;
+    opens no session and shows no dialog. Raises if the bus or portal cannot be reached
+    within 5 seconds."""
     from dbus_fast import BusType
     from dbus_fast.aio import MessageBus
 
@@ -143,12 +139,17 @@ def portal_has_screencast() -> bool:
 
 
 def gi_importable() -> bool:
+    """True if Python's `gi` (GObject) imports; raises ImportError if not."""
     import gi  # noqa: F401  (ImportError is reported by the check)
 
     return True
 
 
 def missing_gst_elements() -> list[str]:
+    """The GStreamer elements the capture pipeline needs that are not installed.
+
+    Raises ImportError if `gi` is missing.
+    """
     import gi
 
     gi.require_version("Gst", "1.0")
@@ -171,7 +172,8 @@ def tailscale_running() -> bool:
 
 
 def server_healthy(server: str) -> bool:
-    """The server answers `GET /health` with 200 and a valid `Health` body."""
+    """Whether the server answers `GET /health` with 200 and a valid `Health` body; False
+    on any network failure or bad reply."""
     try:
         response = httpx.get(server + HEALTH_PATH, timeout=HEALTH_TIMEOUT)
         Health.model_validate_json(response.content)
@@ -190,6 +192,13 @@ def run_checks(
     tailscale_probe: Callable[[], bool] = tailscale_running,
     health_probe: Callable[[str], bool] = server_healthy,
 ) -> list[Check]:
+    """Run every setup check; each probe argument replaces the real environment in tests.
+
+    Returns, in this order: input group, wayland session, portal, pipewire, python gobject,
+    gstreamer elements, directories writable; then, if the config names an `upload_server`,
+    tailscale and the upload server. An unreadable or invalid config adds one failing
+    `config` check instead and stops there. Never raises for a failing check.
+    """
     gi_check = check_gi(gi_probe)
     # Without gi the element probe can only fail with the same ImportError; say so once.
     gst_check = (check_gst_elements(gst_probe) if gi_check.ok else
@@ -210,3 +219,30 @@ def run_checks(
     if server is not None:
         checks += [check_tailscale(tailscale_probe), check_upload_server(server, health_probe)]
     return checks
+
+
+# == Implementation =======================================================================
+
+PORTAL_BUS_NAME = "org.freedesktop.portal.Desktop"
+PORTAL_PATH = "/org/freedesktop/portal/desktop"
+SCREENCAST_IFACE = "org.freedesktop.portal.ScreenCast"
+PROBE_TIMEOUT = 5.0
+HEALTH_TIMEOUT = 5.0
+# Every element the capture pipeline (frames/portal.py pipeline_description) uses.
+GST_ELEMENTS = ("pipewiresrc", "appsink")
+
+
+def _probe_check(name: str, probe: Callable[[], bool], hint: str) -> Check:
+    try:
+        ok = bool(probe())
+    except Exception as exc:
+        return Check(name, False, f"{hint} ({str(exc) or type(exc).__name__})")
+    return Check(name, ok, "" if ok else hint)
+
+
+def _writable(directory: Path) -> bool:
+    """Writable now, or creatable: the nearest existing ancestor is a writable directory."""
+    for candidate in (directory, *directory.parents):
+        if candidate.exists():
+            return candidate.is_dir() and os.access(candidate, os.W_OK | os.X_OK)
+    return False

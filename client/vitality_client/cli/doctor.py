@@ -9,14 +9,11 @@ from vitality_client.shared.channel import DaemonNotRunning, Status, send_comman
 from vitality_client.shared.state import State, StateFile
 
 
-def _pause_text(paused: bool, until: str | None) -> str:
-    if not paused:
-        return "not paused"
-    return f"paused until {until}" if until else "paused"
-
+# == Contract =============================================================================
 
 def capture_state_line(status: Status | None, saved: State) -> str:
-    """Whether capture is paused: live from the daemon if it runs, else the saved state."""
+    """One line saying whether capture is paused: live from the daemon (`status`) if it
+    runs, else from the saved state; local times, `HH:MM`."""
     if status is not None:
         if status["state"] != "paused":
             return "daemon: running, capturing"
@@ -28,6 +25,12 @@ def capture_state_line(status: Status | None, saved: State) -> str:
 
 
 def doctor(env: Mapping[str, str]) -> int:
+    """Print one line per setup check (`✓ name`, or `✗ name — what to do`), then whether
+    capture is paused and where the config, data and state live.
+
+    Works with the daemon stopped (it then reads the saved pause state). Returns 0 if every
+    check passed, else 1. Raises RuntimeError if XDG_RUNTIME_DIR is not set.
+    """
     from vitality_client.cli.checks import run_checks
 
     paths = paths_from(env)
@@ -45,3 +48,11 @@ def doctor(env: Mapping[str, str]) -> int:
         "state": str(paths.state_file),
     })))
     return 0 if all(c.ok for c in checks) else 1
+
+
+# == Implementation =======================================================================
+
+def _pause_text(paused: bool, until: str | None) -> str:
+    if not paused:
+        return "not paused"
+    return f"paused until {until}" if until else "paused"

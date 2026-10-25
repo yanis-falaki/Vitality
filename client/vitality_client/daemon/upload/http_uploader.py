@@ -1,4 +1,8 @@
-"""Uploading ended interactions to the server over HTTP.
+"""Implements `Uploader` (see interface.py).
+
+Uploading ended interactions to the server over HTTP. `HttpUploader` adds one public method
+to the Protocol's, `upload_once()` (one round; `run` calls it), plus its constructor; the
+module's public names are also `REQUEST_TIMEOUT` and the `Outcome` and `State` types.
 
 The loop (`run`), until cancelled: `upload_once()`, then wait before the next round:
 
@@ -121,10 +125,11 @@ class HttpUploader(Uploader):
             "last_upload": self._last_upload,
         }
 
-    # -- one upload ----------------------------------------------------------------------
+    # -- beyond Uploader: one upload round -----------------------------------------------
 
     async def upload_once(self) -> Outcome:
-        """Send the oldest pending interaction and say what came of it."""
+        """Send the oldest pending interaction and say what came of it (not on `Uploader`:
+        `run` is the loop around it)."""
         pending = self._index.pending_uploads()
         if not pending:
             return "idle"
