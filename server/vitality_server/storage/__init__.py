@@ -2,6 +2,8 @@
 
 Contract: `InteractionStore`, `InvalidUpload` and `ConflictingUpload` (interface.py).
 Implementation: `FileStore` (files.py).
+Reading the index without writing anything: `read_summary` and `DeviceSummary` (summary.py),
+used by the `vitality-server` command line.
 
 Layout under the data directory (names are UTC; see `vitality_protocol.layout`):
 
@@ -15,6 +17,8 @@ The index has two tables, `interactions` and `shots`, both keyed by client as we
 """
 
 from vitality_server.storage.files import FileStore
+from vitality_server.storage.summary import DeviceSummary, read_summary
 from vitality_server.storage.interface import ConflictingUpload, InteractionStore, InvalidUpload
 
-__all__ = ["ConflictingUpload", "FileStore", "InteractionStore", "InvalidUpload"]
+__all__ = ["ConflictingUpload", "DeviceSummary", "FileStore", "InteractionStore", "InvalidUpload",
+           "read_summary"]
