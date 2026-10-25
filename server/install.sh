@@ -3,7 +3,8 @@
 #
 # Run it as your normal user (it uses sudo where it must), from the root of the repo:
 #   ./server/install.sh
-# Rerunning is safe: it upgrades the code, keeps /etc/vitality/server.toml, and restarts the service.
+# Rerunning is safe: it stops the service, upgrades the code, keeps /etc/vitality/server.toml,
+# and starts the service again. (`vitality-server upgrade` pulls the repo and runs this for you.)
 set -euo pipefail
 
 APP_DIR=/opt/vitality-server            # the server's virtual environment
@@ -25,6 +26,12 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 command -v uv >/dev/null 2>&1 || { echo "uv is not on PATH after installing it" >&2; exit 1; }
 
+# Stop the running server before its files are replaced (the first install has no unit yet).
+if systemctl is-active --quiet "$UNIT"; then
+    echo "==> stopping vitality-serverd while the program is replaced"
+    sudo systemctl stop "$UNIT"
+fi
+
 echo "==> installing Python 3.14 and the server into $APP_DIR"
 export UV_PYTHON_INSTALL_DIR="$PYTHON_DIR"
 sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" "$APP_DIR" "$PYTHON_DIR"
@@ -45,6 +52,8 @@ uv pip install --python "$APP_DIR/bin/python" --no-sources -r "$REQUIREMENTS" \
     --reinstall-package vitality-protocol --refresh-package vitality-protocol \
     --reinstall-package vitality-server --refresh-package vitality-server \
     ./protocol ./server
+# Remember which checkout this came from: `vitality-server upgrade` pulls and reinstalls there.
+pwd -P > "$APP_DIR/source"
 chmod -R a+rX "$APP_DIR" "$PYTHON_DIR"   # the vitality user must be able to run it
 # vitality-serverd is the server (run by systemd); vitality-server is the command line
 # (status, doctor), put on the PATH so it works from any directory.
@@ -95,4 +104,6 @@ Done. Next:
      (log in again once if install.sh just added you to the vitality group)
   3. From any device on the tailnet: curl http://vitality-librarian:8100/health
      (use the hostname and port you set in Tailscale and server.toml)
+
+Later, to update from GitHub's main: vitality-server upgrade
 NEXT
