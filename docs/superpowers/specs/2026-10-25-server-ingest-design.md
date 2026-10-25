@@ -48,7 +48,7 @@ It updates the client daemon design (`2026-10-21-daemon-design.md`, §4 policy o
 | Shot names | Whole seconds since the interaction started: `0004.webp` | Order and timing readable from `ls` |
 | Before/after | Not stored; the shot at `0000` is the screen just before the first input | Redundant once `start` is defined as the first input |
 | Manual captures | Join the open interaction; their own one-shot interaction when idle | Interactions never overlap |
-| Transport | Tailscale + HTTP API | Private, always on, ready for more devices |
+| Transport | Tailscale + HTTP API (`POST /interactions`) | Private, always on, ready for more devices |
 | Upload timing | Each interaction as soon as it ends | Median interaction lasts 9 s, longest seen 2 min 13 s |
 | Local copies | Kept after upload | Nothing is deleted until the pipeline is trusted |
 | Existing captures | Migrated once by a throwaway script | Real history is valuable for the interpreter |
@@ -136,10 +136,16 @@ its shot's `trigger` is `"manual"`, so it is not mistaken for a pre-input screen
 
 | Route | Request | Reply |
 |---|---|---|
-| `PUT /interactions/{day}/{time}` | multipart: part `interaction` = `Interaction` JSON; one part `shots` per file, filename = `Shot.file` | `201` `UploadReply(stored="new")`, `200` `UploadReply(stored="existing")`, or an error (§7.3) |
+| `POST /interactions` | multipart: part `interaction` = `Interaction` JSON; one part `shots` per file, filename = `Shot.file` | `201` `UploadReply(stored="new")`, `200` `UploadReply(stored="existing")`, or an error (§7.3) |
 | `GET /health` | – | `200` `Health` |
 
-The sending device is not part of the URL: the server learns it from Tailscale (§7.2).
+The interaction's name appears only in `interaction.json`, not in the URL, so there is one
+source of truth. The sending device is not in the request either: the server learns it from
+Tailscale (§7.2).
+
+**Retries are safe:** sending the same interaction again returns `200 existing` and changes
+nothing (§7.3). Unlike HTTP's usual assumption for `POST`, this route is idempotent, and the
+uploader relies on that.
 The module holds the path templates as constants and this table as its docstring.
 
 ## 6. Daemon changes
@@ -241,7 +247,7 @@ If `upload_server` is unset, no uploader runs and `status` reports `disabled`.
 
 Loop:
 1. Take the oldest pending interaction.
-2. `PUT /interactions/<name>` with `interaction.json` and its shots.
+2. `POST /interactions` with `interaction.json` and its shots.
 3. On `201` or `200`: `mark_uploaded`, continue with the next.
 4. When nothing is pending: wait for `wake()`, or 60 s.
 
@@ -317,7 +323,6 @@ class InteractionStore(Protocol):
 `received_at` on `interactions`; the key of both tables includes `client`.
 
 Checks, each rejected with `422` and a reason:
-- the URL's `{day}/{time}` equals `interaction.name`;
 - `interaction.name` matches `interaction_name(start)` (allowing a clash suffix);
 - the uploaded file names are exactly the `shots` list, sizes match `bytes`;
 - every file starts with a WebP header.
