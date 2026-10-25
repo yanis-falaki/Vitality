@@ -25,26 +25,28 @@ In the commands below, `<vm>` is the VM's exe.dev name; the SSH name is `<vm>.ex
    exit
    ```
 
-2. Copy the repo to the VM. Run this from the repo root on your laptop:
+2. Clone the repo on the VM and install and start the service:
 
    ```sh
-   rsync -a --exclude .venv --exclude .git --exclude .superpowers --exclude __pycache__ \
-       ./ <vm>.exe.xyz:Vitality/
-   ```
-
-3. Install and start the service:
-
-   ```sh
-   ssh <vm>.exe.xyz 'cd Vitality && ./server/install.sh'
+   ssh <vm>.exe.xyz
+   git clone https://github.com/yanis-falaki/Vitality.git
+   cd Vitality && ./server/install.sh
    ```
 
    The script installs Python 3.14 with `uv` and the server, with its dependencies at the
    exact versions (and hashes) in `server/uv.lock`, into `/opt/vitality-server`, creates the
    `vitality` system user, `/srv/vitality` and `/etc/vitality/server.toml`, installs the
-   systemd unit, and starts it. It never overwrites an existing `server.toml`. Repeat
-   steps 2 and 3 to upgrade: the code is reinstalled and the service restarted.
+   systemd unit, and starts it. It never overwrites an existing `server.toml`. It also
+   records which checkout it was run from (`/opt/vitality-server/source`), which is how
+   `vitality-server upgrade` finds the repo later. Rerunning it reinstalls the code: it
+   stops the service while the program is replaced and starts it again.
 
-4. Say which devices may upload. On the VM, edit `/etc/vitality/server.toml` and put the
+   To upgrade later, run `vitality-server upgrade` on the VM (see Commands). To install code
+   that is not pushed to GitHub, copy the repo over instead (`git archive HEAD | ssh
+   <vm>.exe.xyz 'mkdir -p Vitality && tar -x -C Vitality'`) and run `install.sh` there;
+   `upgrade` then has nothing to pull from.
+
+3. Say which devices may upload. On the VM, edit `/etc/vitality/server.toml` and put the
    Tailscale device names in `allowed_clients` (the laptop is named `laptop`), then restart:
 
    ```sh
@@ -58,7 +60,7 @@ In the commands below, `<vm>` is the VM's exe.dev name; the SSH name is `<vm>.ex
    `laptop.tail1234.ts.net`), and only devices on the VM's own tailnet count: a device
    shared in from another tailnet is refused even if its name matches.
 
-5. Point the laptop at it: see "Upload to a server" in [`client/README.md`](../client/README.md).
+4. Point the laptop at it: see "Upload to a server" in [`client/README.md`](../client/README.md).
 
 ## Configuration
 
@@ -84,12 +86,40 @@ run `vitality-serverd --config PATH`.
 | `vitality-serverd` | the server itself; systemd runs it, you never need to |
 | `vitality-server status` | what each device has uploaded, free disk space, where things live |
 | `vitality-server doctor` | checks the setup, one line per check, and says what to do about a failure |
+| `vitality-server upgrade` | pulls the latest `main` from GitHub, reinstalls the server, then runs `doctor` |
 
-Both `vitality-server` commands take `--config PATH` (default `/etc/vitality/server.toml`).
-`install.sh` links `vitality-server` into `/usr/local/bin`. They only read: they never change
-the data folder or the service. `status` needs no `sudo` for members of the `vitality` group,
+All three `vitality-server` commands take `--config PATH` (default
+`/etc/vitality/server.toml`). `install.sh` links `vitality-server` into `/usr/local/bin`.
+`status` and `doctor` only read: they never change the data folder or the service. `status` needs no `sudo` for members of the `vitality` group,
 which `install.sh` makes the installing user (log in again once for that to take effect);
 `doctor` needs no group at all.
+
+`upgrade` is for later updates. Run it as your normal user, not with `sudo` (git and
+`install.sh` use your account; `install.sh` uses `sudo` itself). It pulls from GitHub's
+`main`, so **what you push to `main` is what the next upgrade installs**. In four steps, each
+printed under a `==>` header:
+
+1. finds the checkout `install.sh` was last run from (`/opt/vitality-server/source`);
+2. fetches `origin/main` and fast-forwards the checkout to it. It refuses, installing
+   nothing, if the checkout is not on `main`, has modified tracked files, or has diverged
+   from `origin/main`. With nothing new it says `already up to date (<commit>)` and stops;
+3. runs `./server/install.sh` there (the service is stopped while the program is replaced);
+4. runs `doctor` from the newly installed program. `upgrade` exits with its exit code.
+
+```
+$ vitality-server upgrade
+==> finding the checkout
+    /home/exedev/Vitality
+==> pulling main
+2 new commit(s):
+  3f2a1bc fix upload retry
+  9d41e07 add the upgrade command
+==> installing
+...                                   (install.sh's own output)
+==> checking
+✓ config loads
+...                                   (doctor's output)
+```
 
 ```
 $ vitality-server status

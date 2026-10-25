@@ -295,8 +295,8 @@ server/
       routes/                    interactions.py (POST /interactions), health.py (GET /health)
       gate.py                    UploadGate: size headers and sending device, before parsing
       errors.py                  ErrorReply helper and the exception handlers
-    cli/                         vitality-server status / doctor (read-only; main.py, status.py,
-                                 doctor.py, checks.py, paths.py)
+    cli/                         vitality-server status / doctor / upgrade (main.py, status.py,
+                                 doctor.py, checks.py, upgrade.py, commands.py, paths.py)
     shared/                      used by both; imports neither
       config.py                  server.toml
       identity/                  interface.py (Identity), tailscale.py (TailscaleIdentity)
@@ -365,6 +365,12 @@ port 8000 by default) cannot reach it.
    `User=vitality`, `Restart=on-failure`), whose `ExecStart` is `vitality-serverd`;
 4. links the `vitality-server` command line (`status`, `doctor`: read-only checks of the
    setup and a summary of what has been received) into `/usr/local/bin`.
+
+If the service is running, `install.sh` stops it before replacing the program (the end of the
+script starts it again), and it records the checkout's path in `/opt/vitality-server/source`.
+`vitality-server upgrade` uses that: it fast-forwards the checkout to GitHub's `main`
+(refusing if it is not on `main`, has modified tracked files or has diverged), runs
+`install.sh`, then runs `doctor` from the new program.
 
 Once per VM, by the user: `sudo tailscale up` (opens a login link), then rename the device
 `vitality-librarian`. The laptop joins the same Tailscale network and is renamed `laptop`.
