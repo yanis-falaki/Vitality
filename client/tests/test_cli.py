@@ -62,6 +62,24 @@ def test_format_status_paused_until_and_unavailable():
     assert "activity: unavailable" in format_status(s)
 
 
+def test_format_status_upload_line():
+    s = status(upload={"state": "offline", "pending": 12, "last_upload": "2026-10-25T16:58:02.000Z"})
+    lines = format_status(s).splitlines()
+    line = next(line for line in lines if line.startswith("upload:"))
+    assert line.startswith("upload: offline · 12 pending · last ")
+    assert not line.endswith("never")
+    assert lines.index(line) == lines.index("capture: available") + 1
+
+
+def test_format_status_upload_never_uploaded():
+    s = status(upload={"state": "ok", "pending": 0, "last_upload": None})
+    assert "upload: ok · 0 pending · last never" in format_status(s).splitlines()
+
+
+def test_format_status_upload_disabled():
+    assert "upload: disabled" in format_status(STATUS).splitlines()
+
+
 def test_status_json_is_one_line_without_ok(tmp_path, monkeypatch, capsys):
     import asyncio
     from vitality_client.shared.channel import UnixControlServer

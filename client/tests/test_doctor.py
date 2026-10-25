@@ -5,12 +5,17 @@ from vitality_client.shared.config import Paths
 from vitality_client.cli.checks import Check, run_checks
 
 
-def run_checks_with(groups, tmp_path, env=None, portal=True, gi=True, missing=()):
+def run_checks_with(groups, tmp_path, env=None, portal=True, gi=True, missing=(),
+                    config=None, tailscale=True, healthy=True):
     paths = Paths(tmp_path / "config/client.toml", tmp_path / "data",
                   tmp_path / "state/state.json", tmp_path / "run/vitality/client.sock")
     env = env if env is not None else {"XDG_SESSION_TYPE": "wayland", "XDG_RUNTIME_DIR": str(tmp_path)}
+    if config is not None:
+        paths.config_file.parent.mkdir(parents=True)
+        paths.config_file.write_text(config)
     return run_checks(env, paths, groups=groups, portal_probe=lambda: portal,
-                      gi_probe=lambda: gi, gst_probe=lambda: list(missing))
+                      gi_probe=lambda: gi, gst_probe=lambda: list(missing),
+                      tailscale_probe=lambda: tailscale, health_probe=lambda server: healthy)
 
 
 def test_doctor_reports_missing_input_group(tmp_path):
@@ -96,3 +101,106 @@ def test_directories_writable_checks_nearest_existing_parent(tmp_path):
     finally:
         tmp_path.chmod(0o700)
     assert not c.ok and str(Path(tmp_path / "a/b/data")) in c.hint
+
+
+SERVER = "http://vitality.tail1234.ts.net:8000"
+
+
+def test_doctor_checks_upload_only_when_configured(tmp_path):
+    names = [c.name for c in run_checks_with(["input"], tmp_path / "off")]
+    assert "tailscale" not in names and "upload server" not in names
+
+    checks = {c.name: c for c in run_checks_with(
+        ["input"], tmp_path / "on", config=f'upload_server = "{SERVER}"\n')}
+    assert checks["tailscale"].ok and checks["upload server"].ok
+
+    checks = {c.name: c for c in run_checks_with(
+        ["input"], tmp_path / "down", config=f'upload_server = "{SERVER}"\n',
+        tailscale=False, healthy=False)}
+    assert not checks["tailscale"].ok
+    assert "sudo tailscale up" in checks["tailscale"].hint
+    assert not checks["upload server"].ok
+    assert f"cannot reach {SERVER}/health over Tailscale" in checks["upload server"].hint
+    assert "is vitality-server running?" in checks["upload server"].hint
+
+
+def test_doctor_passes_the_configured_server_to_the_health_probe(tmp_path):
+    asked = []
+    paths = Paths(tmp_path / "c.toml", tmp_path / "d", tmp_path / "s/state.json", tmp_path / "r/c.sock")
+    paths.config_file.write_text(f'upload_server = "{SERVER}/"\n')
+    run_checks({"XDG_SESSION_TYPE": "wayland", "XDG_RUNTIME_DIR": str(tmp_path)}, paths,
+               groups=["input"], portal_probe=lambda: True, gi_probe=lambda: True,
+               gst_probe=lambda: [], tailscale_probe=lambda: True,
+               health_probe=lambda server: asked.append(server) or True)
+    assert asked == [SERVER]  # load_config strips the trailing slash
+
+
+def test_doctor_reports_a_bad_config_as_a_failing_check(tmp_path):
+    checks = {c.name: c for c in run_checks_with(["input"], tmp_path, config="bogus = 1\n")}
+    assert not checks["config"].ok and "unknown config key: bogus" in checks["config"].hint
+    assert "tailscale" not in checks and "upload server" not in checks
+
+
+def test_probe_exception_in_upload_checks_is_a_failed_check():
+    def boom():
+        raise OSError("no daemon")
+    c = doctor.check_tailscale(boom)
+    assert not c.ok and "no daemon" in c.hint and "sudo tailscale up" in c.hint
+
+    def refused(server):
+        raise OSError("refused")
+    c = doctor.check_upload_server(SERVER, refused)
+    assert not c.ok and "refused" in c.hint and SERVER in c.hint
+
+
+class FakeResponse:
+    def __init__(self, status_code, content):
+        self.status_code, self.content = status_code, content
+
+
+def test_server_healthy_validates_the_health_message(monkeypatch):
+    import httpx
+    calls = []
+
+    def fake_get(url, timeout):
+        calls.append((url, timeout))
+        return reply
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    reply = FakeResponse(200, b'{"ok": true, "disk_free_bytes": 5}')
+    assert doctor.server_healthy(SERVER) is True
+    assert calls == [(SERVER + "/health", 5)]
+    reply = FakeResponse(200, b'{"hello": "world"}')
+    assert doctor.server_healthy(SERVER) is False
+    reply = FakeResponse(503, b'{"ok": true, "disk_free_bytes": 5}')
+    assert doctor.server_healthy(SERVER) is False
+
+
+def test_server_healthy_is_false_when_unreachable(monkeypatch):
+    import httpx
+
+    def refuse(url, timeout):
+        raise httpx.ConnectError("refused")
+    monkeypatch.setattr(httpx, "get", refuse)
+    assert doctor.server_healthy(SERVER) is False
+
+
+def test_tailscale_running_reads_the_backend_state(monkeypatch):
+    import subprocess
+    result = subprocess.CompletedProcess([], 0, stdout=b'{"BackendState": "Running"}')
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: result)
+    assert doctor.tailscale_running() is True
+
+    result = subprocess.CompletedProcess([], 0, stdout=b'{"BackendState": "Stopped"}')
+    assert doctor.tailscale_running() is False
+    result = subprocess.CompletedProcess([], 1, stdout=b'{"BackendState": "Running"}')
+    assert doctor.tailscale_running() is False
+    result = subprocess.CompletedProcess([], 0, stdout=b"not json")
+    assert doctor.tailscale_running() is False
+    result = subprocess.CompletedProcess([], 0, stdout=b"[1]")
+    assert doctor.tailscale_running() is False
+
+    def missing(*a, **k):
+        raise FileNotFoundError("tailscale")
+    monkeypatch.setattr(subprocess, "run", missing)
+    assert doctor.tailscale_running() is False

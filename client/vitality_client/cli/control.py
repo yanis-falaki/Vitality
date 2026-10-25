@@ -15,8 +15,17 @@ from vitality_client.shared.channel import (
     ResumeRequest,
     Status,
     StatusRequest,
+    UploadStatus,
     send_command,
 )
+
+
+def _upload_line(upload: UploadStatus) -> str:
+    if upload["state"] == "disabled":
+        return "upload: disabled"
+    last = upload["last_upload"]
+    return (f"upload: {upload['state']} · {upload['pending']} pending · "
+            f"last {'never' if last is None else local_time(last)}")
 
 
 def format_status(status: Status) -> str:
@@ -32,6 +41,7 @@ def format_status(status: Status) -> str:
         f"{format_bytes(status['disk_bytes'])}",
         f"activity: {status['activity']}",
         f"capture: {status['capture']}",
+        _upload_line(status["upload"]),
     ]
     if status["disk_warning"]:
         lines.append("warning: disk use is above disk_warning_gb; "
