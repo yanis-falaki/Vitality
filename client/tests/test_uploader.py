@@ -1,5 +1,7 @@
 import asyncio
 import json
+import sqlite3
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -335,3 +337,91 @@ async def test_run_closes_its_own_client_but_not_an_injected_one(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert created.is_closed
+
+
+async def test_unexpected_error_in_a_round_is_offline_and_the_loop_keeps_going(tmp_path, caplog):
+    attempts = []
+
+    def handler(req):
+        attempts.append(asyncio.get_running_loop().time())
+        if len(attempts) == 1:
+            raise httpx.InvalidURL("bad port")  # not an httpx.HTTPError
+        return httpx.Response(201, json={"ok": True, "stored": "new"})
+
+    store, writer, up = make_uploader(tmp_path, handler, retry_initial=0.2, idle_wait=3600)
+    task = asyncio.create_task(up.run())
+    try:
+        async with asyncio.timeout(2):
+            while not attempts:
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)
+            assert up.status["state"] == "offline" and not task.done()
+            while store.pending_uploads():
+                await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert attempts[1] - attempts[0] >= 0.18  # the normal backoff applied
+    crash = [r for r in caplog.records if r.exc_info and "bad port" in str(r.exc_info[1])]
+    assert len(crash) == 1 and up.status["state"] == "ok"
+
+
+async def test_index_error_in_a_round_does_not_end_the_loop(tmp_path):
+    seen = []
+
+    def handler(req):
+        seen.append(req)
+        return httpx.Response(201, json={"ok": True, "stored": "new"})
+
+    store, writer, up = make_uploader(tmp_path, handler, retry_initial=0.05, idle_wait=3600)
+    real = store.pending_uploads
+    calls = []
+
+    def flaky():
+        calls.append(True)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real()
+
+    task = asyncio.create_task(up.run())
+    try:
+        with patch.object(store, "pending_uploads", side_effect=flaky):
+            async with asyncio.timeout(2):
+                while not seen:
+                    await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert len(calls) >= 2 and store.pending_count() == 0
+
+
+async def test_interaction_that_cannot_be_built_from_the_index_is_skipped(tmp_path):
+    store, writer, up = make_uploader(tmp_path, lambda r: httpx.Response(201, json={"ok": True, "stored": "new"}))
+    bad = store.pending_uploads()[0]
+    writer.write(Image.new("RGB", (8, 8)), T0 + 100, T0 + 100, "activity")
+    good = writer.end(T0 + 100)
+    conn = sqlite3.connect(tmp_path / "i.sqlite")
+    conn.execute("UPDATE interactions SET source = 'bogus' WHERE name = ?", (bad,))
+    conn.commit(); conn.close()
+    assert await up.upload_once() == "failed"
+    assert store.pending_uploads() == [good]
+    assert "cannot be read from the index" in failed_reason(tmp_path, bad)
+    assert await up.upload_once() == "uploaded"
+
+
+async def test_interaction_missing_from_the_index_is_skipped(tmp_path):
+    store, up = setup(tmp_path, lambda r: httpx.Response(201, json={"ok": True, "stored": "new"}))
+    name = store.pending_uploads()[0]
+    with patch.object(store, "interaction", side_effect=KeyError(name)):
+        assert await up.upload_once() == "failed"
+    assert store.pending_uploads() == [] and "cannot be read from the index" in failed_reason(tmp_path, name)
+
+
+def failed_reason(tmp_path, name):
+    conn = sqlite3.connect(tmp_path / "i.sqlite")
+    try:
+        return conn.execute("SELECT upload_error FROM interactions WHERE name = ?", (name,)).fetchone()[0]
+    finally:
+        conn.close()

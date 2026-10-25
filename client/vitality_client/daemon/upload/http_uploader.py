@@ -16,8 +16,14 @@ interaction's JSON and its shot files. What the server's answer means (spec sect
 
     200, 201                              uploaded    mark the interaction uploaded
     403                                   rejected    keep it pending; this device is not allowed
-    409, 413, 422; a missing local file   failed      mark it failed (skipped for good), log it
+    409, 413, 422                         failed      mark it failed (skipped for good), log it
+    not buildable from the index, or a
+      local file missing or unreadable    failed      the same, without sending anything
     connection error, timeout, any other  offline     keep it pending, retry after the backoff
+
+Any other error in a round (a bad URL, the index failing, a bug) is logged with its
+traceback and treated as offline: the loop backs off and tries again, and never ends on
+its own; only cancellation stops it.
 
 Pausing the daemon does not stop uploads: they are about what is already recorded.
 Logging: one line per state change (ok / offline / rejected), never per retry, plus an
@@ -76,12 +82,18 @@ class HttpUploader(Uploader):
 
     async def run(self) -> None:
         """Upload until cancelled. Only the idle wait ends early on `wake()`; the offline
-        backoff and the rejected wait always run in full (see the module docstring)."""
+        backoff and the rejected wait always run in full (see the module docstring). An
+        unexpected error in a round is logged and counts as offline; it never ends the loop."""
         backoff = self._retry_initial
         try:
             while True:
                 self._wake.clear()  # before the upload, so a wake() during it is not lost
-                outcome = await self.upload_once()
+                try:
+                    outcome = await self.upload_once()
+                except Exception as exc:  # not CancelledError: that one stops the loop
+                    log.exception("upload round failed")
+                    self._set_state("offline", str(exc) or type(exc).__name__)
+                    outcome = "offline"
                 if outcome in ("uploaded", "failed"):  # the server answered
                     backoff = self._retry_initial
                 elif outcome == "offline":
@@ -117,7 +129,10 @@ class HttpUploader(Uploader):
         if not pending:
             return "idle"
         name = pending[0]
-        interaction = self._index.interaction(name)
+        try:
+            interaction = self._index.interaction(name)
+        except (KeyError, ValidationError) as exc:
+            return self._fail(name, f"it cannot be read from the index: {_describe(exc)}")
         try:
             shots = [await asyncio.to_thread((self._data_dir / "captures" / name / shot.file).read_bytes)
                      for shot in interaction.shots]
@@ -167,6 +182,13 @@ class HttpUploader(Uploader):
         log.log(logging.INFO if new == "ok" else logging.WARNING,
                 "upload: %s -> %s (%s)", self._state, new, reason)
         self._state = new
+
+
+def _describe(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        return f"{exc.error_count()} invalid field(s): " + "; ".join(
+            f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _reason(response: httpx.Response) -> str:
