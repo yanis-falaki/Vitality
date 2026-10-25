@@ -1,4 +1,10 @@
-"""Interaction storage on the local filesystem, indexed in SQLite."""
+"""Implements `InteractionStore` (see interface.py).
+
+Interaction storage on the local filesystem, indexed in SQLite. Besides the Protocol's
+methods, `FileStore` has only its constructor, `FileStore(data_dir, clock=time.time)`; the
+`clock` stamps `received_at` in the index. The layout it writes is described in
+`vitality_server.storage`.
+"""
 
 import os
 import shutil

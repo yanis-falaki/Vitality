@@ -17,11 +17,26 @@ from vitality_protocol.routes import INTERACTIONS_PATH
 from vitality_server.errors import ERROR_STATUSES
 from vitality_server.storage import ConflictingUpload, InvalidUpload
 
-log = logging.getLogger(__name__)
+
+# == Contract =============================================================================
 
 router = APIRouter()
+"""Serves `POST /interactions`, which answers:
+
+    201 `UploadReply(stored="new")`       stored now
+    200 `UploadReply(stored="existing")`  the identical interaction was already stored
+    422  a shot part without a file name, or two with the same one; the request is
+         malformed; or the store refused it as invalid (`InvalidUpload`)
+    409  the name is stored with different content (`ConflictingUpload`)
+    507  the disk or the device's quota is full
+    500  any other failure
+
+Every error is an `ErrorReply`. The shots are stored under the sending device's name
+(`request.state.device`, set by `UploadGate`).
+"""
 
 
+# Comments, not a docstring: FastAPI would publish a docstring in the OpenAPI schema.
 @router.post(INTERACTIONS_PATH, responses={s: {"model": ErrorReply} for s in ERROR_STATUSES})
 async def post_interaction(request: Request, response: Response,
                            interaction: Annotated[Json[Interaction], Form()],
@@ -51,3 +66,8 @@ async def post_interaction(request: Request, response: Response,
     log.info("stored %s %s: %s", device, interaction.name, stored)
     response.status_code = 201 if stored == "new" else 200
     return UploadReply(stored=stored)
+
+
+# == Implementation =======================================================================
+
+log = logging.getLogger(__name__)

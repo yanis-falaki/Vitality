@@ -38,8 +38,16 @@ from vitality_server.routes import health, interactions
 from vitality_server.storage import InteractionStore
 
 
+# == Contract =============================================================================
+
 def create_app(store: InteractionStore, identity: Identity,
                allowed_clients: Collection[str]) -> FastAPI:
+    """The server's ASGI app, serving the routes above on top of `store`.
+
+    Every request first passes `UploadGate`, which learns the sending device from
+    `identity` and lets only `allowed_clients` upload. Builds the app only: opens no
+    socket and touches no disk.
+    """
     app = FastAPI(title="Vitality server")
     app.state.store = store  # the routes read it from here
     add_error_handlers(app)  # every error leaves as an ErrorReply

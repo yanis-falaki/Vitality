@@ -1,9 +1,15 @@
-"""The server's settings, read from a TOML file."""
+"""The server's settings, read from a TOML file.
+
+Recognised keys: `data_dir`, `port`, `allowed_clients`. Anything omitted keeps the
+default of `ServerConfig`.
+"""
 
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+
+# == Contract =============================================================================
 
 @dataclass(frozen=True)
 class ServerConfig:
@@ -15,7 +21,12 @@ class ServerConfig:
 def load_server_config(path: Path) -> ServerConfig:
     """Load settings from a TOML file; a missing file yields the defaults.
 
-    Raises ValueError, naming the key, for an unknown key or a value of the wrong type.
+    `data_dir` must be a non-empty string, `port` an integer from 1 to 65535 and
+    `allowed_clients` a list of strings.
+
+    Raises ValueError, naming the key, for an unknown key or a value of the wrong type or
+    range. A file that is not valid TOML raises `tomllib.TOMLDecodeError` (a ValueError); one
+    that cannot be read raises OSError.
     """
     try:
         with open(path, "rb") as f:

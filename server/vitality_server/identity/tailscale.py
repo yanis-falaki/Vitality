@@ -1,4 +1,10 @@
-"""Identity from the local Tailscale daemon, by running the `tailscale` command."""
+"""Implements `Identity` (see interface.py).
+
+Identity from the local Tailscale daemon, by running the `tailscale` command. The module
+also holds what no interface.py covers: `tailscale_ipv4`, which finds the address the
+server listens on, and the `Runner` type that both it and `TailscaleIdentity` run commands
+through. `TailscaleIdentity` has no public methods beyond `who`.
+"""
 
 import asyncio
 import ipaddress
@@ -7,20 +13,19 @@ from collections.abc import Awaitable, Callable, Sequence
 
 from vitality_server.identity.interface import Identity
 
+
+# == Contract =============================================================================
+
 Runner = Callable[[Sequence[str]], Awaitable[tuple[int, bytes]]]
 """Runs a command; returns (exit code, stdout). Replaced by a fake in tests."""
-
-_TIMEOUT_S = 5.0
-_NOT_FOUND = 127  # the shell's exit code for "command not found"
-_TIMED_OUT = 124  # the exit code of timeout(1)
-_TAILSCALE_RANGE = ipaddress.IPv4Network("100.64.0.0/10")  # the CGNAT block Tailscale assigns
 
 
 async def run_command(argv: Sequence[str]) -> tuple[int, bytes]:
     """Run a command and return (exit code, stdout); stderr is discarded.
 
-    A program that cannot be started (missing, not executable) gives exit code 127, and a command that takes longer than
-    5 seconds is killed and gives 124, so a stuck `tailscale` cannot hang a request.
+    A program that cannot be started (missing, not executable) gives exit code 127, and a
+    command that takes longer than 5 seconds is killed and gives 124, so a stuck `tailscale`
+    cannot hang a request.
     """
     try:
         process = await asyncio.create_subprocess_exec(
@@ -35,6 +40,37 @@ async def run_command(argv: Sequence[str]) -> tuple[int, bytes]:
         await process.wait()
         return _TIMED_OUT, b""
     return process.returncode or 0, stdout
+
+
+async def tailscale_ipv4(run: Runner = run_command) -> str:
+    """This machine's Tailscale IPv4 address (`tailscale ip -4`, first line).
+
+    Raises RuntimeError if Tailscale is missing, not running, or does not give an IPv4
+    address in Tailscale's range, 100.64.0.0/10: the server binds exactly what this
+    returns, so anything else (0.0.0.0 above all) would expose it beyond the tailnet.
+    """
+    code, stdout = await run(["tailscale", "ip", "-4"])
+    lines = stdout.decode(errors="replace").splitlines() if code == 0 else []
+    if not lines:
+        raise RuntimeError(f"`tailscale ip -4` gave no address (exit code {code}); "
+                           "is Tailscale installed and running?")
+    text = lines[0].strip()
+    try:
+        address = ipaddress.IPv4Address(text)
+    except ValueError:
+        raise RuntimeError(f"`tailscale ip -4` gave {text!r}, not an IPv4 address") from None
+    if address not in _TAILSCALE_RANGE:
+        raise RuntimeError(f"`tailscale ip -4` gave {text}, which is outside Tailscale's "
+                           f"range {_TAILSCALE_RANGE}; refusing to listen on it")
+    return str(address)
+
+
+# == Implementation =======================================================================
+
+_TIMEOUT_S = 5.0
+_NOT_FOUND = 127  # the shell's exit code for "command not found"
+_TIMED_OUT = 124  # the exit code of timeout(1)
+_TAILSCALE_RANGE = ipaddress.IPv4Network("100.64.0.0/10")  # the CGNAT block Tailscale assigns
 
 
 class TailscaleIdentity(Identity):
@@ -91,26 +127,3 @@ def _split_dns_name(name: object) -> tuple[str, str]:
         return "", ""
     label, _, rest = name.rstrip(".").partition(".")
     return label, rest.lower()
-
-
-async def tailscale_ipv4(run: Runner = run_command) -> str:
-    """This machine's Tailscale IPv4 address (`tailscale ip -4`, first line).
-
-    Raises RuntimeError if Tailscale is missing, not running, or does not give an IPv4
-    address in Tailscale's range, 100.64.0.0/10: the server binds exactly what this
-    returns, so anything else (0.0.0.0 above all) would expose it beyond the tailnet.
-    """
-    code, stdout = await run(["tailscale", "ip", "-4"])
-    lines = stdout.decode(errors="replace").splitlines() if code == 0 else []
-    if not lines:
-        raise RuntimeError(f"`tailscale ip -4` gave no address (exit code {code}); "
-                           "is Tailscale installed and running?")
-    text = lines[0].strip()
-    try:
-        address = ipaddress.IPv4Address(text)
-    except ValueError:
-        raise RuntimeError(f"`tailscale ip -4` gave {text!r}, not an IPv4 address") from None
-    if address not in _TAILSCALE_RANGE:
-        raise RuntimeError(f"`tailscale ip -4` gave {text}, which is outside Tailscale's "
-                           f"range {_TAILSCALE_RANGE}; refusing to listen on it")
-    return str(address)

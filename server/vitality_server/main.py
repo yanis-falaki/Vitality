@@ -14,12 +14,33 @@ from vitality_server.config import load_server_config
 from vitality_server.identity import TailscaleIdentity, tailscale_ipv4
 from vitality_server.storage import FileStore
 
-DEFAULT_CONFIG = Path("/etc/vitality/server.toml")
 
-log = logging.getLogger(__name__)
+# == Contract =============================================================================
+
+DEFAULT_CONFIG = Path("/etc/vitality/server.toml")
+"""The settings file used when `--config` is not given."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the server until it is stopped; return the process exit code.
+
+    `argv` is the argument list (default: `sys.argv[1:]`); `--config PATH` names the
+    settings file. At startup, in order:
+
+        1. Parse the arguments and set up logging to stderr.
+        2. Load the settings (a missing file means the defaults) and open the store in
+           `data_dir`.
+        3. Recover: delete leftover tmp/ folders and index complete interactions the
+           index lacks.
+        4. Warn if `allowed_clients` is empty (every upload will then be refused).
+        5. Find this machine's Tailscale IPv4 address; the server listens only there,
+           never on every interface.
+        6. Serve until stopped, then close the store.
+
+    Exit codes: 0 after serving and stopping; 1 for unusable settings or data directory,
+    a failed recovery, or no Tailscale address (the reason goes to stderr, nothing is
+    served). A bad command line exits 2 (argparse).
+    """
     parser = argparse.ArgumentParser(prog="vitality-server", description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG,
                         help=f"settings file (default: {DEFAULT_CONFIG})")
@@ -56,3 +77,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     finally:
         store.close()
+
+
+# == Implementation =======================================================================
+
+log = logging.getLogger(__name__)
