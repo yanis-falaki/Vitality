@@ -232,3 +232,23 @@ def test_time_zone_defaults_to_the_system_zone(tmp_path, monkeypatch):
     store = Store(tmp_path / "index.sqlite")
     Writer(tmp_path, store, 85).write(img, T0, T0, "activity")
     assert store.interaction("2025-10-25/17-00-00").tz == "Europe/Paris"
+
+
+def test_close_interrupted_skips_a_bad_interaction_and_closes_the_rest(tmp_path, caplog):
+    store, w = make(tmp_path)
+    w.write(img, T0, T0, "activity"); w.write(img, T0 + 100, T0 + 100, "activity")
+    bad, good = "2025-10-25/17-00-00", "2025-10-25/17-01-40"
+    real = store.interaction
+
+    def broken(name):
+        if name == bad:
+            raise ValueError("corrupt row")
+        return real(name)
+
+    w2 = Writer(tmp_path, store, 85, tz=lambda: "UTC")
+    with patch.object(store, "interaction", side_effect=broken):
+        assert w2.close_interrupted() == 1
+    assert store.open_interactions() == [bad]
+    assert (tmp_path / "captures" / good / "interaction.json").exists()
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1 and bad in errors[0].getMessage() and "corrupt row" in errors[0].getMessage()

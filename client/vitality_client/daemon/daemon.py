@@ -180,9 +180,14 @@ class CaptureDaemon(Daemon):
             removed = self._writer.cleanup_orphans()
             if removed:
                 log.info("removed %d orphaned capture file(s)", removed)
-            closed = self._writer.close_interrupted()
-            if closed:
-                log.info("closed %d interrupted interaction(s)", closed)
+            try:
+                closed = self._writer.close_interrupted()
+            except Exception as exc:  # capture can still go on; the next start retries
+                log.error("closing interrupted interactions failed: %s",
+                          str(exc) or type(exc).__name__)
+            else:
+                if closed:
+                    log.info("closed %d interrupted interaction(s)", closed)
             # Before any task starts, so no write can land mid-scan and be counted twice.
             self._record_disk_usage(await asyncio.to_thread(self._writer.disk_usage_bytes))
             critical = {

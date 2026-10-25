@@ -121,8 +121,10 @@ class CaptureWriter(Protocol):
         ...
 
     def close_interrupted(self) -> int:
-        """Close interactions a crash left open (end + interaction.json); return how many.
-        Startup only."""
+        """Close interactions a crash left open (end + interaction.json); return how many
+        were closed. Startup only. One that cannot be closed is logged and left open for the
+        next start, and the others are still closed; raises only if the index cannot list
+        the open interactions."""
         ...
 
     def cleanup_orphans(self) -> int:

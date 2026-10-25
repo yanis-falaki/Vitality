@@ -559,3 +559,15 @@ async def test_refuses_to_start_on_the_old_layout_and_touches_nothing(
     after = {p.relative_to(tmp_path / "data").as_posix(): p.read_bytes()
              for p in (tmp_path / "data").rglob("*") if p.is_file()}
     assert after == before  # no file deleted, no new tables, no -wal/-shm
+
+
+async def test_failing_close_interrupted_is_logged_and_the_daemon_starts(daemon_env, caplog):
+    d, _, _ = daemon_env()
+    with patch.object(Writer, "close_interrupted", side_effect=sqlite3.OperationalError("disk I/O error")):
+        task = asyncio.create_task(d.run())
+        await wait_for_socket(d)
+        assert (await send_command(d._paths.socket_path, {"cmd": "status"}))["ok"]
+    assert "disk I/O error" in caplog.text and not task.done()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

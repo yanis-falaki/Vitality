@@ -3,6 +3,7 @@
 Shots are grouped into interaction folders; `end` closes one and writes interaction.json.
 """
 
+import logging
 import os
 import stat
 from collections.abc import Callable
@@ -20,6 +21,8 @@ from vitality_client.daemon.storage.interface import (
     InteractionRow,
     ShotRow,
 )
+
+log = logging.getLogger(__name__)
 
 MAX_SIDE = 16383  # WebP's per-side limit
 LOCALTIME = Path("/etc/localtime")
@@ -119,11 +122,19 @@ class Writer(CaptureWriter):
         return name
 
     def close_interrupted(self) -> int:
-        """Close interactions a crash left open: end = last shot, write interaction.json."""
-        names = self._store.open_interactions()
-        for name in names:
-            self._finish(name)
-        return len(names)
+        """Close interactions a crash left open: end = last shot, write interaction.json.
+        One that fails is logged and left open (retried at the next start); the rest are
+        still closed."""
+        closed = 0
+        for name in self._store.open_interactions():
+            try:
+                self._finish(name)
+            except Exception as exc:
+                log.error("could not close interrupted interaction %s: %s",
+                          name, str(exc) or type(exc).__name__)
+            else:
+                closed += 1
+        return closed
 
     def _finish(self, name: str) -> None:
         """Write interaction.json, and only then commit the end. If this fails or the
