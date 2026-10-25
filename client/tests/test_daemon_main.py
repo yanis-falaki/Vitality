@@ -1,3 +1,5 @@
+import pytest
+
 from vitality_client.daemon.main import main
 
 
@@ -35,3 +37,11 @@ def test_old_layout_is_an_error_and_nothing_is_deleted(monkeypatch, tmp_path, ca
     assert "client/README.md" in err
     assert shot.read_bytes() == b"RIFF....WEBP"
     assert sorted(p.name for p in data.iterdir()) == ["captures", "index.sqlite"]
+
+
+def test_help_describes_interactions_and_upload(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "before/after" not in out
+    assert "interaction" in out and "upload" in out

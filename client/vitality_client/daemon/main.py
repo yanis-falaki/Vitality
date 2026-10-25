@@ -19,8 +19,9 @@ from vitality_client.shared.state import StateFile
 def main(argv: Sequence[str] | None = None) -> int:
     argparse.ArgumentParser(
         prog="vitality-clientd",
-        description="Take before/after screenshots around keyboard and mouse activity. "
-                    "Control it with vitality-client.",
+        description="Record screenshots of each burst of keyboard and mouse activity as an "
+                    "interaction folder, and upload each finished interaction to the server "
+                    "set as upload_server, if any. Control it with vitality-client.",
     ).parse_args(argv)
     session = os.environ.get("XDG_SESSION_TYPE", "")
     if session != "wayland":
