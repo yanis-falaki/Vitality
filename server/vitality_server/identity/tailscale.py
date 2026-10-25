@@ -37,28 +37,59 @@ async def run_command(argv: Sequence[str]) -> tuple[int, bytes]:
 
 
 class TailscaleIdentity(Identity):
-    """Asks `tailscale whois` which device owns an address on the tailnet."""
+    """Asks `tailscale whois` which device owns an address, and accepts only devices on this
+    server's own tailnet.
+
+    The device name is the first label of the node's MagicDNS name (`Node.Name`, e.g.
+    "laptop.tail1234.ts.net." -> "laptop"), and that name must end in this server's tailnet
+    suffix (its own `Self.DNSName` from `tailscale status --json` minus the first label).
+    That rules out nodes shared in from another tailnet, which may carry any first label.
+    `ComputedName` is never used: it can follow the device's OS hostname. The suffix is
+    read once, on the first request, and kept; a failed read is retried on the next one.
+    """
 
     def __init__(self, run: Runner = run_command) -> None:
         self._run = run
+        self._suffix: str | None = None  # e.g. "tail1234.ts.net", once known
 
     async def who(self, ip: str) -> str | None:
         code, stdout = await self._run(["tailscale", "whois", "--json", ip])
         if code != 0:
             return None
-        try:
-            node = json.loads(stdout).get("Node")
-        except (ValueError, AttributeError):  # not JSON, or JSON that is not an object
+        node = _field(stdout, "Node")
+        name = node.get("Name") if isinstance(node, dict) else None
+        label, rest = _split_dns_name(name)
+        suffix = await self._tailnet_suffix()
+        if not label or suffix is None or rest != suffix:
             return None
-        if not isinstance(node, dict):
-            return None
-        computed = node.get("ComputedName")
-        if isinstance(computed, str) and computed:
-            return computed
-        name = node.get("Name")  # "laptop.tail1.ts.net." -> "laptop"
-        if isinstance(name, str):
-            return name.split(".")[0] or None
+        return label
+
+    async def _tailnet_suffix(self) -> str | None:
+        if self._suffix is None:
+            code, stdout = await self._run(["tailscale", "status", "--json"])
+            me = _field(stdout, "Self") if code == 0 else None
+            _, rest = _split_dns_name(me.get("DNSName") if isinstance(me, dict) else None)
+            self._suffix = rest or None
+        return self._suffix
+
+
+def _field(stdout: bytes, key: str) -> object:
+    """`key` of the JSON object in `stdout`, or None if it is not a JSON object."""
+    try:
+        data = json.loads(stdout)
+    except ValueError:
         return None
+    return data.get(key) if isinstance(data, dict) else None
+
+
+def _split_dns_name(name: object) -> tuple[str, str]:
+    """("laptop", "tail1234.ts.net") for "laptop.tail1234.ts.net."; ("", "") if not a name.
+
+    The tailnet part is lower-cased and loses its trailing dot (DNS names ignore case)."""
+    if not isinstance(name, str):
+        return "", ""
+    label, _, rest = name.rstrip(".").partition(".")
+    return label, rest.lower()
 
 
 async def tailscale_ipv4(run: Runner = run_command) -> str:

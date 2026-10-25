@@ -53,6 +53,10 @@ In the commands below, `<vm>` is the VM's exe.dev name; the SSH name is `<vm>.ex
 
    An empty list refuses every upload (and the server logs a warning at startup).
 
+   The name is the first part of the device's MagicDNS name (`laptop` for
+   `laptop.tail1234.ts.net`), and only devices on the VM's own tailnet count: a device
+   shared in from another tailnet is refused even if its name matches.
+
 5. Point the laptop at it: see "Upload to a server" in [`client/README.md`](../client/README.md).
 
 ## Configuration

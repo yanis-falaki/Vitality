@@ -8,5 +8,6 @@ class Identity(Protocol):
 
     async def who(self, ip: str) -> str | None:
         """The device name for this address (a Tailscale device name such as "laptop"),
-        or None if the address belongs to no known device or the lookup failed."""
+        or None if the address belongs to no device on this server's own tailnet (unknown,
+        or shared in from another tailnet) or the lookup failed. Never raises."""
         ...
