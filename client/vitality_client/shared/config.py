@@ -15,6 +15,7 @@ class Config:
     max_gap_seconds: float = 10
     webp_quality: int = 85
     disk_warning_gb: float = 20
+    upload_server: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,12 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _check_url(key: str, value: object) -> str:
+    if not isinstance(value, str) or not value.startswith(("http://", "https://")):
+        raise ValueError(f"config key {key} must be an http:// or https:// URL, got {value!r}")
+    return value.rstrip("/")
+
+
 def _check_range(key: str, value: float) -> None:
     if not math.isfinite(value):
         raise ValueError(f"config key {key} must be a finite number, got {value!r}")
@@ -75,15 +82,20 @@ def load_config(path: Path) -> Config:
         if key not in types:
             raise ValueError(f"unknown config key: {key}")
 
-    values: dict[str, float | int] = {}
+    values: dict[str, float | int | str] = {}
     for key, value in raw.items():
+        if types[key] in (str, "str | None"):
+            values[key] = _check_url(key, value)
+            continue
+        number: float
         if types[key] in (float, "float"):
             if not _is_number(value):
                 raise ValueError(f"config key {key} must be a number, got {value!r}")
-            values[key] = float(value)
+            number = float(value)
         else:
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError(f"config key {key} must be an integer, got {value!r}")
-            values[key] = value
-        _check_range(key, values[key])
+            number = value
+        _check_range(key, number)
+        values[key] = number
     return Config(**values)  # pyright: ignore[reportArgumentType]  # types validated above

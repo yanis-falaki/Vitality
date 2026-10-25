@@ -103,3 +103,27 @@ def test_load_config_range_boundaries_accepted(tmp_path):
     assert (c.settle_seconds, c.max_gap_seconds, c.disk_warning_gb, c.webp_quality) == (0.1, 0.5, 0.0, 1)
     f.write_text("webp_quality = 100\n")
     assert load_config(f).webp_quality == 100
+
+
+def test_upload_server_loaded(tmp_path):
+    p = tmp_path / "client.toml"
+    p.write_text('upload_server = "http://vitality-librarian:8100"\n')
+    assert load_config(p).upload_server == "http://vitality-librarian:8100"
+
+
+def test_upload_server_trailing_slash_stripped(tmp_path):
+    p = tmp_path / "client.toml"
+    p.write_text('upload_server = "https://vitality-librarian:8100/"\n')
+    assert load_config(p).upload_server == "https://vitality-librarian:8100"
+
+
+def test_upload_server_defaults_to_none(tmp_path):
+    assert load_config(tmp_path / "missing.toml").upload_server is None
+
+
+@pytest.mark.parametrize("value", ["8100", '"vitality-librarian:8100"', '""'])
+def test_upload_server_must_be_http_url(tmp_path, value):
+    p = tmp_path / "client.toml"
+    p.write_text(f"upload_server = {value}\n")
+    with pytest.raises(ValueError, match="upload_server"):
+        load_config(p)
