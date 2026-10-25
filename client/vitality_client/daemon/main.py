@@ -1,7 +1,7 @@
 """`vitality-clientd`: the daemon's entry point (what the systemd service runs).
 
-Picks the concrete parts — the portal frame source and the evdev activity watcher —
-and runs a CaptureDaemon with them until stopped.
+Picks the concrete parts — the portal frame source, the evdev activity watcher and, when
+`upload_server` is configured, the HTTP uploader — and runs a CaptureDaemon with them until stopped.
 """
 
 import argparse
@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from vitality_client.shared.config import load_config, resolve_paths
@@ -39,11 +39,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     from vitality_client.daemon.activity import ActivityWatcher
     from vitality_client.daemon.daemon import CaptureDaemon
     from vitality_client.daemon.frames.portal import PortalFrameSource
+    from vitality_client.daemon.storage import CaptureIndex
+    from vitality_client.daemon.upload import HttpUploader, Uploader
 
     token = StateFile(paths.state_file).load().restore_token
 
+    def make_uploader(server: str) -> Callable[[CaptureIndex], Uploader]:
+        return lambda index: HttpUploader(server, index, paths.data_dir)
+
     async def run() -> None:
-        daemon = CaptureDaemon(config, paths, PortalFrameSource(token), ActivityWatcher())
+        daemon = CaptureDaemon(
+            config, paths, PortalFrameSource(token), ActivityWatcher(),
+            uploader=None if config.upload_server is None else make_uploader(config.upload_server),
+        )
         await daemon.run()
 
     try:

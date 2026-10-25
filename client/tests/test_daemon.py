@@ -7,15 +7,18 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 import pytest
 from PIL import Image
 
+from http_forms import form_field
 from vitality_client.shared.config import Config, Paths
 from vitality_client.shared.channel import UploadStatus, send_command
 from vitality_client.shared.state import StateFile
 from vitality_client.daemon.daemon import CaptureDaemon
 from vitality_client.daemon.storage import Store
 from vitality_client.daemon.storage import Writer
+from vitality_client.daemon.upload import HttpUploader
 
 img = Image.new("RGB", (64, 40), "white")
 
@@ -406,6 +409,31 @@ class FakeUploader:
 
     def wake(self):
         self.woken.append(True)
+
+
+async def test_uploads_continue_while_paused(daemon_env, tmp_path):
+    seen = []
+
+    def handler(req):
+        seen.append(req)
+        return httpx.Response(201, json={"ok": True, "stored": "new"})
+
+    built = []
+
+    def factory(index):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://srv")
+        built.append(HttpUploader("http://srv", index, tmp_path / "data", client=client))
+        return built[0]
+
+    d, _, _ = daemon_env(uploader=factory)
+    await d.handle({"cmd": "pause"})
+    assert (await d.handle({"cmd": "capture"}))["ok"]
+    await d.drain()
+    assert d.status()["state"] == "paused" and d.status()["upload"]["pending"] == 1
+    assert await built[0].upload_once() == "uploaded"
+    interaction = json.loads(form_field(seen[0], "interaction"))
+    assert [s["trigger"] for s in interaction["shots"]] == ["manual"]
+    assert d.status()["upload"]["pending"] == 0 and d.status()["state"] == "paused"
 
 
 async def test_interaction_end_wakes_uploader(daemon_env):

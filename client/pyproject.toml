@@ -9,6 +9,7 @@ dependencies = [
     "Pillow",
     "python-ulid",
     "vitality-protocol",
+    "httpx>=0.28.1",
 ]
 
 [tool.uv.sources]
