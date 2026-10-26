@@ -5,7 +5,7 @@ import os
 import sys
 from collections.abc import Sequence
 
-from vitality_client.cli import control, doctor, reset
+from vitality_client.cli import control, doctor, reset, upgrade
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -21,9 +21,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         capture             take a screenshot now and print its path
         doctor              check the setup
         reset [--all] [--yes]   delete all captures (the daemon must be stopped)
+        upgrade             reinstall the client from this repo's main, then run doctor
 
     Exit codes: 0 on success; 1 when the command fails (daemon not running or replying
-    with an error, failed checks, reset refused or declined, or a RuntimeError/ValueError
+    with an error, failed checks, reset or upgrade refused or declined, or a RuntimeError/ValueError
     such as a missing XDG_RUNTIME_DIR or a bad config, reported on stderr); 2 for a bad
     command line or pause duration.
     """
@@ -45,6 +46,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return control.capture(env)
             case "reset":
                 return reset.reset(env, include_state=args.all, assume_yes=args.yes)
+            case "upgrade":
+                return upgrade.upgrade(env)
     except (RuntimeError, ValueError) as exc:  # no runtime dir, bad config, already running, ...
         print(f"vitality-client: {exc}", file=sys.stderr)
         return 1
@@ -66,4 +69,5 @@ def _parser() -> argparse.ArgumentParser:
     reset.add_argument("--all", action="store_true",
                        help="also delete state (pause state and screen-sharing permission)")
     reset.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    sub.add_parser("upgrade", help="reinstall the client from this repo's main, then run doctor")
     return parser

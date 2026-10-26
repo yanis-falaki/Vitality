@@ -52,3 +52,10 @@ def daemon_is_running(socket_path: Path) -> bool:
     except DaemonNotRunning:
         return False
     return True
+
+
+def app_dir(env: Mapping[str, str]) -> Path:
+    """Where `client/install.sh` puts the installed program: `$XDG_DATA_HOME/vitality-client`
+    (`~/.local/share/vitality-client`). Only computes the path."""
+    value = env.get("XDG_DATA_HOME")
+    return (Path(value) if value else Path.home() / ".local/share") / "vitality-client"
