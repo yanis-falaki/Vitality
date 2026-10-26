@@ -26,9 +26,24 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 command -v uv >/dev/null 2>&1 || { echo "uv is not on PATH after installing it" >&2; exit 1; }
 
+# On exit: delete the temporary requirements file, and if the script stopped the service and
+# then failed, start it again so a failed install does not leave the server down.
+REQUIREMENTS=""
+STOPPED=0
+cleanup() {
+    local status=$?
+    [[ -z "$REQUIREMENTS" ]] || rm -f "$REQUIREMENTS"
+    if [[ $status -ne 0 && $STOPPED -eq 1 ]]; then
+        sudo systemctl start "$UNIT" || true
+        echo "install failed; restarted the previous vitality-serverd (it may be running partly replaced files: rerun ./server/install.sh)" >&2
+    fi
+}
+trap cleanup EXIT
+
 # Stop the running server before its files are replaced (the first install has no unit yet).
 if systemctl is-active --quiet "$UNIT"; then
     echo "==> stopping vitality-serverd while the program is replaced"
+    STOPPED=1   # set first: if the stop half-works, a failure still tries to start it
     sudo systemctl stop "$UNIT"
 fi
 
@@ -42,7 +57,6 @@ uv python install 3.14
 # server/pyproject.toml. The two local packages are left out of the export: they have no
 # hash and are installed from this checkout below.
 REQUIREMENTS=$(mktemp)
-trap 'rm -f "$REQUIREMENTS"' EXIT
 (cd server && uv export --locked --no-dev --no-editable --no-emit-project --no-emit-local \
     --quiet) > "$REQUIREMENTS"
 # Reinstall both packages every time: the version number does not change between upgrades.
@@ -84,6 +98,7 @@ sudo install -m 644 server/systemd/"$UNIT" /etc/systemd/system/"$UNIT"
 sudo systemctl daemon-reload
 sudo systemctl enable "$UNIT"
 sudo systemctl restart "$UNIT"
+STOPPED=0   # started again: a failure from here on needs no restart
 
 if ! tailscale ip -4 >/dev/null 2>&1; then
     echo "warning: Tailscale has no address on this machine yet; the server cannot start until it does." >&2
