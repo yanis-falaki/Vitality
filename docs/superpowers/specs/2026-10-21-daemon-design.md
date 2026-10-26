@@ -142,6 +142,7 @@ Two commands from one package: **`vitality-clientd`** is the daemon (what the se
 | `capture` | Asks the daemon for one screenshot now (even while paused) and prints its path. It joins the open interaction while one is active, and is its own one-shot interaction otherwise |
 | `toggle` | Pause if capturing, resume if paused |
 | `reset [--all] [--yes]` | Delete all captures (and with `--all` the state); refuses while the daemon runs |
+| `upgrade` | Reinstall the client from the repo's `main` with `client/install.sh`, then run `doctor` (§8) |
 
 `status` prints one line for uploads, `upload: ok · 0 pending · last 17:00:43`. Its state is `disabled` (no `upload_server`; the line is then just `upload: disabled`), `ok`, `offline` (server unreachable; interactions queue) or `rejected` (this device is refused by the server). `pending` counts ended interactions not yet uploaded. `status --json` carries the same as an `upload` object with `state`, `pending` and `last_upload`.
 
@@ -169,6 +170,8 @@ Files follow the XDG Base Directory convention (config, data, and state in separ
 2. The session is Wayland, and xdg-desktop-portal with a ScreenCast implementation, PipeWire, and the GStreamer PipeWire plugin are present.
 3. Data, state, and runtime directories are writable.
 4. When `upload_server` is set: the laptop is on Tailscale, and the server answers `GET /health`.
+
+**Installing:** `client/install.sh`, run from the repo root as the normal user, builds a separate non-editable copy of the daemon in `$XDG_DATA_HOME/vitality-client/venv` (system site packages, for PyGObject/GStreamer), links `vitality-client` and `vitality-clientd` into `~/.local/bin`, and installs the user unit `vitality-clientd.service` (stopping and restarting the daemon around the replacement). It records the checkout (`source`) and commit (`installed`) it installed from. The repo is then only a workshop: `client/.venv` is for tests and type checking, and editing the repo never changes the running daemon. `vitality-client upgrade` refuses unless the checkout is on `main` with no modified tracked files, lists the commits it brings, reruns `install.sh`, and runs a fresh `doctor`; it does not fetch or pull.
 
 First run: approve the screen-capture dialog once.
 

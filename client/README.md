@@ -7,6 +7,9 @@ Tailscale. Without `upload_server` set, nothing leaves the machine. Wayland only
 
 ## Install
 
+The daemon runs from its own installed copy under `~/.local/share/vitality-client`, built
+from this repo by `client/install.sh`; editing the repo never changes the running daemon.
+
 1. System packages and permissions:
 
    ```sh
@@ -15,30 +18,46 @@ Tailscale. Without `upload_server` set, nothing leaves the machine. Wayland only
    ```
 
    (`xdg-desktop-portal-hyprland` is the ScreenCast backend on Hyprland; use your compositor's
-   backend elsewhere, and the distro equivalents of the other packages.)
+   backend elsewhere, and the distro equivalents of the other packages.) You also need
+   [`uv`](https://docs.astral.sh/uv/).
 
    The `input` group is how the daemon reads `/dev/input` to notice activity. See
    [Security note](#security-note).
 
-2. In this directory (`client/`), create the virtualenv with system site packages, so the
-   system PyGObject/GStreamer are importable, and install the project:
+2. From the root of the repo, as your normal user (no sudo), run the installer:
 
    ```sh
-   uv venv --python /usr/bin/python3 --system-site-packages
-   uv sync
+   ./client/install.sh
    ```
 
-3. Put both commands on your `PATH`: `vitality-clientd` is the daemon (the service unit
-   expects `~/.local/bin/vitality-clientd`), `vitality-client` controls it.
+   It builds a virtualenv with system site packages (so the system PyGObject/GStreamer are
+   importable) in `~/.local/share/vitality-client/venv`, installs the locked dependencies and
+   a copy of `client/` and `protocol/` into it, puts `vitality-client` and `vitality-clientd`
+   in `~/.local/bin` (make sure that is on your `PATH`), and installs the user service
+   `vitality-clientd.service`. It checks the system prerequisites first and says how to fix
+   what is missing. Rerunning it is safe: it stops the daemon, replaces the program and
+   starts it again.
+
+3. Run the daemon as a user service, started with your graphical session. The unit is tied
+   to `graphical-session.target`, which only some setups start (for example Hyprland through
+   uwsm). Check yours:
 
    ```sh
-   mkdir -p ~/.local/bin
-   ln -s "$PWD/.venv/bin/vitality-clientd" ~/.local/bin/vitality-clientd
-   ln -s "$PWD/.venv/bin/vitality-client" ~/.local/bin/vitality-client
+   systemctl --user is-active graphical-session.target
    ```
 
-   `uv tool install --editable .` is not an option: it builds an isolated environment
-   without system site packages, so GStreamer cannot be imported there.
+   If it prints `inactive`, `enable` alone will not start the service at login. Start it
+   from the compositor instead; for Hyprland add this to `hyprland.conf`, after any
+   environment-import line:
+
+   ```
+   exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE && systemctl --user start vitality-clientd.service
+   ```
+
+   The service needs the compositor's environment (`WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`) in
+   the systemd user manager; the `&&` makes sure the import finishes before the start. If the
+   service reports that it requires a Wayland session, that import did not happen. Logs:
+   `journalctl --user -u vitality-clientd -f`.
 
 4. Check the setup:
 
@@ -48,32 +67,7 @@ Tailscale. Without `upload_server` set, nothing leaves the machine. Wayland only
 
    It lists what is missing and how to fix it, then prints the config, data and state paths.
 
-5. Run the daemon as a user service, started with your graphical session:
-
-   ```sh
-   systemctl --user link "$PWD/systemd/vitality-clientd.service"
-   systemctl --user enable --now vitality-client
-   journalctl --user -u vitality-clientd -f     # logs
-   ```
-
-   The unit is tied to `graphical-session.target`, which only some setups start (for
-   example Hyprland through uwsm). Check yours:
-
-   ```sh
-   systemctl --user is-active graphical-session.target
-   ```
-
-   If it prints `inactive`, `enable` alone will not start the service at login. Start it
-   from the compositor instead; for Hyprland add this to `hyprland.conf`, after any
-   environment-import line (`systemctl --user enable` is then optional):
-
-   ```
-   exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE && systemctl --user start vitality-clientd.service
-   ```
-
-   The service needs the compositor's environment (`WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`) in
-   the systemd user manager; the `&&` makes sure the import finishes before the start. If the
-   service reports that it requires a Wayland session, that import did not happen.
+5. Start the service now (`systemctl --user start vitality-clientd`) or log in again.
 
 6. Approve screen capture. On its first start the daemon asks for screen-sharing permission,
    so the portal's share picker appears.
@@ -105,6 +99,19 @@ Tailscale. Without `upload_server` set, nothing leaves the machine. Wayland only
    ```sh
    top -p $(pgrep -f vitality-clientd)
    ```
+
+### Updating
+
+Commit or merge your changes to `main` in this repo, then:
+
+```sh
+vitality-client upgrade
+```
+
+It checks that the repo is on `main` with no modified tracked files, lists the commits it
+brings, runs `./client/install.sh` there (restarting the daemon), and finishes with a fresh
+`vitality-client doctor`. With nothing new on `main` it says `already installed` and stops.
+It does not fetch or pull: the repo is wherever `install.sh` was last run from.
 
 ### Upgrading from the old capture layout
 
@@ -173,6 +180,7 @@ through `vitality-client`, which talks to the running daemon:
 | `vitality-client doctor` | Check the setup (with `upload_server` set, also Tailscale and the server) |
 | `vitality-client capture` | Take a screenshot now (even while paused) and print its path. It joins the open interaction, or is its own one-shot interaction when idle |
 | `vitality-client reset [--all] [--yes]` | Delete all captures and the index (asks first; the daemon must be stopped). `--all` also deletes state, so the screen-sharing picker appears again |
+| `vitality-client upgrade` | Reinstall the client from this repo's `main` (runs `client/install.sh`), then `doctor` |
 
 Pausing takes one final capture if an interaction is in progress, so pause before sensitive
 content appears, not after.
@@ -218,10 +226,17 @@ Clicking toggles pause; the signal refreshes the module immediately.
 
 ## Development
 
+`client/.venv` is only for tests and type checking, not for running the daemon:
+
 ```bash
+uv venv --python /usr/bin/python3 --system-site-packages   # once, in client/
+uv sync
 uv run pytest     # tests
 uv run pyright    # type check: implementations must match their interfaces
 ```
+
+Editing the repo never changes the running daemon; run `vitality-client upgrade` (or
+`./client/install.sh`) to install a new version.
 
 Layout: `daemon/` is `vitality-clientd` and the parts only it uses (policy, activity,
 frames, storage, upload); `cli/` is `vitality-client`; `shared/` holds what both use: `config.py`
