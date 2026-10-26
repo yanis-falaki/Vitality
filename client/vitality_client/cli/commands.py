@@ -34,6 +34,10 @@ def capture(args: Sequence[str], cwd: Path | None) -> tuple[int, str]:
 
 def stream(args: Sequence[str], cwd: Path | None) -> int:
     """The real `Stream`; a program that cannot be started gives 127, after saying why on stderr."""
+    # Our own lines first: Python buffers them when output goes to a pipe or file, and the
+    # child writes straight through, so without this its output would come out first.
+    sys.stdout.flush()
+    sys.stderr.flush()
     try:
         return subprocess.run(args, cwd=cwd).returncode
     except OSError as exc:
