@@ -13,9 +13,10 @@ def format_bytes(n: float) -> str:
 
 
 def format_received(iso_ts: str, now: datetime) -> str:
-    """A UTC ISO 8601 timestamp (`2026-10-25T21:30:37.449Z`) in this machine's local time:
-    `HH:MM:SS` if that is the same local day as `now`, else `YYYY-MM-DD HH:MM`."""
+    """A UTC ISO 8601 timestamp (`2026-10-25T21:30:37.449Z`) in this machine's local time,
+    with its zone so it cannot be misread: `HH:MM:SS EDT` if that is the same local day as
+    `now`, else `YYYY-MM-DD HH:MM EDT`."""
     when = datetime.fromisoformat(iso_ts).astimezone()
     if when.date() == now.astimezone().date():
-        return when.strftime("%H:%M:%S")
-    return when.strftime("%Y-%m-%d %H:%M")
+        return when.strftime("%H:%M:%S %Z")
+    return when.strftime("%Y-%m-%d %H:%M %Z")

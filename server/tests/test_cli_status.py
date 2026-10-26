@@ -47,8 +47,8 @@ def test_one_line_per_device_then_disk_then_paths(tmp_path, capsys):
     config = config_for(tmp_path, data)
     assert status(config) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0] == "desk: 1 interactions · 1 shots · 0.0 kB · last received 2026-10-20 09:05"
-    assert lines[1] == "laptop: 2 interactions · 3 shots · 0.1 kB · last received 21:30:37"
+    assert lines[0] == "desk: 1 interactions · 1 shots · 0.0 kB · last received 2026-10-20 09:05 UTC"
+    assert lines[1] == "laptop: 2 interactions · 3 shots · 0.1 kB · last received 21:30:37 UTC"
     assert lines[2].startswith("disk: ") and lines[2].endswith(" free")
     assert lines[3:] == paths_block(config, data)
 
@@ -62,7 +62,7 @@ def test_sizes_use_decimal_units(tmp_path, capsys, monkeypatch):
         db.execute("UPDATE shots SET bytes = 201000000")
     status(config_for(tmp_path, data))
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == "laptop: 1 interactions · 1 shots · 201.0 MB · last received 21:00:00"
+    assert out[0] == "laptop: 1 interactions · 1 shots · 201.0 MB · last received 21:00:00 UTC"
     assert out[1] == "disk: 19.7 GB free"
 
 
@@ -73,7 +73,7 @@ def test_last_received_is_shown_in_local_time(tmp_path, capsys, monkeypatch):
     store_with(data, {"laptop": [("2026-10-25T21:00:00Z", 1, datetime(2026, 10, 25, 21, 30, 37, tzinfo=UTC))]})
     monkeypatch.setattr(status_module, "_now", lambda: datetime(2026, 10, 25, 22, 0, tzinfo=UTC))
     status(config_for(tmp_path, data))
-    assert "last received 14:30:37" in capsys.readouterr().out
+    assert "last received 14:30:37 PDT" in capsys.readouterr().out
 
 
 def test_empty_index(tmp_path, capsys):

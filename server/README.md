@@ -123,7 +123,7 @@ $ vitality-server upgrade
 
 ```
 $ vitality-server status
-laptop: 595 interactions · 1835 shots · 201.0 MB · last received 21:30:37
+laptop: 595 interactions · 1835 shots · 201.0 MB · last received 17:30:37 EDT
 disk: 19.7 GB free
 config:   /etc/vitality/server.toml
 data:     /srv/vitality
