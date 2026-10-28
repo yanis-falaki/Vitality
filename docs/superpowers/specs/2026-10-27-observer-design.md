@@ -153,14 +153,15 @@ Run as `vitality-librarian`, in `/srv/vitality-model/`:
 
 ```bash
 claude -p "<the batch's interaction paths, then the context observations>" \
-  --system-prompt "<contents of prompt.md>" \
+  --append-system-prompt "<contents of prompt.md>" \
   --permission-mode bypassPermissions \
   --output-format json \
   [--model <configured model>]
 ```
 
-- The observer reads `prompt.md` from its installed package and passes its contents as the
-  system prompt (if the installed Claude Code offers a file-based flag instead, use that).
+- The observer reads `prompt.md` from its installed package and passes its contents with
+  `--append-system-prompt`, so Claude Code keeps its built-in guidance for its default tools and
+  our instructions are added on top (Claude Code 2.1 has no file-based system-prompt flag).
 - Headless calls cannot ask for permission, so `bypassPermissions` pre-approves Claude Code's
   default tools. The OS-level protections in §8 are what keep the captures safe.
 - `--output-format json` returns the call's result, token usage and estimated cost. The observer
