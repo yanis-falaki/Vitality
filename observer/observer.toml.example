@@ -1,0 +1,7 @@
+captures_dir = "/srv/vitality/captures"     # the server's interactions; the observer only reads them
+model_dir = "/srv/vitality-model"           # the user model (a git repository); observations/ lives here
+state_dir = "/var/lib/vitality-librarian"   # where calls.jsonl and skipped.txt are kept
+batch_size = 10                             # most interactions handed to one Claude call
+context_size = 15                           # earlier observations of the same device given as context
+call_timeout_seconds = 600                  # a Claude call running longer is killed
+# model = "…"                               # unset: Claude Code's default
