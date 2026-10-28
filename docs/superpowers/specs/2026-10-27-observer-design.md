@@ -91,7 +91,7 @@ Everything, on both machines. **(new)** marks what this design adds.
 /usr/local/bin/vitality-observerd         the service's command
 /etc/systemd/system/vitality-observerd.service
 /etc/vitality/observer.toml               settings (§7)
-/var/lib/vitality-librarian/              home: Claude Code login (.claude/), skipped.txt, calls.jsonl
+/var/lib/vitality-librarian/              home: Claude Code (.local/bin/claude) and its login (.claude/), skipped.txt, calls.jsonl
 /srv/vitality-model/                      the user model (git repository)
   observations/<device>/<day>/<time>.md     one per interaction
 ```
@@ -205,7 +205,7 @@ call_timeout_seconds = 600
 - The librarian account cannot enter `/home/exedev` (mode 750).
 - Its home is `/var/lib/vitality-librarian`, a service-style home, because Claude Code stores
   its login in `$HOME/.claude`. Its shell is `nologin`; it is never logged into interactively,
-  only used through `sudo -u` for the one-time Claude login.
+  only used through `sudo -u` for the one-time Claude Code install and login.
 - The unit adds a second layer: `NoNewPrivileges=yes`, `ProtectSystem=strict`,
   `ReadOnlyPaths=/srv/vitality`, `ReadWritePaths=/srv/vitality-model /var/lib/vitality-librarian`.
 
@@ -263,8 +263,13 @@ mirroring `server/install.sh`:
    git repository if new;
 4. install the program into `/opt/vitality-observer/` from the locked dependencies, link
    `vitality-observerd`, install the unit and `observer.toml` (kept if present), restart;
-5. remind the owner, the first time, to log Claude Code in:
-   `sudo -u vitality-librarian -H claude` (personal subscription).
+5. check that Claude Code is installed and logged in for `vitality-librarian`; if not, print the
+   one-time commands (it does not run them) and leave the service enabled but not started:
+   the official installer, `sudo -u vitality-librarian -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash'`,
+   which puts `claude` in `/var/lib/vitality-librarian/.local/bin` (where it also updates
+   itself; the unit's `PATH` starts there), then
+   `sudo -u vitality-librarian -H /var/lib/vitality-librarian/.local/bin/claude` and `/login`
+   (personal subscription).
 
 Updates use the same flow as the server: pull the checkout, rerun `observer/install.sh`.
 
