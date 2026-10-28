@@ -4,7 +4,15 @@ from pathlib import Path
 import pytest
 
 from vitality_observer.config import ObserverConfig
-from vitality_observer.work import Interaction, add_skipped, context, read_skipped, sort_key, unobserved
+from vitality_observer.work import (
+    Interaction,
+    add_skipped,
+    chronological_key,
+    context,
+    read_skipped,
+    sort_key,
+    unobserved,
+)
 
 
 @pytest.fixture
@@ -27,7 +35,7 @@ def capture(cfg: ObserverConfig, name: str, *, with_json: bool = True) -> None:
 def observe(cfg: ObserverConfig, name: str, text: str = "seen") -> Path:
     path = cfg.model_dir / "observations" / f"{name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -39,6 +47,12 @@ def test_sort_key_splits_name_and_defaults_suffix_to_one():
     assert sort_key("laptop/2026-10-25/17-00-00") == ("laptop", "2026-10-25", "17-00-00", 1)
     assert sort_key("laptop/2026-10-25/17-00-00-2") == ("laptop", "2026-10-25", "17-00-00", 2)
     assert sort_key("laptop/2026-10-25/17-00-00-10") > sort_key("laptop/2026-10-25/17-00-00-9")
+
+
+def test_chronological_key_puts_day_and_time_before_device():
+    assert chronological_key("laptop/2026-10-25/17-00-00") == ("2026-10-25", "17-00-00", 1, "laptop")
+    assert chronological_key("laptop/2026-10-25/17-00-00-2") == ("2026-10-25", "17-00-00", 2, "laptop")
+    assert chronological_key("phone/2026-10-25/09-00-00") < chronological_key("desktop/2026-10-25/10-00-00")
 
 
 def test_unobserved_returns_interactions_with_paths(cfg):
@@ -76,23 +90,20 @@ def test_empty_observation_file_is_unobserved(cfg):
 
 def test_oldest_first_across_devices_and_days(cfg):
     for name in [
-        "phone/2026-10-26/09-00-00",
-        "laptop/2026-10-26/08-00-00",
-        "laptop/2026-10-25/23-59-59",
-        "laptop/2026-10-25/07-00-00",
-        "desktop/2026-10-27/00-00-00",
+        "desktop/2026-10-26/08-00-00",
+        "laptop/2026-10-25/17-00-00",
+        "phone/2026-10-25/09-00-00",
+        "laptop/2026-10-25/17-00-00-2",
+        "desktop/2026-10-25/17-00-00",
     ]:
         capture(cfg, name)
-    assert names(unobserved(cfg, set())) == sorted(
-        [
-            "phone/2026-10-26/09-00-00",
-            "laptop/2026-10-26/08-00-00",
-            "laptop/2026-10-25/23-59-59",
-            "laptop/2026-10-25/07-00-00",
-            "desktop/2026-10-27/00-00-00",
-        ],
-        key=sort_key,
-    )
+    assert names(unobserved(cfg, set())) == [
+        "phone/2026-10-25/09-00-00",
+        "desktop/2026-10-25/17-00-00",
+        "laptop/2026-10-25/17-00-00",
+        "laptop/2026-10-25/17-00-00-2",
+        "desktop/2026-10-26/08-00-00",
+    ]
 
 
 def test_clash_suffix_names(cfg):
@@ -147,7 +158,7 @@ def test_context_last_n_same_device_before(cfg):
     cfg = replace(cfg, context_size=2)
     for t in ["10-00-00", "11-00-00", "12-00-00", "13-00-00"]:
         observe(cfg, f"laptop/2026-10-25/{t}", f"laptop {t}")
-    observe(cfg, "phone/2026-10-25/12-30-00", "phone")
+    observe(cfg, "desktop/2026-10-25/12-30-00", "desktop")
     observe(cfg, "laptop/2026-10-25/15-00-00", "later")
     observe(cfg, "laptop/2026-10-25/14-00-00", "the interaction itself")
     assert context(cfg, before("laptop/2026-10-25/14-00-00")) == [
@@ -192,7 +203,7 @@ def test_context_empty_when_no_observations(cfg):
 
 
 def test_context_does_not_read_other_devices(cfg):
-    other = observe(cfg, "phone/2026-10-25/12-00-00")
+    other = observe(cfg, "desktop/2026-10-25/12-00-00")
     other.chmod(0)
     try:
         assert context(cfg, before("laptop/2026-10-25/13-00-00")) == []
@@ -210,3 +221,28 @@ def test_skipped_round_trip(tmp_path):
         "laptop/2026-10-25/17-00-01": "line one line two",
     }
     assert path.read_text().count("\n") == 2
+
+
+def test_context_size_not_positive_gives_nothing(cfg):
+    observe(cfg, "laptop/2026-10-25/10-00-00", "a")
+    assert context(replace(cfg, context_size=0), before("laptop/2026-10-25/13-00-00")) == []
+
+
+def test_context_skips_undecodable_file_and_takes_an_older_one(cfg):
+    cfg = replace(cfg, context_size=2)
+    observe(cfg, "laptop/2026-10-25/10-00-00", "a")
+    observe(cfg, "laptop/2026-10-25/11-00-00", "b")
+    bad = observe(cfg, "laptop/2026-10-25/12-00-00")
+    bad.write_bytes(b"\xff\xfe\x00bad")
+    assert context(cfg, before("laptop/2026-10-25/13-00-00")) == [
+        ("laptop/2026-10-25/10-00-00", "a"),
+        ("laptop/2026-10-25/11-00-00", "b"),
+    ]
+
+
+def test_utf8_round_trips(cfg, tmp_path):
+    observe(cfg, "laptop/2026-10-25/10-00-00", "caf\u00e9 \u2014 \u65e5\u672c")
+    assert context(cfg, before("laptop/2026-10-25/13-00-00")) == [("laptop/2026-10-25/10-00-00", "caf\u00e9 \u2014 \u65e5\u672c")]
+    path = tmp_path / "skipped.txt"
+    add_skipped(path, "laptop/2026-10-25/10-00-00", "\u00e9chec")
+    assert read_skipped(path) == {"laptop/2026-10-25/10-00-00": "\u00e9chec"}

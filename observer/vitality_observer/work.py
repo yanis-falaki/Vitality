@@ -15,7 +15,7 @@ from vitality_observer.config import ObserverConfig
 
 @dataclass(frozen=True)
 class Interaction:
-    """One captured interaction. Sort lists of them with `sort_key(i.name)`."""
+    """One captured interaction. Sort lists of them with `chronological_key(i.name)`, or `sort_key(i.name)` within a device."""
 
     name: str           # `<device>/<YYYY-MM-DD>/<HH-MM-SS>[-n]`, relative to `captures_dir`
     folder: Path        # the captured folder, holding `interaction.json` and the screenshots
@@ -36,10 +36,20 @@ def sort_key(name: str) -> tuple[str, str, str, int]:
     return device, day, last, 1
 
 
+def chronological_key(name: str) -> tuple[str, str, int, str]:
+    """The ordering key for interactions across devices: (day, time, suffix number, device).
+
+    Sorts by when the interaction started, whatever device it came from; the device only
+    breaks ties. Raises ValueError unless the name has three `/`-separated parts.
+    """
+    device, day, time, number = sort_key(name)
+    return day, time, number, device
+
+
 def unobserved(config: ObserverConfig, skipped: Container[str]) -> list[Interaction]:
     """Interactions with an `interaction.json`, no non-empty observation, and not in `skipped`.
 
-    Oldest first, by `sort_key`. Only folders exactly three levels under `captures_dir` count;
+    Oldest first across devices, by `chronological_key`. Only folders exactly three levels under `captures_dir` count;
     a missing `captures_dir` yields an empty list.
     """
     found: list[Interaction] = []
@@ -53,7 +63,7 @@ def unobserved(config: ObserverConfig, skipped: Container[str]) -> list[Interact
         if _is_observed(observation):
             continue
         found.append(Interaction(name, folder, observation))
-    found.sort(key=lambda interaction: sort_key(interaction.name))
+    found.sort(key=lambda interaction: chronological_key(interaction.name))
     return found
 
 
@@ -61,25 +71,38 @@ def context(config: ObserverConfig, before: Interaction) -> list[tuple[str, str]
     """The last `context_size` existing observations of `before`'s device that sort before it.
 
     Returns `(name, observation text)` pairs, oldest first; observations of earlier days
-    count. Only the files returned are read, and never those of another device.
+    count. Only files of the same device are read; one that vanishes or cannot be decoded is
+    skipped. Returns an empty list when `context_size` is not positive.
     """
+    if config.context_size <= 0:
+        return []
     device = before.name.split("/")[0]
     limit = sort_key(before.name)
     observations = config.model_dir / "observations"
-    earlier = [
-        name
-        for path in (observations / device).glob("*/*.md")
-        if _is_observed(path)
-        and sort_key(name := path.relative_to(observations).with_suffix("").as_posix()) < limit
-    ]
+    earlier: list[str] = []
+    for path in (observations / device).glob("*/*.md"):
+        name = path.relative_to(observations).with_suffix("").as_posix()
+        if sort_key(name) < limit and _is_observed(path):
+            earlier.append(name)
     earlier.sort(key=sort_key)
-    return [(name, _observation_path(config, name).read_text()) for name in earlier[-config.context_size:]]
+
+    found: list[tuple[str, str]] = []
+    for name in reversed(earlier):      # newest first, so a file we cannot read is replaced by an older one
+        try:
+            text = _observation_path(config, name).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        found.append((name, text))
+        if len(found) == config.context_size:
+            break
+    found.reverse()
+    return found
 
 
 def read_skipped(path: Path) -> dict[str, str]:
     """The skipped interactions as `{name: reason}`; a missing file means none."""
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
     skipped: dict[str, str] = {}
@@ -97,7 +120,7 @@ def add_skipped(path: Path, name: str, reason: str) -> None:
     """
     reason = " ".join(reason.replace("\t", " ").splitlines())
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a") as f:
+    with open(path, "a", encoding="utf-8") as f:
         f.write(f"{name}\t{reason}\n")
 
 
