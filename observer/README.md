@@ -74,7 +74,7 @@ an observation's path is its interaction's name under `observations/`.
 
    The unit puts `/var/lib/vitality-librarian/.local/bin` first on `PATH`, which is how it
    finds this `claude`. If you reboot before this is done, the service starts anyway; that is
-   harmless, because failures before Claude works never skip an interaction.
+   harmless, because a failure that never reaches Claude never skips an interaction.
 
 ## Configuration
 
@@ -104,31 +104,24 @@ so a backlog is worked through in batches, oldest first, and when it is idle a n
 is picked up at once.
 
 A call that writes at least one of its observations has worked, even if Claude reported an
-error. A call that writes none has failed (an error, a hang cut off at
-`call_timeout_seconds`, or simply nothing written): it is retried after a pause of 5 seconds,
-doubling up to 5 minutes, and the next call takes just the oldest interaction alone, so one
-bad interaction can be told from an outage. An interaction is **skipped** (added to
-`skipped.txt` and never offered again) after three failed attempts, and an attempt is
-counted only once Claude is known to work:
+error. A call that writes none has failed (an error, a hang cut off at `call_timeout_seconds`,
+or simply nothing written). Failures follow three rules:
 
-- A call that works but leaves one of its interactions without an observation counts an
-  attempt against that interaction.
-- When the oldest interaction fails alone after Claude worked on it (it used tokens, or timed
-  out), it becomes the **suspect**, but is not blamed yet: it may be Claude that is down. The
-  following calls each take another interaction alone, as a test. As soon as one works, the
-  suspect gets one attempt and full batches resume. A bad interaction is therefore skipped
-  after three rounds of this, while an outage, however long, costs the oldest interaction a
-  single attempt. If the suspect is the only interaction waiting, the observer makes no calls
-  until a new one arrives.
-- A failure that never reached Claude (a missing or logged-out `claude`, a network that fails
-  at once) blames no one, and the observer simply keeps retrying. A network that hangs is
-  different: the call times out, and a timeout counts as reaching Claude, so such an outage
-  goes through the suspect rule above and costs at most that one attempt.
-- A usage limit blames no one either: the observer waits until the reset time Claude reports
-  (30 minutes if it gives none, never under a minute).
+1. **Back off.** After a failed call the observer sleeps 5 seconds, then doubles the pause each
+   time up to 5 minutes; a call that worked, or having nothing to do, starts it over. A usage
+   limit instead waits until the reset time Claude reports (30 minutes if it gives none,
+   never under a minute) and leaves the pause as it was.
+2. **Isolate.** After a failed call (a usage limit excepted) the next call takes only the
+   oldest interaction, until a call works; then full batches resume.
+3. **Strike.** An interaction gets a strike only when a call for it alone failed after Claude
+   worked on it (it used tokens, or timed out). Three strikes and it is **skipped**: added to
+   `skipped.txt` and never offered again. Nothing else counts: not a failed batch of several,
+   not a failure that never reached Claude (a missing or logged-out `claude`, a network that
+   fails at once), not a usage limit, and not files missing after a call that worked.
 
-Attempts are counted in memory only, so a restart gives everything fresh attempts. A failure
-is logged when it starts and again whenever its reason changes.
+A skip is cheap to undo: the captures are kept, and deleting the interaction's line from
+`skipped.txt` offers it again (see below). Strikes are kept in memory only, so a restart
+clears them. A failure is logged when it starts and again whenever its reason changes.
 
 The watcher on the captures folder (inotify) stops if the system's watch limit is hit; the
 observer logs a warning and carries on, and the 60-second rescan keeps things working.
@@ -158,7 +151,7 @@ that account can change it, so these use `sudo -u vitality-librarian`.
 
 - **An interaction was skipped.** Each line of `skipped.txt` is an interaction name, a tab and
   the reason. Delete the interaction's line and it is offered again at the next look (at most
-  a minute), with fresh attempts:
+  a minute), with fresh strikes:
 
   ```sh
   sudo -u vitality-librarian sed -i '\|^laptop/2026-10-25/17-00-00\t|d' /var/lib/vitality-librarian/skipped.txt

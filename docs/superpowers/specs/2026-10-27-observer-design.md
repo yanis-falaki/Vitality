@@ -218,24 +218,20 @@ call_timeout_seconds = 600
 
 - **A call fails** when it writes none of its observations (error exit, timeout, or nothing
   written); one that writes some has worked, even if Claude reported an error. Its interactions
-  remain unobserved and are retried. Backoff: 5 s, doubling to 5 min. After a failure the next
-  call takes the oldest interaction alone, so one bad interaction can be told from an outage. A
-  call running longer than `call_timeout_seconds` is killed, with every command it started.
-- **A call succeeds but some files are missing:** those interactions are still unobserved and
-  are taken by the next call; each gets one failed attempt.
-- **Blame needs proof that Claude works.** A failure counts against no one unless it *reached
-  the model* (it used tokens, or timed out); a missing `claude`, a logged-out account or no
-  network never does. An interaction that fails alone after reaching the model becomes *the
-  suspect* (one at a time). The calls that follow each take another interaction alone, as a
-  probe; the first one that works gives the suspect one failed attempt, and normal batches
-  resume. While only the suspect waits, no call is made. A bad interaction is so skipped after
-  about three cycles, and an outage costs the oldest interaction at most one attempt.
-- **Usage limits** never count: the observer waits until the reset time reported, or 30 min if
-  none, and at least 60 s; logged once.
-- **An interaction keeps failing:** after 3 failed attempts on the same interaction it is
-  recorded in `skipped.txt` (name and reason) and no longer taken. Deleting its line makes it
-  eligible again. Attempt counts are kept in memory, so a restart gives every interaction
-  fresh attempts.
+  remain unobserved and are retried. A call running longer than `call_timeout_seconds` is
+  killed, with every command it started. Three plain rules:
+  1. **Back off.** After a failed call, sleep 5 s, doubling to 5 min; a call that worked, or
+     an idle round, resets it. A usage limit instead waits until the reset time reported (30
+     min if none, at least 60 s) and leaves the backoff unchanged.
+  2. **Isolate.** After a failed call that was not a usage limit, the next batch is the oldest
+     interaction alone; after a call that worked, full batches resume.
+  3. **Strike.** An interaction gets a strike only when a call for it alone failed and reached
+     the model (it used tokens, or timed out). At 3 strikes it is recorded in `skipped.txt`
+     (name and reason) and no longer taken. Nothing else strikes: a failed batch of several,
+     a failure that did not reach the model (a missing `claude`, a logged-out account, no
+     network), a usage limit, an error in a round, or files missing after a call that worked.
+  A skip is cheap to undo: the captures are kept, and deleting its line makes the interaction
+  eligible again. Strikes are kept in memory, so a restart clears them.
 - **Restarts:** the observer keeps no progress state in memory and resumes from what is
   unobserved. systemd runs one instance and restarts it on failure.
 - **Incomplete interactions** (no `interaction.json` yet) are never taken.
@@ -293,8 +289,9 @@ Updates use the same flow as the server: pull the checkout, rerun `observer/inst
 - **Work finding:** complete vs incomplete interactions; mirrored paths; oldest first; skipped
   list honoured; a new device folder.
 - **Loop:** idle → immediate single call; busy → next call takes up to `batch_size`; files missing
-  after a call are retried; 3 proven failures → skipped, an outage blames no one (the suspect
-  and its probes); backoff and usage-limit waits; timeout.
+  after a call are retried; backoff and usage-limit waits; a failed call is followed by
+  the oldest interaction alone; 3 strikes → skipped, while a failed batch of several, a failure
+  that did not reach the model or a usage limit strikes no one; timeout.
 - **Claude call:** the command built from settings; the context of the last `context_size`
   observations of the same device; `calls.jsonl` line from a sample JSON result.
 - **Config:** defaults, unknown keys, wrong types.
