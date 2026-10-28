@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import os
 import sys
 from collections.abc import Sequence
 from importlib import resources
@@ -149,6 +151,42 @@ async def test_missing_json_keys_are_none(cfg):
     assert result.record["cost"] is None
     assert result.record["input_tokens"] is None
     assert result.record["output_tokens"] is None
+    assert result.record["cache_read_input_tokens"] is None
+    assert result.record["cache_creation_input_tokens"] is None
+
+
+async def test_cache_tokens_are_recorded(cfg):
+    usage = {"input_tokens": 3, "output_tokens": 5, "cache_read_input_tokens": 700,
+             "cache_creation_input_tokens": 40}
+    result = await ClaudeCode(cfg, FakeRunner(0, success_json(usage=usage))).observe([], [])
+    [line] = logged(cfg)
+    assert line["cache_read_input_tokens"] == 700
+    assert line["cache_creation_input_tokens"] == 40
+    assert line == result.record
+
+
+@pytest.mark.parametrize("key", ["cache_read_input_tokens", "cache_creation_input_tokens"])
+async def test_cache_tokens_alone_reached_the_model(cfg, key):
+    stdout = success_json(is_error=True, result="API Error", total_cost_usd=0,
+                          usage={"input_tokens": 0, "output_tokens": 0, key: 12})
+    assert (await ClaudeCode(cfg, FakeRunner(1, stdout)).observe([], [])).reached_model
+
+
+async def test_unwritable_calls_log_warns_once_per_streak(tmp_path, caplog):
+    state = tmp_path / "state"
+    state.write_text("a file, not a directory")
+    observer = ClaudeCode(ObserverConfig(state_dir=state), FakeRunner(0, success_json()))
+    with caplog.at_level(logging.WARNING, logger="vitality_observer"):
+        assert (await observer.observe([], [])).ok        # losing the line does not fail the call
+        await observer.observe([], [])
+        assert len(caplog.records) == 1 and "calls.jsonl" in caplog.records[0].getMessage()
+        state.unlink()
+        await observer.observe([], [])                    # works again
+        (state / "calls.jsonl").unlink()
+        state.rmdir()
+        state.write_text("broken again")
+        await observer.observe([], [])
+    assert len(caplog.records) == 2
 
 
 async def test_error_result_is_failure(cfg):
@@ -290,6 +328,63 @@ async def test_run_process_kills_on_timeout(tmp_path):
         run_process([sys.executable, "-c", "import time; time.sleep(60)"], tmp_path, 0.2), 10
     )
     assert (code, err) == (-9, "timed out")
+
+
+SPAWNS_A_GRANDCHILD = """
+import subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+open(sys.argv[1], "w").write(str(child.pid))
+time.sleep(60)
+"""
+
+
+def gone(pid: int) -> bool:
+    """Whether process `pid` no longer runs (a zombie waiting to be reaped counts as gone)."""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] == "Z"
+    except FileNotFoundError:
+        return True
+
+
+async def until_gone(pid: int, seconds: float = 5) -> None:
+    async with asyncio.timeout(seconds):
+        while not gone(pid):
+            await asyncio.sleep(0.02)
+
+
+async def started_grandchild(pid_file: Path) -> int:
+    async with asyncio.timeout(10):
+        while not pid_file.exists() or not pid_file.read_text():
+            await asyncio.sleep(0.02)
+    return int(pid_file.read_text())
+
+
+async def test_run_process_timeout_kills_the_commands_it_started(tmp_path):
+    pid_file = tmp_path / "grandchild.pid"
+    code, _, _ = await asyncio.wait_for(
+        run_process([sys.executable, "-c", SPAWNS_A_GRANDCHILD, str(pid_file)], tmp_path, 2), 10)
+    assert code == -9
+    grandchild = await started_grandchild(pid_file)
+    try:
+        await until_gone(grandchild)
+    finally:
+        if not gone(grandchild):
+            os.kill(grandchild, 9)
+
+
+async def test_run_process_cancelled_kills_the_commands_it_started(tmp_path):
+    pid_file = tmp_path / "grandchild.pid"
+    task = asyncio.create_task(run_process([sys.executable, "-c", SPAWNS_A_GRANDCHILD, str(pid_file)], tmp_path, 60))
+    grandchild = await started_grandchild(pid_file)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 10)
+    try:
+        await until_gone(grandchild)
+    finally:
+        if not gone(grandchild):
+            os.kill(grandchild, 9)
 
 
 async def test_run_process_missing_binary(tmp_path):

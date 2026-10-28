@@ -1,14 +1,18 @@
 """One headless Claude Code call that turns a batch of interactions into observation files.
 
 The prompt (`prompt.md`) tells Claude where and how to write; nothing here checks what it wrote.
-Every call is logged as one line of `<state_dir>/calls.jsonl`.
+Every call is logged as one line of `<state_dir>/calls.jsonl`; if that file cannot be written,
+a warning is logged instead and the call goes on.
 """
 
 # == Contract ==
 
 import asyncio
 import json
+import logging
+import os
 import re
+import signal
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -26,7 +30,7 @@ class CallResult:
     ok: bool
     usage_limit_reset: float | None     # epoch seconds, when the failure was a usage limit that said when it resets
     usage_limited: bool                 # the failure was a usage limit
-    reached_model: bool                 # Claude got as far as working on the batch: the call timed out, or used tokens/cost
+    reached_model: bool                 # Claude got as far as working on the batch: the call timed out, or used tokens (cached ones too) or cost
     detail: str                         # short reason on failure; "" on success
     record: dict                        # the line appended to calls.jsonl
 
@@ -51,6 +55,8 @@ Runner = Callable[[Sequence[str], Path, float], Awaitable[tuple[int, str, str]]]
 
 # == Implementation ==
 
+log = logging.getLogger("vitality_observer")
+
 TIMED_OUT = -9      # exit code `run_process` reports for a process it had to kill
 NOT_RUN = 127       # exit code `run_process` reports when the process could not be started
 
@@ -58,7 +64,10 @@ NOT_RUN = 127       # exit code `run_process` reports when the process could not
 async def run_process(argv: Sequence[str], cwd: Path, timeout: float) -> tuple[int, str, str]:
     """Run `argv` in `cwd`; kill it after `timeout` seconds and return `(-9, "", "timed out")`.
 
-    A process that cannot be started (such as a missing `claude`) returns `(127, "", reason)`.
+    The process runs in a session of its own. When it times out, or the caller is cancelled,
+    the whole session's process group is killed: the process and every command it started
+    that is still running. A process that cannot be started (such as a missing `claude`)
+    returns `(127, "", reason)`.
     """
     try:
         process = await asyncio.create_subprocess_exec(
@@ -66,22 +75,33 @@ async def run_process(argv: Sequence[str], cwd: Path, timeout: float) -> tuple[i
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
     except OSError as e:
         return NOT_RUN, "", f"could not run {argv[0]}: {e}"
+    finished = False
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
+        finished = True
     except TimeoutError:
         return TIMED_OUT, "", "timed out"
     finally:
-        if process.returncode is None:      # timed out, or we were cancelled
-            process.kill()
+        if not finished:        # timed out, or we were cancelled
+            _kill_group(process.pid)
             await process.wait()
     return (
         process.returncode if process.returncode is not None else NOT_RUN,
         stdout.decode("utf-8", errors="replace"),
         stderr.decode("utf-8", errors="replace"),
     )
+
+
+def _kill_group(pid: int) -> None:
+    """SIGKILL the process group led by `pid` (its own session); nothing left in it is fine."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 class ClaudeCode(Observer):
@@ -91,6 +111,7 @@ class ClaudeCode(Observer):
         self._config = config
         self._run = run
         self._clock = clock
+        self._calls_log_broken = False      # warned that calls.jsonl cannot be written
 
     async def observe(self, batch: Sequence[Interaction],
                       context: Sequence[tuple[str, str]]) -> CallResult:
@@ -121,20 +142,30 @@ class ClaudeCode(Observer):
             "cost": output.get("total_cost_usd"),
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
         }
         if config.model:
             record["model"] = config.model
-        _append(config.state_dir / "calls.jsonl", record)
+        self._log_call(config.state_dir / "calls.jsonl", record)
 
         return CallResult(
             ok=error == "",
-            reached_model=code == TIMED_OUT or _positive(usage.get("input_tokens"), usage.get("output_tokens"),
-                                                         output.get("total_cost_usd")),
+            reached_model=code == TIMED_OUT or _positive(
+                output.get("total_cost_usd"), usage.get("input_tokens"), usage.get("output_tokens"),
+                usage.get("cache_read_input_tokens"), usage.get("cache_creation_input_tokens")),
             usage_limit_reset=parse_reset(text) if usage_limited else None,
             usage_limited=usage_limited,
             detail=error,
             record=record,
         )
+
+    def _log_call(self, path: Path, record: dict) -> None:
+        """Append `record` to `path`; a failure is only logged, once until a write works again."""
+        error = _append(path, record)
+        if error is not None and not self._calls_log_broken:
+            log.warning("cannot add to %s (%s); calls go unrecorded until it works again", path, error)
+        self._calls_log_broken = error is not None
 
 
 def build_message(batch: Sequence[Interaction], context: Sequence[tuple[str, str]],
@@ -225,11 +256,15 @@ def _short(text: str, limit: int = 300) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
-def _append(path: Path, record: dict) -> None:
-    # Losing a log line must not fail a call whose files were already written.
+def _append(path: Path, record: dict) -> OSError | None:
+    """Append `record` as one JSON line; return the error instead of raising it.
+
+    Losing a log line must not fail a call whose files were already written.
+    """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
-    except OSError:
-        pass
+    except OSError as e:
+        return e
+    return None
