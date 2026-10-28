@@ -9,6 +9,7 @@ from vitality_observer.work import (
     add_skipped,
     chronological_key,
     context,
+    device_of,
     read_skipped,
     sort_key,
     unobserved,
@@ -41,6 +42,10 @@ def observe(cfg: ObserverConfig, name: str, text: str = "seen") -> Path:
 
 def names(found: list[Interaction]) -> list[str]:
     return [i.name for i in found]
+
+
+def test_device_of_is_the_first_part():
+    assert device_of("laptop/2026-10-25/17-00-00-2") == "laptop"
 
 
 def test_sort_key_splits_name_and_defaults_suffix_to_one():

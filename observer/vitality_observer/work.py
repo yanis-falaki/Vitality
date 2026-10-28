@@ -22,6 +22,11 @@ class Interaction:
     observation: Path   # where its observation is (or will be) written
 
 
+def device_of(name: str) -> str:
+    """The device an interaction name belongs to: its first `/`-separated part."""
+    return name.split("/")[0]
+
+
 def sort_key(name: str) -> tuple[str, str, str, int]:
     """The ordering key of an interaction name: (device, day, time, suffix number).
 
@@ -76,7 +81,7 @@ def context(config: ObserverConfig, before: Interaction) -> list[tuple[str, str]
     """
     if config.context_size <= 0:
         return []
-    device = before.name.split("/")[0]
+    device = device_of(before.name)
     limit = sort_key(before.name)
     observations = config.model_dir / "observations"
     earlier: list[str] = []

@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import Sequence
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -46,12 +47,14 @@ def result(ok: bool, detail: str = "", limited: bool = False, reset: float | Non
 class FakeObserver:
     """An Observer that plays back `outcomes`, then succeeds; remembers every call.
 
-    An outcome is "ok" (writes every file), "fail", "limit", ("limit", reset_epoch), or a number
+    An outcome is "ok" (writes every file), "fail", "oserror" (raises), "limit", ("limit", reset_epoch), or a number
     (succeeds but writes only that many files, oldest first).
     """
 
-    def __init__(self, cfg: ObserverConfig, *outcomes: str | int | tuple[str, float]):
+    def __init__(self, cfg: ObserverConfig, *outcomes: str | int | tuple[str, float],
+                 on_call: Callable[[], None] | None = None):
         self.cfg = cfg
+        self.on_call = on_call
         self.outcomes = list(outcomes)
         self.batches: list[list[str]] = []
         self.contexts: list[list[tuple[str, str]]] = []
@@ -61,10 +64,14 @@ class FakeObserver:
         self.batches.append([i.name for i in batch])
         self.contexts.append(list(context))
         self.called.set()
+        if self.on_call:
+            self.on_call()
         outcome = self.outcomes.pop(0) if self.outcomes else "ok"
         match outcome:
             case "fail":
                 return result(False, "boom")
+            case "oserror":
+                raise OSError("disk trouble")
             case "limit":
                 return result(False, "usage limit", limited=True)
             case ("limit", reset):
@@ -76,6 +83,12 @@ class FakeObserver:
         for name in names:
             observe(self.cfg, name)
         return result(True)
+
+
+async def cancel(task: asyncio.Task) -> None:
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 class StopRun(Exception):
@@ -173,12 +186,40 @@ async def test_three_failures_skip(cfg):
     assert await loop.step() == "idle"          # the skipped one is not offered again
 
 
-async def test_failure_attempts_cover_the_whole_batch(cfg):
-    names = captures(cfg, 2)
-    loop = ObserveLoop(cfg, FakeObserver(cfg, "fail", "fail", "fail"))
-    for _ in range(3):
-        await loop.step()
-    assert set(read_skipped(cfg.state_dir / "skipped.txt")) == set(names)
+async def test_failed_batch_is_followed_by_a_single_and_counts_nothing(cfg):
+    names = captures(cfg, 3)
+    observer = FakeObserver(cfg, "fail", "ok", "ok")
+    loop = ObserveLoop(cfg, observer, max_attempts=1)
+    assert await loop.step() == "failed"
+    assert read_skipped(cfg.state_dir / "skipped.txt") == {}    # even with one attempt allowed
+    assert await loop.step() == "observed"
+    assert await loop.step() == "observed"
+    assert observer.batches == [names, [names[0]], names[1:]]   # full batches resume after success
+
+
+async def test_only_the_interaction_failing_alone_is_skipped(cfg):
+    bad, good1, good2 = captures(cfg, 3)
+    observer = FakeObserver(cfg, "fail", "fail", "fail", "fail")
+    loop = ObserveLoop(cfg, observer)
+    for _ in range(4):
+        assert await loop.step() == "failed"
+    assert observer.batches == [[bad, good1, good2]] + [[bad]] * 3
+    assert read_skipped(cfg.state_dir / "skipped.txt") == {bad: "boom"}
+    assert await loop.step() == "observed"
+    assert observer.batches[-1] == [good1]      # still one at a time until a call succeeds
+
+
+async def test_attempts_stop_counting_once_backoff_reaches_max(cfg):
+    first, second, third = captures(cfg, 3)
+    sleeps = Sleeps(12)
+    loop = ObserveLoop(cfg, FakeObserver(cfg, *["fail"] * 12), sleep=sleeps)
+    with pytest.raises(StopRun):
+        await loop.run()
+    assert sleeps.seconds == [5, 10, 20, 40, 80, 160] + [300] * 6
+    # Failure 1 was a batch of 3 (no count); failures 2-4 skip `first`; 5 and 6 count against
+    # `second`; from failure 7 the backoff is 300 and nothing counts, however long it lasts.
+    assert read_skipped(cfg.state_dir / "skipped.txt") == {first: "boom"}
+    assert third not in read_skipped(cfg.state_dir / "skipped.txt")
 
 
 async def test_failure_backoff_doubles(cfg):
@@ -233,13 +274,63 @@ async def test_usage_limit_does_not_count_as_attempt_or_backoff(cfg):
     assert observer.batches == [[name]] * 5
 
 
-async def test_usage_limit_with_past_reset_waits_zero(cfg):
+async def test_usage_limit_wait_has_a_floor(cfg):
     captures(cfg, 1)
-    sleeps = Sleeps(1)
-    loop = ObserveLoop(cfg, FakeObserver(cfg, ("limit", 900.0)), sleep=sleeps, clock=lambda: 1000.0)
+    sleeps = Sleeps(2)
+    observer = FakeObserver(cfg, ("limit", 900.0), ("limit", 1010.0))     # reset passed; reset in 10 s
+    loop = ObserveLoop(cfg, observer, sleep=sleeps, clock=lambda: 1000.0)
     with pytest.raises(StopRun):
         await loop.run()
-    assert sleeps.seconds == [0]
+    assert sleeps.seconds == [60, 60]
+
+
+async def test_error_in_a_round_is_retried_and_logged_once(cfg, caplog):
+    captures(cfg, 1)
+    sleeps = Sleeps(3)
+    loop = ObserveLoop(cfg, FakeObserver(cfg, "oserror", "oserror", "oserror"), sleep=sleeps)
+    with caplog.at_level(logging.INFO, logger="vitality_observer"), pytest.raises(StopRun):
+        await loop.run()
+    assert sleeps.seconds == [5, 10, 20]
+    assert len([r for r in caplog.records if r.exc_info]) == 1
+
+
+async def test_idle_resets_backoff_and_logging(cfg, caplog):
+    capture(cfg, "laptop/2026-10-25/10-00-00")
+    sleeps = Sleeps(3)
+    observer = FakeObserver(cfg, "fail", "fail", "fail")
+    loop = ObserveLoop(cfg, observer, sleep=sleeps, rescan_seconds=0.02, max_attempts=2)
+    with caplog.at_level(logging.INFO, logger="vitality_observer"):
+        task = asyncio.create_task(loop.run())
+        await asyncio.sleep(0.2)        # failed twice, skipped, now idle
+        assert sleeps.seconds == [5, 10]
+        capture(cfg, "laptop/2026-10-25/10-00-01")
+        with pytest.raises(StopRun):
+            await asyncio.wait_for(task, 2)
+    assert sleeps.seconds == [5, 10, 5]
+    assert len([r for r in caplog.records if "failed, retrying" in r.getMessage()]) == 2
+
+
+async def test_success_logs_recovery_only_when_something_was_observed(cfg, caplog):
+    captures(cfg, 1)
+    observer = FakeObserver(cfg, "fail", 0, "ok")
+    loop = ObserveLoop(cfg, observer, max_attempts=100)
+    with caplog.at_level(logging.INFO, logger="vitality_observer"):
+        for _ in range(3):
+            await loop.step()
+    works = [i for i, r in enumerate(caplog.records) if "works again" in r.getMessage()]
+    assert len(works) == 1
+    assert "observed 1" in caplog.records[works[0] + 1].getMessage()
+
+
+async def test_attempt_is_forgotten_once_observed(cfg):
+    _, b = captures(cfg, 2)
+    observer = FakeObserver(cfg, 1, "ok", "fail")
+    loop = ObserveLoop(cfg, observer, max_attempts=2)
+    await loop.step()       # first written, `b` missing: one attempt
+    await loop.step()       # `b` written
+    (cfg.model_dir / "observations" / f"{b}.md").unlink()
+    assert await loop.step() == "failed"        # `b` fails alone: its first attempt, not its second
+    assert read_skipped(cfg.state_dir / "skipped.txt") == {}
 
 
 async def test_wake_starts_promptly_when_idle(cfg):
@@ -253,7 +344,7 @@ async def test_wake_starts_promptly_when_idle(cfg):
         await asyncio.wait_for(observer.called.wait(), 1)
         assert observer.batches == [[name]]
     finally:
-        task.cancel()
+        await cancel(task)
 
 
 async def test_rescan_without_wake(cfg):
@@ -266,4 +357,29 @@ async def test_rescan_without_wake(cfg):
         await asyncio.wait_for(observer.called.wait(), 1)
         assert observer.batches == [[name]]
     finally:
-        task.cancel()
+        await cancel(task)
+
+
+async def test_interaction_arriving_during_a_call_is_picked_up_promptly(cfg):
+    first, = captures(cfg, 1)
+    second = "laptop/2026-10-25/11-00-00"
+    arrived = []
+
+    def arrive():
+        if not arrived:
+            arrived.append(second)
+            capture(cfg, second)
+            loop.wake()
+
+    observer = FakeObserver(cfg, on_call=arrive)
+    loop = ObserveLoop(cfg, observer, rescan_seconds=30)
+    task = asyncio.create_task(loop.run())
+
+    async def two_calls():
+        while len(observer.batches) < 2:
+            await asyncio.sleep(0.01)
+    try:
+        await asyncio.wait_for(two_calls(), 1)
+        assert observer.batches == [[first], [second]]
+    finally:
+        await cancel(task)
