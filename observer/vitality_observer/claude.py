@@ -92,9 +92,9 @@ class ClaudeCode(Observer):
     async def observe(self, batch: Sequence[Interaction],
                       context: Sequence[tuple[str, str]]) -> CallResult:
         config = self._config
-        argv = build_argv(build_message(batch, context, config), config)
         started = self._clock()
         try:
+            argv = build_argv(build_message(batch, context, config), config)
             code, stdout, stderr = await self._run(argv, config.model_dir, config.call_timeout_seconds)
         except Exception as e:
             code, stdout, stderr = NOT_RUN, "", f"{type(e).__name__}: {e}"
@@ -103,7 +103,8 @@ class ClaudeCode(Observer):
         output = _parse_output(stdout)
         error = _failure(code, output, stdout, stderr, config.call_timeout_seconds)
         text = " ".join(part for part in (_text(output, "result"), stderr, "" if output else stdout) if part)
-        usage_limited = "usage limit" in text.lower()
+        # A successful call's result is free text that may mention a usage limit; only a failure can be one.
+        usage_limited = error != "" and "usage limit" in text.lower()
 
         usage = output.get("usage")
         usage = usage if isinstance(usage, dict) else {}
@@ -113,7 +114,7 @@ class ClaudeCode(Observer):
             "exit": code,
             "ok": error == "",
             "detail": error,
-            "duration_ms": output.get("duration_ms", elapsed_ms),
+            "duration_ms": _duration_ms(output, elapsed_ms),
             "cost": output.get("total_cost_usd"),
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
@@ -186,6 +187,14 @@ def _parse_output(stdout: str) -> dict:
 def _text(output: dict, key: str) -> str:
     value = output.get(key)
     return value if isinstance(value, str) else ""
+
+
+def _duration_ms(output: dict, measured: int) -> int | float:
+    """The call's own `duration_ms` if it is a number, else the time we measured."""
+    duration = output.get("duration_ms")
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+        return duration
+    return measured
 
 
 def _failure(code: int, output: dict, stdout: str, stderr: str, timeout: float) -> str:

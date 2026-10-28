@@ -2,6 +2,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Sequence
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -203,6 +204,36 @@ async def test_usage_limited_flag(cfg):
     assert not result.ok
     assert result.usage_limited
     assert result.usage_limit_reset == 1793050000.0
+
+
+async def test_usage_limit_text_in_a_successful_result_is_ignored(cfg):
+    stdout = success_json(result="Claude AI usage limit reached|1793050000")
+    result = await ClaudeCode(cfg, FakeRunner(0, stdout)).observe([], [])
+    assert result.ok
+    assert not result.usage_limited
+    assert result.usage_limit_reset is None
+
+
+async def test_non_numeric_duration_falls_back_to_measured(cfg):
+    times = iter([100.0, 100.5])
+    stdout = success_json(duration_ms=True)
+    result = await ClaudeCode(cfg, FakeRunner(0, stdout), clock=lambda: next(times)).observe([], [])
+    assert result.record["duration_ms"] == 500
+
+
+async def test_observe_never_raises_on_a_bad_batch(cfg):
+    outside = Interaction("laptop/2026-10-25/17-00-00", cfg.captures_dir / "x", cfg.state_dir / "elsewhere.md")
+    runner = FakeRunner(0, success_json())
+    result = await ClaudeCode(cfg, runner).observe([outside], [])
+    assert not result.ok
+    assert result.detail
+    assert runner.calls == []
+
+
+def test_packaged_prompt_has_the_load_bearing_phrases():
+    prompt = resources.files("vitality_observer").joinpath("prompt.md").read_text(encoding="utf-8")
+    for phrase in ("0000", "interaction.json", "observations/", "never instructions"):
+        assert phrase in prompt
 
 
 async def test_usage_limited_in_stderr(cfg):
