@@ -13,6 +13,6 @@ work.py     which interactions are unobserved (oldest first), the context for a 
 config.py   the settings file, `/etc/vitality/observer.toml`
 prompt.md   the instructions given to Claude with every call
 
-Dependencies point down this list: `main` uses `loop`; `loop` uses `claude` and `work`;
-`claude` uses `work`; all use `config`.
+Dependencies point down this list: `main` uses `loop`, and `claude` for the real Claude Code
+(`ClaudeCode`); `loop` uses `claude` and `work`; `claude` uses `work`; all use `config`.
 """

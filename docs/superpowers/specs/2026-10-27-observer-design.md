@@ -134,7 +134,9 @@ already contains `interaction.json`.
 
 **Coalescing.** One Claude call at a time:
 1. When idle and work appears, start a call immediately.
-2. A call takes the oldest waiting interactions, up to `batch_size` (10), in time order.
+2. A call takes the oldest waiting interaction and those right after it from the same device,
+   up to `batch_size` (10), in time order: the front run of one device, so the context (below)
+   fits the whole batch.
 3. While a call runs, new interactions wait.
 4. When it finishes, check again; start the next call at once if anything waits.
 
@@ -186,6 +188,7 @@ claude -p "<the batch's interaction paths, then the context observations>" \
 ```toml
 captures_dir = "/srv/vitality/captures"
 model_dir = "/srv/vitality-model"
+state_dir = "/var/lib/vitality-librarian"   # calls.jsonl, skipped.txt
 batch_size = 10
 context_size = 15
 call_timeout_seconds = 600
@@ -208,15 +211,27 @@ call_timeout_seconds = 600
   only used through `sudo -u` for the one-time Claude Code install and login.
 - The unit adds a second layer: `NoNewPrivileges=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`
   (strict makes `/tmp` read-only, which Claude Code's Bash tool needs), `ReadOnlyPaths=/srv/vitality`, `ReadWritePaths=/srv/vitality-model /var/lib/vitality-librarian`.
+  It sets `PATH` to start with `/var/lib/vitality-librarian/.local/bin` (the account's own Claude
+  Code) and `SHELL=/bin/bash` (the account's shell is `nologin`; the Bash tool needs a real one).
 
 ## 9. Failures and logs
 
-- **A call fails** (error exit, timeout, usage limit): its interactions remain unobserved and are
-  retried. Backoff: 5 s, doubling to 5 min. A usage-limit error waits until the reset time it
-  reports, or 30 min if none; logged once. A call running longer than `call_timeout_seconds` is
-  stopped and counted as failed.
+- **A call fails** when it writes none of its observations (error exit, timeout, or nothing
+  written); one that writes some has worked, even if Claude reported an error. Its interactions
+  remain unobserved and are retried. Backoff: 5 s, doubling to 5 min. After a failure the next
+  call takes the oldest interaction alone, so one bad interaction can be told from an outage. A
+  call running longer than `call_timeout_seconds` is killed, with every command it started.
 - **A call succeeds but some files are missing:** those interactions are still unobserved and
-  are taken by the next call. No separate check.
+  are taken by the next call; each gets one failed attempt.
+- **Blame needs proof that Claude works.** A failure counts against no one unless it *reached
+  the model* (it used tokens, or timed out); a missing `claude`, a logged-out account or no
+  network never does. An interaction that fails alone after reaching the model becomes *the
+  suspect* (one at a time). The calls that follow each take another interaction alone, as a
+  probe; the first one that works gives the suspect one failed attempt, and normal batches
+  resume. While only the suspect waits, no call is made. A bad interaction is so skipped after
+  about three cycles, and an outage costs the oldest interaction at most one attempt.
+- **Usage limits** never count: the observer waits until the reset time reported, or 30 min if
+  none, and at least 60 s; logged once.
 - **An interaction keeps failing:** after 3 failed attempts on the same interaction it is
   recorded in `skipped.txt` (name and reason) and no longer taken. Deleting its line makes it
   eligible again. Attempt counts are kept in memory, so a restart gives every interaction
@@ -278,7 +293,8 @@ Updates use the same flow as the server: pull the checkout, rerun `observer/inst
 - **Work finding:** complete vs incomplete interactions; mirrored paths; oldest first; skipped
   list honoured; a new device folder.
 - **Loop:** idle → immediate single call; busy → next call takes up to `batch_size`; files missing
-  after a call are retried; 3 failures → skipped; backoff and usage-limit waits; timeout.
+  after a call are retried; 3 proven failures → skipped, an outage blames no one (the suspect
+  and its probes); backoff and usage-limit waits; timeout.
 - **Claude call:** the command built from settings; the context of the last `context_size`
   observations of the same device; `calls.jsonl` line from a sample JSON result.
 - **Config:** defaults, unknown keys, wrong types.
