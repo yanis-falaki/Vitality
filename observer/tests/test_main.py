@@ -3,6 +3,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,20 @@ async def until(condition, seconds: float = 5) -> None:
     async with asyncio.timeout(seconds):
         while not condition():
             await asyncio.sleep(0.02)
+
+
+def wait_for_line(stream, text: str, seconds: float = 10) -> None:
+    """Read `stream` until a line contains `text`; fail, rather than hang, if none does within `seconds`."""
+    found = threading.Event()
+
+    def read() -> None:
+        for line in stream:
+            if text in line:
+                found.set()
+                return
+
+    threading.Thread(target=read, daemon=True).start()
+    assert found.wait(seconds), f"no line containing {text!r} within {seconds} s"
 
 
 async def stop(task: asyncio.Task) -> None:
@@ -99,9 +114,7 @@ def test_sigterm_stops_the_service_with_exit_code_0(tmp_path, cfg):
         stderr=subprocess.PIPE, text=True)
     assert process.stderr is not None
     try:
-        for line in process.stderr:     # the "observing" line comes once the signal handlers are installed
-            if "observing" in line:
-                break
+        wait_for_line(process.stderr, "observing")     # logged once the signal handlers are installed
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=10) == 0
     finally:

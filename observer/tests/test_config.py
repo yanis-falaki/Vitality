@@ -43,6 +43,8 @@ def test_loads_every_key(tmp_path):
     ("call_timeout_seconds = 0", "call_timeout_seconds"),
     ("call_timeout_seconds = -1.5", "call_timeout_seconds"),
     ('call_timeout_seconds = "soon"', "call_timeout_seconds"),
+    ("call_timeout_seconds = inf", "call_timeout_seconds"),
+    ("call_timeout_seconds = nan", "call_timeout_seconds"),
     ("model = 5", "model"),
     ('model = ""', "model"),
     ("captures_dir = 3", "captures_dir"),
@@ -53,4 +55,11 @@ def test_rejects_bad_values(tmp_path, text, key):
     p = tmp_path / "o.toml"
     p.write_text(text + "\n")
     with pytest.raises(ValueError, match=key):
+        load_observer_config(p)
+
+
+def test_malformed_toml_is_a_clear_error(tmp_path):
+    p = tmp_path / "o.toml"
+    p.write_text("batch_size = = 3\n")
+    with pytest.raises(ValueError, match=r"o\.toml.*not valid TOML.*line 1"):
         load_observer_config(p)

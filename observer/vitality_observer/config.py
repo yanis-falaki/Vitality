@@ -5,6 +5,7 @@ Recognised keys: `captures_dir`, `model_dir`, `state_dir`, `batch_size`, `contex
 `DEFAULT_CONFIG` is where the observer looks for the file when `--config` is not given.
 """
 
+import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,17 +35,19 @@ def load_observer_config(path: Path) -> ObserverConfig:
     """Load settings from a TOML file; a missing file yields the defaults.
 
     The directories and `model` must be non-empty strings, `batch_size` and `context_size`
-    positive integers, and `call_timeout_seconds` a positive number.
+    positive integers, and `call_timeout_seconds` a positive, finite number.
 
     Raises ValueError, naming the key, for an unknown key or a value of the wrong type or
-    range. A file that is not valid TOML raises `tomllib.TOMLDecodeError` (a ValueError); one
-    that cannot be read raises OSError.
+    range, and naming the file and the line for a file that is not valid TOML. A file that
+    cannot be read raises OSError.
     """
     try:
         with open(path, "rb") as f:
             raw = tomllib.load(f)
     except FileNotFoundError:
         return ObserverConfig()
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"{path} is not valid TOML: {e}") from e
 
     unknown = [key for key in raw if key not in _KEYS]
     if unknown:
@@ -69,8 +72,8 @@ def load_observer_config(path: Path) -> ObserverConfig:
         seconds = raw["call_timeout_seconds"]
         if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
             raise ValueError(f"config key call_timeout_seconds must be a number, got {seconds!r}")
-        if seconds <= 0:
-            raise ValueError(f"config key call_timeout_seconds must be positive, got {seconds!r}")
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(f"config key call_timeout_seconds must be positive and finite, got {seconds!r}")
         values["call_timeout_seconds"] = float(seconds)
     if "model" in raw:
         model = raw["model"]
