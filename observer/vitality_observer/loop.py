@@ -37,7 +37,8 @@ class Loop(Protocol):
     outage.
 
     Success. A call succeeds when it writes at least one of its observations, even if Claude
-    reported an error; a call that writes none fails. A success proves that Claude works.
+    reported an error (but not a usage limit, below); a call that writes none fails. A
+    success proves that Claude works.
 
     Attempts. Failed attempts are counted in memory only. An interaction gets one when
       - a call that succeeded left it without an observation (Claude worked, so it is at
@@ -58,8 +59,10 @@ class Loop(Protocol):
     the next interaction to arrive becomes the probe.
 
     Never counted, and never making a suspect: a failure that did not reach Claude (a
-    missing `claude`, a logged-out account, a network failure), a usage limit (waited out
-    until its reported reset, but at least `usage_wait_min`), and an error raised in a round.
+    missing `claude`, a logged-out account, a network that fails at once; a hang times out,
+    and a timeout does count as reaching Claude), a usage limit (waited out until its
+    reported reset, but at least `usage_wait_min`, even if the call wrote some files), and
+    an error raised in a round.
     """
 
     def wake(self) -> None:

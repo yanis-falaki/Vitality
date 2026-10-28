@@ -608,3 +608,16 @@ async def test_a_suspect_observed_meanwhile_is_forgotten_unblamed(cfg):
     observe(cfg, a)         # written by hand meanwhile
     assert await loop.step() == "observed"
     assert skipped(cfg) == {}
+
+
+async def test_usage_limit_after_some_files_counts_nothing(cfg):
+    a, b = captures(cfg, 2)
+
+    class LimitAfterOne:
+        async def observe(self, batch, context):
+            observe(cfg, batch[0].name)
+            return result(False, "usage limit", limited=True)
+
+    loop = ObserveLoop(cfg, LimitAfterOne(), max_attempts=1)
+    assert await loop.step() == "failed"        # waits out the limit
+    assert skipped(cfg) == {}                   # and `b`, left unwritten, is not blamed
