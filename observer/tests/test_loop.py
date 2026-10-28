@@ -197,6 +197,28 @@ async def test_failed_batch_is_followed_by_a_single_and_counts_nothing(cfg):
     assert observer.batches == [names, [names[0]], names[1:]]   # full batches resume after success
 
 
+async def test_call_that_writes_nothing_is_a_failure_and_counts_nothing_for_a_batch(cfg):
+    names = captures(cfg, 3)
+    observer = FakeObserver(cfg, 0, "ok")
+    loop = ObserveLoop(cfg, observer, max_attempts=1)
+    assert await loop.step() == "failed"
+    assert read_skipped(cfg.state_dir / "skipped.txt") == {}
+    assert await loop.step() == "observed"
+    assert observer.batches == [names, [names[0]]]
+
+
+async def test_persistent_write_nothing_backs_off_and_skips_a_bounded_number(cfg):
+    first, second, third = captures(cfg, 3)
+    sleeps = Sleeps(12)
+    loop = ObserveLoop(cfg, FakeObserver(cfg, *[0] * 12), sleep=sleeps)
+    with pytest.raises(StopRun):
+        await loop.run()
+    assert sleeps.seconds == [5, 10, 20, 40, 80, 160] + [300] * 6       # no hot loop
+    # As for failed calls: the batch of 3 counts nothing, then `first` alone is skipped after
+    # three attempts, `second` gets two, and nothing counts once the backoff is at its maximum.
+    assert read_skipped(cfg.state_dir / "skipped.txt") == {first: "no observation written"}
+
+
 async def test_only_the_interaction_failing_alone_is_skipped(cfg):
     bad, good1, good2 = captures(cfg, 3)
     observer = FakeObserver(cfg, "fail", "fail", "fail", "fail")

@@ -12,37 +12,68 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, Protocol
 
 from vitality_observer.claude import Observer
 from vitality_observer.config import ObserverConfig
 from vitality_observer.work import Interaction, add_skipped, context, device_of, read_skipped, unobserved
 
 Step = Literal["idle", "observed", "failed"]
-"""What one round did: "idle" found nothing to do; "observed" made a call that succeeded
-(though some files may still be missing); "failed" made a call that did not."""
+"""What one round did: "idle" found nothing to do; "observed" made a call that wrote at
+least one observation (some may still be missing); "failed" made a call that failed or
+wrote none."""
+
+
+class Loop(Protocol):
+    """Keeps every interaction observed, one Claude call at a time.
+
+    A batch is the oldest unobserved interaction plus the ones after it from the same
+    device, at most `batch_size`. After a failed call the next batch is the oldest
+    interaction alone, until a call succeeds, so one bad interaction can be told from an outage.
+    A call that succeeds but writes none of its observations is a failed call.
+
+    Failed attempts are counted in memory only, and only for an interaction that failed
+    alone, or that a call that wrote others left without an observation. At `max_attempts`
+    it is added to `skipped.txt` and never offered again. Attempts stop counting once the
+    backoff has reached `retry_max`: Claude is then probably down, which is not the
+    interaction's fault. A usage-limit failure counts for nothing and waits at least
+    `usage_wait_min`.
+    """
+
+    def wake(self) -> None:
+        """Tell the loop a new interaction arrived, so an idle `run()` looks at once."""
+        ...
+
+    async def run(self) -> None:
+        """Repeat `step()` until cancelled.
+
+        After "observed" it goes straight on; after "idle" it waits for `wake()` or
+        `rescan_seconds`; after "failed" it sleeps (the backoff, or until a usage limit
+        resets) and `wake()` does not cut that short. An OSError or ValueError from a round
+        is treated as a failed call.
+        """
+        ...
+
+    async def step(self) -> Step:
+        """One round: pick a batch, make one Claude call, account for the result."""
+        ...
+
+
+# == Implementation ==
 
 log = logging.getLogger("vitality_observer")
 
 NO_OBSERVATION = "no observation written"
 
 
-class ObserveLoop:
-    """Keeps every interaction observed, one Claude call at a time.
+class ObserveLoop(Loop):
+    """The loop over a `config`'s captures, calling `observer`; times are in seconds.
 
-    `run()` repeats `step()` until cancelled. After "observed" it goes straight on; after
-    "idle" it waits for `wake()` or `rescan_seconds`; after "failed" it sleeps (backoff, or
-    until a usage limit resets) and `wake()` does not cut that short.
-
-    A batch is the oldest unobserved interaction plus the ones after it from the same
-    device, at most `config.batch_size`. After a failed call the next batch is the oldest
-    interaction alone, until a call succeeds, so one bad interaction can be told from an outage.
-
-    Failed attempts are counted in memory only, and only for an interaction that failed
-    alone, or that a successful call left without an observation. At `max_attempts` it is added
-    to `skipped.txt` and never offered again. Attempts stop counting once the backoff has
-    reached `retry_max`: Claude is then probably down, which is not the interaction's fault.
-    A usage-limit failure counts for nothing and waits at least `usage_wait_min`.
+    `sleep` and `clock` can be replaced in tests. `rescan_seconds` is the longest an idle
+    `run()` waits before looking again. The error backoff starts at `retry_initial` and
+    doubles up to `retry_max`. A usage limit waits until its reported reset, but at least
+    `usage_wait_min`, or `usage_wait` when none was reported. An interaction is skipped
+    after `max_attempts` failed attempts.
     """
 
     def __init__(self, config: ObserverConfig, observer: Observer,
@@ -70,11 +101,9 @@ class ObserveLoop:
         self._limited = False       # logged the start of a usage-limit wait
 
     def wake(self) -> None:
-        """Tell the loop a new interaction arrived, so an idle `run()` looks at once."""
         self._woken.set()
 
     async def run(self) -> None:
-        """Observe until cancelled. A failed call, or an OSError/ValueError from a round, is retried."""
         while True:
             try:
                 outcome = await self.step()
@@ -92,7 +121,6 @@ class ObserveLoop:
                     self._backoff = min(self._backoff * 2, self._retry_max)
 
     async def step(self) -> Step:
-        """One round: pick a batch, make one Claude call, account for the result."""
         self._woken.clear()     # before scanning, so a wake() during the call is not lost
         self._wait_for_limit = None
         skipped = read_skipped(self._skipped_path)
@@ -107,28 +135,32 @@ class ObserveLoop:
             if result.usage_limited:
                 self._enter_usage_limit(result.usage_limit_reset)
             else:
-                self._enter_failure(result.detail)
-                self._alone = True
-                # A lone interaction that fails is suspect; a failed batch or a long outage proves nothing.
-                if len(batch) == 1 and self._backoff < self._retry_max:
-                    self._count_attempt(batch, result.detail or "call failed")
+                self._call_failed(batch, result.detail or "call failed")
             return "failed"
 
         missing = {i.name for i in unobserved(self._config, skipped)}
         written = [i for i in batch if i.name not in missing]
+        if not written:
+            self._call_failed(batch, NO_OBSERVATION)
+            return "failed"
         for interaction in written:
             self._attempts.pop(interaction.name, None)
-        if written:
-            if self._failing or self._limited:
-                log.info("observing works again")
-            self._failing = self._limited = False
-            log.info("observed %d interaction(s), from %s", len(written), written[0].name)
+        if self._failing or self._limited:
+            log.info("observing works again")
+        self._failing = self._limited = False
+        log.info("observed %d interaction(s), from %s", len(written), written[0].name)
         self._alone = False
         self._backoff = self._retry_initial
         self._count_attempt([i for i in batch if i.name in missing], NO_OBSERVATION)
         return "observed"
 
-    # == Implementation ==
+    def _call_failed(self, batch: Sequence[Interaction], detail: str) -> None:
+        """Account for a call that failed, or wrote nothing: next batch alone, attempt only if it was alone."""
+        self._enter_failure(detail)
+        self._alone = True
+        # A lone interaction that fails is suspect; a failed batch or a long outage proves nothing.
+        if len(batch) == 1 and self._backoff < self._retry_max:
+            self._count_attempt(batch, detail)
 
     def _front_batch(self, waiting: Sequence[Interaction]) -> list[Interaction]:
         """The oldest interaction and those right after it from the same device, up to `batch_size`.
