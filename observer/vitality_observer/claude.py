@@ -26,6 +26,7 @@ class CallResult:
     ok: bool
     usage_limit_reset: float | None     # epoch seconds, when the failure was a usage limit that said when it resets
     usage_limited: bool                 # the failure was a usage limit
+    reached_model: bool                 # Claude got as far as working on the batch: the call timed out, or used tokens/cost
     detail: str                         # short reason on failure; "" on success
     record: dict                        # the line appended to calls.jsonl
 
@@ -37,7 +38,9 @@ class Observer(Protocol):
 
         `batch` is oldest first and from one device; `context` is `(name, text)` of that
         device's earlier observations, oldest first. `ok` means Claude finished without
-        error. It does not mean the files were written well, or at all.
+        error. It does not mean the files were written well, or at all. `reached_model` tells a
+        failure that is Claude's (or the batch's) from one that is the setup's: a missing
+        binary, a logged-out account or a network failure never reaches the model.
         """
         ...
 
@@ -125,6 +128,8 @@ class ClaudeCode(Observer):
 
         return CallResult(
             ok=error == "",
+            reached_model=code == TIMED_OUT or _positive(usage.get("input_tokens"), usage.get("output_tokens"),
+                                                         output.get("total_cost_usd")),
             usage_limit_reset=parse_reset(text) if usage_limited else None,
             usage_limited=usage_limited,
             detail=error,
@@ -208,6 +213,11 @@ def _failure(code: int, output: dict, stdout: str, stderr: str, timeout: float) 
     if code != 0:
         return f"exit {code}: {_short(stderr)}"
     return ""
+
+
+def _positive(*numbers: object) -> bool:
+    """Whether any of `numbers` is a number above zero (anything else counts as zero)."""
+    return any(isinstance(n, (int, float)) and not isinstance(n, bool) and n > 0 for n in numbers)
 
 
 def _short(text: str, limit: int = 300) -> str:

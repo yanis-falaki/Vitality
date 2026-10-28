@@ -180,6 +180,41 @@ async def test_timeout_is_failure(cfg):
     assert str(int(cfg.call_timeout_seconds)) in result.detail
 
 
+async def test_timeout_reached_the_model(cfg):
+    result = await ClaudeCode(cfg, FakeRunner(-9, "", "timed out")).observe([], [])
+    assert result.reached_model
+
+
+async def test_usage_bearing_error_reached_the_model(cfg):
+    result = await ClaudeCode(cfg, FakeRunner(1, success_json(is_error=True, result="API Error"))).observe([], [])
+    assert not result.ok and result.reached_model
+
+
+async def test_cost_alone_reached_the_model(cfg):
+    stdout = success_json(is_error=True, usage={}, total_cost_usd=0.01)
+    assert (await ClaudeCode(cfg, FakeRunner(1, stdout)).observe([], [])).reached_model
+
+
+async def test_missing_binary_did_not_reach_the_model(cfg):
+    result = await ClaudeCode(cfg, FakeRunner(127, "", "claude: not found")).observe([], [])
+    assert not result.ok and not result.reached_model
+
+
+async def test_error_without_usage_did_not_reach_the_model(cfg):
+    stdout = success_json(is_error=True, result="Not logged in", total_cost_usd=0,
+                          usage={"input_tokens": 0, "output_tokens": 0})
+    result = await ClaudeCode(cfg, FakeRunner(1, stdout)).observe([], [])
+    assert not result.ok and not result.reached_model
+
+
+async def test_non_json_output_did_not_reach_the_model(cfg):
+    assert not (await ClaudeCode(cfg, FakeRunner(1, "boom")).observe([], [])).reached_model
+
+
+async def test_success_reports_reaching_the_model(cfg):
+    assert (await ClaudeCode(cfg, FakeRunner(0, success_json())).observe([], [])).reached_model
+
+
 async def test_runner_that_raises_is_a_failure(cfg):
     async def broken(argv, cwd, timeout):
         raise RuntimeError("no way")

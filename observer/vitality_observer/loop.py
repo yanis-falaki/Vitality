@@ -32,12 +32,13 @@ class Loop(Protocol):
     interaction alone, until a call succeeds, so one bad interaction can be told from an outage.
     A call that succeeds but writes none of its observations is a failed call.
 
-    Failed attempts are counted in memory only, and only for an interaction that failed
-    alone, or that a call that wrote others left without an observation. At `max_attempts`
-    it is added to `skipped.txt` and never offered again. Attempts stop counting once the
-    backoff has reached `retry_max`: Claude is then probably down, which is not the
-    interaction's fault. A usage-limit failure counts for nothing and waits at least
-    `usage_wait_min`.
+    Failed attempts are counted in memory only, and only for an interaction that Claude
+    actually worked on (the result says `reached_model`; a missing `claude`, a logged-out
+    account or a network failure never blames anyone) and that failed alone, or that a call
+    that wrote others left without an observation. At `max_attempts` it is added to
+    `skipped.txt` and never offered again. Attempts stop counting once the backoff has
+    reached `retry_max`: Claude is then probably down, which is not the interaction's fault.
+    A usage-limit failure counts for nothing and waits at least `usage_wait_min`.
     """
 
     def wake(self) -> None:
@@ -49,8 +50,9 @@ class Loop(Protocol):
 
         After "observed" it goes straight on; after "idle" it waits for `wake()` or
         `rescan_seconds`; after "failed" it sleeps (the backoff, or until a usage limit
-        resets) and `wake()` does not cut that short. An OSError or ValueError from a round
-        is treated as a failed call.
+        resets) and `wake()` does not cut that short. An OSError or ValueError from a round backs
+        off like a failed call, but does not make the next batch a single interaction and
+        counts no attempt.
         """
         ...
 
@@ -135,13 +137,13 @@ class ObserveLoop(Loop):
             if result.usage_limited:
                 self._enter_usage_limit(result.usage_limit_reset)
             else:
-                self._call_failed(batch, result.detail or "call failed")
+                self._call_failed(batch, result.detail or "call failed", result.reached_model)
             return "failed"
 
         missing = {i.name for i in unobserved(self._config, skipped)}
         written = [i for i in batch if i.name not in missing]
         if not written:
-            self._call_failed(batch, NO_OBSERVATION)
+            self._call_failed(batch, NO_OBSERVATION, result.reached_model)
             return "failed"
         for interaction in written:
             self._attempts.pop(interaction.name, None)
@@ -154,12 +156,12 @@ class ObserveLoop(Loop):
         self._count_attempt([i for i in batch if i.name in missing], NO_OBSERVATION)
         return "observed"
 
-    def _call_failed(self, batch: Sequence[Interaction], detail: str) -> None:
-        """Account for a call that failed, or wrote nothing: next batch alone, attempt only if it was alone."""
+    def _call_failed(self, batch: Sequence[Interaction], detail: str, reached_model: bool) -> None:
+        """Account for a call that failed, or wrote nothing: next batch alone; an attempt only if it was alone and reached Claude."""
         self._enter_failure(detail)
         self._alone = True
         # A lone interaction that fails is suspect; a failed batch or a long outage proves nothing.
-        if len(batch) == 1 and self._backoff < self._retry_max:
+        if reached_model and len(batch) == 1 and self._backoff < self._retry_max:
             self._count_attempt(batch, detail)
 
     def _front_batch(self, waiting: Sequence[Interaction]) -> list[Interaction]:

@@ -9,7 +9,7 @@ import pytest
 from vitality_observer.claude import CallResult
 from vitality_observer.config import ObserverConfig
 from vitality_observer.loop import ObserveLoop
-from vitality_observer.work import Interaction, read_skipped
+from vitality_observer.work import Interaction, read_skipped, unobserved
 
 
 @pytest.fixture
@@ -40,14 +40,16 @@ def captures(cfg: ObserverConfig, count: int, device: str = "laptop") -> list[st
     return names
 
 
-def result(ok: bool, detail: str = "", limited: bool = False, reset: float | None = None) -> CallResult:
-    return CallResult(ok=ok, usage_limit_reset=reset, usage_limited=limited, detail=detail, record={})
+def result(ok: bool, detail: str = "", limited: bool = False, reset: float | None = None,
+           reached: bool = True) -> CallResult:
+    return CallResult(ok=ok, usage_limit_reset=reset, usage_limited=limited, reached_model=reached,
+                      detail=detail, record={})
 
 
 class FakeObserver:
     """An Observer that plays back `outcomes`, then succeeds; remembers every call.
 
-    An outcome is "ok" (writes every file), "fail", "oserror" (raises), "limit", ("limit", reset_epoch), or a number
+    An outcome is "ok" (writes every file), "fail", "unreached" (fails without reaching Claude), "oserror" (raises), "limit", ("limit", reset_epoch), or a number
     (succeeds but writes only that many files, oldest first).
     """
 
@@ -70,6 +72,8 @@ class FakeObserver:
         match outcome:
             case "fail":
                 return result(False, "boom")
+            case "unreached":
+                return result(False, "no claude", reached=False)
             case "oserror":
                 raise OSError("disk trouble")
             case "limit":
@@ -229,6 +233,34 @@ async def test_only_the_interaction_failing_alone_is_skipped(cfg):
     assert read_skipped(cfg.state_dir / "skipped.txt") == {bad: "boom"}
     assert await loop.step() == "observed"
     assert observer.batches[-1] == [good1]      # still one at a time until a call succeeds
+
+
+async def test_failures_that_never_reach_claude_are_never_skipped(cfg):
+    names = captures(cfg, 2)
+    sleeps = Sleeps(10)
+    observer = FakeObserver(cfg, *["unreached"] * 10)
+    loop = ObserveLoop(cfg, observer, sleep=sleeps, max_attempts=2)
+    with pytest.raises(StopRun):
+        await loop.run()
+    assert read_skipped(cfg.state_dir / "skipped.txt") == {}
+    assert observer.batches[1:] == [[names[0]]] * 9      # alone after the first, never given up on
+    assert sleeps.seconds == [5, 10, 20, 40, 80, 160, 300, 300, 300, 300]   # the backoff still grows
+
+
+async def test_unreached_call_that_wrote_nothing_counts_no_attempt(cfg):
+    from vitality_observer.claude import CallResult
+
+    names = captures(cfg, 1)
+
+    class WritesNothing:
+        async def observe(self, batch, context):
+            return CallResult(ok=True, usage_limit_reset=None, usage_limited=False, reached_model=False,
+                              detail="", record={})
+
+    loop = ObserveLoop(cfg, WritesNothing(), max_attempts=1)
+    assert await loop.step() == "failed"
+    assert read_skipped(cfg.state_dir / "skipped.txt") == {}
+    assert names[0] in {i.name for i in unobserved(cfg, {})}
 
 
 async def test_attempts_stop_counting_once_backoff_reaches_max(cfg):
