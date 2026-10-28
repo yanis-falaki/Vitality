@@ -11,6 +11,9 @@ User=vitality-librarian
 # PATH puts that account's own Claude Code (installed under its home, which updates itself) first;
 # keep it the same as CLAUDE_PATH in install.sh.
 Environment=PATH=/var/lib/vitality-librarian/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The account's login shell is nologin, and Claude Code's Bash tool runs commands with $SHELL:
+# give it a real one.
+Environment=SHELL=/bin/bash
 ExecStart=/opt/vitality-observer/bin/vitality-observerd
 Restart=on-failure
 RestartSec=10

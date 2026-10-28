@@ -123,7 +123,8 @@ fi
 CLAUDE_INSTALL="sudo -u $ACCOUNT -H bash -c 'cd && curl -fsSL https://claude.ai/install.sh | bash'"
 CLAUDE_LOGIN="sudo -u $ACCOUNT -H bash -c 'cd && ~/.local/bin/claude'"
 CLAUDE_READY=0
-if ! sudo -u "$ACCOUNT" -H env PATH="$CLAUDE_PATH" claude --version >/dev/null 2>&1; then
+# The check runs `claude` as the service will: as the account, from its home, with the unit's PATH.
+if ! sudo -u "$ACCOUNT" -H bash -c "cd && PATH='$CLAUDE_PATH' claude --version" >/dev/null 2>&1; then
     CLAUDE_STEPS=$(cat <<STEPS
   1. Install Claude Code for the $ACCOUNT account (once):
        $CLAUDE_INSTALL
