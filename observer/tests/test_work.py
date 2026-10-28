@@ -202,13 +202,20 @@ def test_context_empty_when_no_observations(cfg):
     assert context(cfg, before("laptop/2026-10-25/13-00-00")) == []
 
 
-def test_context_does_not_read_other_devices(cfg):
-    other = observe(cfg, "desktop/2026-10-25/12-00-00")
-    other.chmod(0)
-    try:
-        assert context(cfg, before("laptop/2026-10-25/13-00-00")) == []
-    finally:
-        other.chmod(0o644)
+def test_context_ignores_and_never_reads_other_devices(cfg, monkeypatch):
+    cfg = replace(cfg, context_size=2)
+    observe(cfg, "laptop/2026-10-25/10-00-00", "mine")
+    observe(cfg, "desktop/2026-10-25/12-00-00", "someone else's, and newer")
+    read: list[Path] = []
+    original = Path.read_text
+
+    def spy(self: Path, *args, **kwargs) -> str:
+        read.append(self)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", spy)
+    assert context(cfg, before("laptop/2026-10-25/13-00-00")) == [("laptop/2026-10-25/10-00-00", "mine")]
+    assert read == [cfg.model_dir / "observations/laptop/2026-10-25/10-00-00.md"]
 
 
 def test_skipped_round_trip(tmp_path):
