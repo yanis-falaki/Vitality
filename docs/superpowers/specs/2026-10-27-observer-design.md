@@ -206,8 +206,8 @@ call_timeout_seconds = 600
 - Its home is `/var/lib/vitality-librarian`, a service-style home, because Claude Code stores
   its login in `$HOME/.claude`. Its shell is `nologin`; it is never logged into interactively,
   only used through `sudo -u` for the one-time Claude Code install and login.
-- The unit adds a second layer: `NoNewPrivileges=yes`, `ProtectSystem=strict`,
-  `ReadOnlyPaths=/srv/vitality`, `ReadWritePaths=/srv/vitality-model /var/lib/vitality-librarian`.
+- The unit adds a second layer: `NoNewPrivileges=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`
+  (strict makes `/tmp` read-only, which Claude Code's Bash tool needs), `ReadOnlyPaths=/srv/vitality`, `ReadWritePaths=/srv/vitality-model /var/lib/vitality-librarian`.
 
 ## 9. Failures and logs
 
@@ -265,10 +265,10 @@ mirroring `server/install.sh`:
    `vitality-observerd`, install the unit and `observer.toml` (kept if present), restart;
 5. check that Claude Code is installed and logged in for `vitality-librarian`; if not, print the
    one-time commands (it does not run them) and leave the service enabled but not started:
-   the official installer, `sudo -u vitality-librarian -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash'`,
+   the official installer, `sudo -u vitality-librarian -H bash -c 'cd && curl -fsSL https://claude.ai/install.sh | bash'`,
    which puts `claude` in `/var/lib/vitality-librarian/.local/bin` (where it also updates
    itself; the unit's `PATH` starts there), then
-   `sudo -u vitality-librarian -H /var/lib/vitality-librarian/.local/bin/claude` and `/login`
+   `sudo -u vitality-librarian -H bash -c 'cd && ~/.local/bin/claude'` and `/login`
    (personal subscription).
 
 Updates use the same flow as the server: pull the checkout, rerun `observer/install.sh`.

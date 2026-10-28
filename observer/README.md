@@ -6,8 +6,8 @@ screenshots. Observations are the first layer of the user model; the design is i
 [`docs/superpowers/specs/2026-10-27-observer-design.md`](../docs/superpowers/specs/2026-10-27-observer-design.md).
 
 It runs on the same VM as the server, as a systemd service, `vitality-observerd`, under its
-own account, `vitality-librarian`. Like the server, it finds new work by watching the captures
-folder and by rescanning it every 60 seconds. For each batch of unobserved interactions it
+own account, `vitality-librarian`. It finds new work by watching the captures folder and by
+rescanning it every 60 seconds. For each batch of unobserved interactions it
 runs Claude Code headless (`claude -p`) in `/srv/vitality-model`, and Claude writes the
 observation files. The account can read the captures but not change them: they belong to
 `vitality`, and the unit mounts `/srv/vitality` read-only.
@@ -58,21 +58,23 @@ an observation's path is its interaction's name under `observations/`.
    `install.sh` ends by checking both, and prints only what is still missing.
 
    ```sh
-   sudo -u vitality-librarian -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
-   sudo -u vitality-librarian -H /var/lib/vitality-librarian/.local/bin/claude
+   sudo -u vitality-librarian -H bash -c 'cd && curl -fsSL https://claude.ai/install.sh | bash'
+   sudo -u vitality-librarian -H bash -c 'cd && ~/.local/bin/claude'
    ```
 
+   (The `cd` is because `sudo` keeps your current directory, which the account cannot enter.)
+
    In the second, type `/login`, follow the link to log in to your Claude subscription, then
-   exit. On a first install the service is enabled but not yet started, because the observer
-   gives up on an interaction after repeated failed attempts, and every call fails until
-   Claude Code is ready. Once it is, start it:
+   exit. On a first install the service is enabled but not yet started, which simply avoids
+   a service that fails and retries until you log in. Once Claude Code is ready, start it:
 
    ```sh
    sudo systemctl start vitality-observerd
    ```
 
    The unit puts `/var/lib/vitality-librarian/.local/bin` first on `PATH`, which is how it
-   finds this `claude`.
+   finds this `claude`. If you reboot before this is done, the service starts anyway; that is
+   harmless, because failures before Claude works never skip an interaction.
 
 ## Configuration
 
@@ -104,9 +106,14 @@ observation is retried after a pause of 5 seconds, doubling up to 5 minutes, and
 call takes just the oldest interaction alone, so one bad interaction can be told from an
 outage. An interaction that fails alone, or that a call leaves without an observation while
 writing others, gets three attempts and is then **skipped**: added to `skipped.txt` and never
-offered again. A usage limit is different: the observer waits until the reset time Claude
+offered again. But only a failure after Claude actually worked on it (it timed out, or used
+tokens) counts as an attempt: a missing or logged-out `claude`, or a network failure, blames
+no one, and the observer simply keeps retrying. A usage limit is different: the observer waits until the reset time Claude
 reports (30 minutes if it gives none, never under a minute), and the interactions are not
 blamed. Attempts are counted in memory only, so a restart gives everything fresh attempts.
+
+The watcher on the captures folder (inotify) stops if the system's watch limit is hit; the
+observer logs a warning and carries on, and the 60-second rescan keeps things working.
 
 ## Logs and cost
 

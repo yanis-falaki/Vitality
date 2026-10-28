@@ -89,6 +89,7 @@ def test_keyboard_interrupt_is_a_normal_stop(tmp_path, cfg, monkeypatch):
     assert main(["--config", str(write_config(tmp_path, cfg))]) == 0
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="the observer refuses to run as root")
 def test_sigterm_stops_the_service_with_exit_code_0(tmp_path, cfg):
     config = write_config(tmp_path, cfg)
     cfg.captures_dir.mkdir()

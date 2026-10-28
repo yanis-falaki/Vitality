@@ -8,13 +8,16 @@ Wants=network-online.target
 [Service]
 User=vitality-librarian
 # HOME comes from User= (/var/lib/vitality-librarian), where Claude Code keeps its login.
-# PATH puts that account's own Claude Code (installed under its home, which updates itself) first.
+# PATH puts that account's own Claude Code (installed under its home, which updates itself) first;
+# keep it the same as CLAUDE_PATH in install.sh.
 Environment=PATH=/var/lib/vitality-librarian/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/opt/vitality-observer/bin/vitality-observerd
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=yes
 ProtectSystem=strict
+# ProtectSystem=strict makes /tmp read-only, and Claude Code's Bash tool needs to write there.
+PrivateTmp=yes
 # The captures are read-only to the observer, and to every command Claude runs for it.
 ReadOnlyPaths=/srv/vitality
 ReadWritePaths=/srv/vitality-model /var/lib/vitality-librarian

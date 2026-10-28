@@ -16,6 +16,7 @@ MODEL_DIR=/srv/vitality-model           # the user model, a git repository
 CONFIG_DIR=/etc/vitality
 UNIT=vitality-observerd.service
 # Where the unit looks for `claude`: the account's own copy first (see the end of this script).
+# Keep it the same as Environment=PATH in the unit.
 CLAUDE_PATH="$HOME_DIR/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 if [[ ! -f observer/pyproject.toml ]]; then
@@ -83,6 +84,8 @@ if ! id "$ACCOUNT" >/dev/null 2>&1; then
     # it is used only through `sudo -u`, for the one-time Claude Code install and login.
     sudo useradd --system --user-group --home-dir "$HOME_DIR" --create-home --shell /usr/sbin/nologin "$ACCOUNT"
 fi
+# The home holds the Claude Code login: nobody but the account (and root) needs to enter it.
+sudo chmod 750 "$HOME_DIR"
 # Group vitality is what lets the account read the captures (the data folder is 750
 # vitality:vitality), and read only: it does not own them. Group membership is looked up in
 # the group database, not with `id`, which shows only the groups of the current login.
@@ -116,8 +119,9 @@ fi
 # Claude Code is not installed by this script: it belongs to the $ACCOUNT account (Anthropic's
 # installer puts it in that account's home, where it also updates itself), and logging in
 # needs a browser. Find out which of the two one-time steps, if any, is still to do.
-CLAUDE_INSTALL="sudo -u $ACCOUNT -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash'"
-CLAUDE_LOGIN="sudo -u $ACCOUNT -H $HOME_DIR/.local/bin/claude"
+# They start with `cd`: sudo keeps this user's current directory, which the account cannot enter.
+CLAUDE_INSTALL="sudo -u $ACCOUNT -H bash -c 'cd && curl -fsSL https://claude.ai/install.sh | bash'"
+CLAUDE_LOGIN="sudo -u $ACCOUNT -H bash -c 'cd && ~/.local/bin/claude'"
 CLAUDE_READY=0
 if ! sudo -u "$ACCOUNT" -H env PATH="$CLAUDE_PATH" claude --version >/dev/null 2>&1; then
     CLAUDE_STEPS=$(cat <<STEPS
@@ -145,8 +149,9 @@ echo "==> installing $UNIT"
 sudo install -m 644 observer/systemd/"$UNIT" /etc/systemd/system/"$UNIT"
 sudo systemctl daemon-reload
 sudo systemctl enable "$UNIT"
-# Start it only once Claude Code is ready (or if it was running before this upgrade): started
-# earlier, every call would fail, and the observer gives up on interactions that keep failing.
+# Start it only once Claude Code is ready (or if it was running before this upgrade), so there
+# is no service failing and retrying until you log in. (A reboot starts it anyway; that is
+# harmless, since failures before Claude works never skip an interaction.)
 if [[ $CLAUDE_READY -eq 1 || $STOPPED -eq 1 ]]; then
     sudo systemctl restart "$UNIT"
     STOPPED=0   # started again: a failure from here on needs no restart

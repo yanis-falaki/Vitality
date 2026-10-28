@@ -45,7 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help=f"settings file (default: {DEFAULT_CONFIG})")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+                        format="%(levelname)s %(name)s: %(message)s")      # journald adds the time
 
     try:
         config = load_observer_config(args.config)
