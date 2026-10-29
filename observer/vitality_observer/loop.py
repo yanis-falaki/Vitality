@@ -75,6 +75,8 @@ class ObserveLoop(Loop):
                  clock: Callable[[], float] = time.time,
                  rescan_seconds: float = 60, retry_initial: float = 5, retry_max: float = 300,
                  usage_wait: float = 1800, usage_wait_min: float = 60, max_attempts: int = 3):
+        # Settings, kept as given. `sleep` and `clock` are asyncio.sleep and time.time in real use;
+        # tests pass fakes so they can check the waits without actually waiting.
         self._config = config
         self._observer = observer
         self._sleep = sleep
@@ -86,11 +88,13 @@ class ObserveLoop(Loop):
         self._usage_wait_min = usage_wait_min
         self._max_attempts = max_attempts
         self._skipped_path = config.state_dir / "skipped.txt"
-        self._woken = asyncio.Event()
-        self._strikes: dict[str, int] = {}
-        self._backoff = retry_initial       # the next sleep after a failure
-        self._alone = False                 # the last call failed: the next batch is one interaction
-        self._limit_wait: float | None = None   # set by a step that hit a usage limit
+
+        # What the loop remembers from one round to the next (in memory only; a restart forgets it).
+        self._woken = asyncio.Event()       # the doorbell: wake() rings it, an idle run() waits on it
+        self._strikes: dict[str, int] = {}  # interaction name -> strikes so far (rule 3)
+        self._backoff = retry_initial       # the next sleep after a failure (rule 1)
+        self._alone = False                 # the last call failed: the next batch is one interaction (rule 2)
+        self._limit_wait: float | None = None   # set by a step that hit a usage limit: how long run() waits
         self._logged_failure: str | None = None     # the last failure logged since a recovery or idle round
         self._limited = False               # logged the start of a usage-limit wait
 
@@ -98,36 +102,51 @@ class ObserveLoop(Loop):
         self._woken.set()
 
     async def run(self) -> None:
-        while True:
+        while True:     # until the service is stopped, which cancels this from outside
+            # One round. A file problem in it (an unreadable skipped.txt, say) is a failed round,
+            # retried with backoff, rather than a crash.
             try:
                 step = await self.step()
             except (OSError, ValueError) as e:
                 self._log_failure(f"{type(e).__name__}: {e}", error=True)
                 step = "failed"
+
+            # Then wait, depending on how the round went. After "observed", no wait: there may be more.
             if step == "idle":
+                # Nothing waiting: sleep until wake() rings or rescan_seconds pass, whichever is first.
                 try:
                     await asyncio.wait_for(self._woken.wait(), self._rescan_seconds)
                 except TimeoutError:
                     pass
             elif step == "failed":
                 if self._limit_wait is not None:
+                    # A usage limit: wait it out; the backoff is left as it was.
                     await self._sleep(self._limit_wait)
                 else:
+                    # Any other failure: sleep the backoff, then double it for next time (rule 1).
                     await self._sleep(self._backoff)
                     self._backoff = min(self._backoff * 2, self._retry_max)
 
     async def step(self) -> Step:
-        self._woken.clear()     # before scanning, so a wake() during the call is not lost
+        # Silence the doorbell before scanning: a wake() while the call runs rings it again.
+        self._woken.clear()
         self._limit_wait = None
+
+        # Pick the batch. skipped.txt is read every round, so deleting a line takes effect at once.
         skipped = read_skipped(self._skipped_path)
         batch = self._front_batch(unobserved(self._config, skipped))
         if not batch:
             self._start_over()
             return "idle"
+
+        # One Claude call, with the earlier observations of the batch's device as context.
         result = await self._observer.observe(batch, context(self._config, batch[0]))
 
+        # Judge by the disk, not by what Claude said: which observation files exist now?
         still_waiting = {i.name for i in unobserved(self._config, skipped)}
         written = [i for i in batch if i.name not in still_waiting]
+
+        # Something was written: progress. Their strikes go, the backoff resets, full batches resume.
         if written:
             for interaction in written:
                 self._strikes.pop(interaction.name, None)
@@ -137,16 +156,26 @@ class ObserveLoop(Loop):
             self._start_over()
             self._alone = False
             return "observed"
+
+        # Nothing written because of a usage limit: wait it out; no strike, no isolation.
         if result.usage_limited:
             self._enter_usage_limit(result.usage_limit_reset)
             return "failed"
+
+        # Nothing written, any other reason: a failure. The next batch is the oldest alone (rule 2).
         reason = result.detail or "no observation written"
         self._log_failure(reason)
         self._alone = True
+
+        # A strike only if it was tried alone and Claude really worked on it (rule 3): a failed
+        # batch of several, or Claude being unreachable, blames no one.
         name = batch[0].name
         if len(batch) == 1 and result.reached_model:
-            strikes = self._strikes[name] = self._strikes.get(name, 0) + 1
-            if strikes >= self._max_attempts:     # the count stays if the write fails, so it is retried
+            strikes = self._strikes.get(name, 0) + 1
+            self._strikes[name] = strikes
+            if strikes >= self._max_attempts:
+                # Record the skip before forgetting the count: if the write fails, the count stays
+                # and the skip is tried again next time.
                 add_skipped(self._skipped_path, name, reason)
                 del self._strikes[name]
                 log.warning("skipping %s after %d strikes: %s", name, strikes, reason)
@@ -157,6 +186,7 @@ class ObserveLoop(Loop):
         size = 1 if self._alone else self._config.batch_size
         batch: list[Interaction] = []
         for interaction in waiting[:size]:
+            # Stop at the first other device: the context given to Claude is per device.
             if device_of(interaction.name) != device_of(waiting[0].name):
                 break
             batch.append(interaction)
@@ -180,8 +210,10 @@ class ObserveLoop(Loop):
 
     def _enter_usage_limit(self, reset: float | None) -> None:
         now = self._clock()
+        # Until the reported reset, but at least usage_wait_min (a reset already past would mean no
+        # wait at all); usage_wait if Claude did not say when it resets.
         self._limit_wait = self._usage_wait if reset is None else max(self._usage_wait_min, reset - now)
-        if not self._limited:
+        if not self._limited:   # log the start of the wait once, not on every retry
             self._limited = True
             until = datetime.fromtimestamp(now + self._limit_wait, UTC).isoformat(timespec="seconds")
             log.warning("usage limit reached, waiting until %s", until)
