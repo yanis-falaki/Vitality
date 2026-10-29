@@ -51,25 +51,26 @@ def chronological_key(name: str) -> tuple[str, str, int, str]:
     return day, time, number, device
 
 
-def unobserved(config: ObserverConfig, skipped: Container[str]) -> list[Interaction]:
-    """Interactions with an `interaction.json`, no non-empty observation, and not in `skipped`.
+def interactions(config: ObserverConfig) -> list[Interaction]:
+    """Every interaction under `captures_dir`, oldest first across devices, by `chronological_key`.
 
-    Oldest first across devices, by `chronological_key`. Only folders exactly three levels under `captures_dir` count;
-    a missing `captures_dir` yields an empty list.
+    Only folders exactly three levels under `captures_dir`, holding an `interaction.json`,
+    count; a missing `captures_dir` yields an empty list. Whether they are observed is not
+    looked at.
     """
     found: list[Interaction] = []
     for folder in config.captures_dir.glob("*/*/*"):
         if not folder.is_dir() or not (folder / "interaction.json").is_file():
             continue
         name = folder.relative_to(config.captures_dir).as_posix()
-        if name in skipped:
-            continue
-        observation = _observation_path(config, name)
-        if _is_observed(observation):
-            continue
-        found.append(Interaction(name, folder, observation))
+        found.append(Interaction(name, folder, _observation_path(config, name)))
     found.sort(key=lambda interaction: chronological_key(interaction.name))
     return found
+
+
+def unobserved(config: ObserverConfig, skipped: Container[str]) -> list[Interaction]:
+    """The `interactions` with no non-empty observation and not in `skipped`, oldest first."""
+    return [i for i in interactions(config) if i.name not in skipped and not _is_observed(i.observation)]
 
 
 def context(config: ObserverConfig, before: Interaction) -> list[tuple[str, str]]:

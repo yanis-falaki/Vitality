@@ -1,8 +1,8 @@
-"""`vitality-observerd [--config PATH]`: load the settings, then keep every interaction observed.
+"""`vitality-observer run | status`: the observer's one command.
 
-This is the observer itself, run by systemd as `vitality-librarian`. It runs the loop
+`run` is the observer itself, as the `observer` container runs it. It runs the loop
 (`vitality_observer.loop`) and a watcher on the captures that wakes the loop when something
-new arrives.
+new arrives. `status` (`status.py`) prints how far the observer has got.
 """
 
 import argparse
@@ -17,48 +17,64 @@ from pathlib import Path
 from watchfiles import Change, awatch
 
 from vitality_observer.claude import ClaudeCode, Observer
-from vitality_observer.config import DEFAULT_CONFIG, ObserverConfig, load_observer_config
+from vitality_observer.config import ObserverConfig, load_observer_config
 from vitality_observer.loop import ObserveLoop
+from vitality_observer.status import status
 
 log = logging.getLogger("vitality_observer")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the observer until it is stopped; return the process exit code.
+    """Run one `vitality-observer` command; return the process exit code.
 
-    `argv` is the argument list (default: `sys.argv[1:]`); `--config PATH` names the
-    settings file. At startup, in order:
+    `argv` is the argument list (default: `sys.argv[1:]`). Commands, none of which takes
+    options (the settings come from environment variables, see `config.py`):
 
-        1. Parse the arguments and set up logging to stderr.
-        2. Load the settings (a missing file means the defaults).
-        3. Refuse to run as root: the observer must run as `vitality-librarian`, so that
-           the captures stay read-only to it and to the Claude Code it starts.
-        4. Create `state_dir` if it is missing.
-        5. Run `serve` with the real Claude Code until SIGTERM or Ctrl-C.
+        run      keep every interaction observed, until stopped     run, below
+        status   how many are observed, and how the last call went  status.py
 
-    Exit codes: 0 after running and stopping; 1 for unusable settings, running as root, or a
-    `state_dir` that cannot be created (the reason goes to stderr). A bad command line exits
-    2 (argparse).
+    The settings are loaded first and handed to the command.
+
+    Exit codes: 0 on success; 1 when a setting is unusable (`vitality-observer: <message>` on
+    stderr, naming the variable) or the command fails (the reason is on stderr); 2 for a bad
+    command line, which includes giving no command.
     """
-    parser = argparse.ArgumentParser(prog="vitality-observerd", description=__doc__)
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG,
-                        help=f"settings file (default: {DEFAULT_CONFIG})")
-    args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr,
-                        format="%(levelname)s %(name)s: %(message)s")      # journald adds the time
-
+    args = _parser().parse_args(argv)
     try:
-        config = load_observer_config(args.config)
-    except (ValueError, OSError) as e:
-        print(f"vitality-observerd: {e}", file=sys.stderr)
+        config = load_observer_config()
+    except ValueError as exc:
+        print(f"vitality-observer: {exc}", file=sys.stderr)
         return 1
+    match args.command:
+        case "run":
+            return run(config)
+        case "status":
+            return status(config)
+    return 2  # unreachable: argparse requires a known command
+
+
+def run(config: ObserverConfig) -> int:
+    """Run the observer until it is stopped; return the process exit code. In order:
+
+        1. Set up logging to stderr (the container's log adds the time).
+        2. Refuse to run as root: the observer must run as the owner's user (`VITALITY_UID`),
+           so that the captures stay read-only to it and to the Claude Code it starts.
+        3. Create `state_dir` if it is missing.
+        4. Run `serve` with the real Claude Code until SIGTERM or Ctrl-C.
+
+    Exit codes: 0 after running and stopping; 1 for running as root or a `state_dir` that
+    cannot be created (the reason goes to stderr).
+    """
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr,
+                        format="%(levelname)s %(name)s: %(message)s")
     if os.geteuid() == 0:
-        print("vitality-observerd: refusing to run as root; run it as vitality-librarian", file=sys.stderr)
+        print("vitality-observer: refusing to run as root; set VITALITY_UID to your own user",
+              file=sys.stderr)
         return 1
     try:
         config.state_dir.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        print(f"vitality-observerd: {e}", file=sys.stderr)
+        print(f"vitality-observer: {e}", file=sys.stderr)
         return 1
 
     try:
@@ -97,8 +113,16 @@ async def watch_captures(captures_dir: Path, wake: Callable[[], None]) -> None:
                     captures_dir, type(e).__name__, e)
 
 
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="vitality-observer")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("run", help="observe every interaction, until stopped")
+    sub.add_parser("status", help="show how many interactions are observed, and the last Claude call")
+    return parser
+
+
 async def _serve_until_stopped(config: ObserverConfig, observer: Observer) -> None:
-    """`serve`, until SIGTERM (systemd's stop) or SIGINT (Ctrl-C) cancels it; that is a normal end."""
+    """`serve`, until SIGTERM (`docker stop`) or SIGINT (Ctrl-C) cancels it; that is a normal end."""
     task = asyncio.create_task(serve(config, observer))
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT):

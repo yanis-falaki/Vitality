@@ -15,7 +15,7 @@ dev = [
 ]
 
 [project.scripts]
-vitality-observerd = "vitality_observer.main:main"
+vitality-observer = "vitality_observer.main:main"
 
 [build-system]
 requires = ["hatchling"]

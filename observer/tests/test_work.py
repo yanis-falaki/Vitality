@@ -10,6 +10,7 @@ from vitality_observer.work import (
     chronological_key,
     context,
     device_of,
+    interactions,
     read_skipped,
     sort_key,
     unobserved,
@@ -258,3 +259,20 @@ def test_utf8_round_trips(cfg, tmp_path):
     path = tmp_path / "skipped.txt"
     add_skipped(path, "laptop/2026-10-25/10-00-00", "\u00e9chec")
     assert read_skipped(path) == {"laptop/2026-10-25/10-00-00": "\u00e9chec"}
+
+
+def test_interactions_lists_every_interaction_chronologically(cfg):
+    for name in ("phone/2026-10-25/09-00-00", "laptop/2026-10-25/17-00-00-2", "laptop/2026-10-25/17-00-00",
+                 "laptop/2026-10-24/23-00-00"):
+        capture(cfg, name)
+    capture(cfg, "laptop/2026-10-25/18-00-00", with_json=False)     # not an interaction
+    observe(cfg, "laptop/2026-10-25/17-00-00")                      # observed ones are listed too
+    found = interactions(cfg)
+    assert names(found) == ["laptop/2026-10-24/23-00-00", "phone/2026-10-25/09-00-00",
+                            "laptop/2026-10-25/17-00-00", "laptop/2026-10-25/17-00-00-2"]
+    assert found[2].folder == cfg.captures_dir / "laptop/2026-10-25/17-00-00"
+    assert found[2].observation == cfg.model_dir / "observations/laptop/2026-10-25/17-00-00.md"
+
+
+def test_interactions_of_a_missing_captures_dir_is_empty(cfg):
+    assert interactions(cfg) == []

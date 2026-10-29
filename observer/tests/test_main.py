@@ -24,11 +24,10 @@ def cfg(tmp_path: Path) -> ObserverConfig:
     )
 
 
-def write_config(tmp_path: Path, cfg: ObserverConfig) -> Path:
-    path = tmp_path / "observer.toml"
-    path.write_text(
-        f'captures_dir = "{cfg.captures_dir}"\nmodel_dir = "{cfg.model_dir}"\nstate_dir = "{cfg.state_dir}"\n')
-    return path
+def set_environment(monkeypatch, cfg: ObserverConfig) -> None:
+    monkeypatch.setenv("OBSERVER_CAPTURES_DIR", str(cfg.captures_dir))
+    monkeypatch.setenv("OBSERVER_MODEL_DIR", str(cfg.model_dir))
+    monkeypatch.setenv("OBSERVER_STATE_DIR", str(cfg.state_dir))
 
 
 async def until(condition, seconds: float = 5) -> None:
@@ -57,60 +56,84 @@ async def stop(task: asyncio.Task) -> None:
         await task
 
 
-def test_bad_config_returns_1_with_the_message_on_stderr(tmp_path, capsys):
-    path = tmp_path / "observer.toml"
-    path.write_text("bogus = 1\n")
-    assert main(["--config", str(path)]) == 1
+def test_dispatches_run_and_status(cfg, monkeypatch):
+    set_environment(monkeypatch, cfg)
+    called = []
+    monkeypatch.setattr(observer_main, "run", lambda config: called.append(("run", config)) or 3)
+    monkeypatch.setattr(observer_main, "status", lambda config: called.append(("status", config)) or 4)
+    assert main(["run"]) == 3
+    assert main(["status"]) == 4
+    assert called == [("run", cfg), ("status", cfg)]
+
+
+def test_no_command_or_an_unknown_one_exits_2(cfg, monkeypatch):
+    set_environment(monkeypatch, cfg)
+    for argv in ([], ["bogus"]):
+        with pytest.raises(SystemExit) as exit_info:
+            main(argv)
+        assert exit_info.value.code == 2
+
+
+def test_bad_setting_exits_1_naming_the_variable(monkeypatch, capsys):
+    monkeypatch.setenv("OBSERVER_BATCH_SIZE", "many")
+    monkeypatch.setattr(observer_main.asyncio, "run", lambda *a, **k: pytest.fail("must not run"))
+    assert main(["run"]) == 1
     err = capsys.readouterr().err
-    assert err.startswith("vitality-observerd: ") and "bogus" in err
+    assert err.startswith("vitality-observer: ") and "OBSERVER_BATCH_SIZE" in err
 
 
-def test_refuses_to_run_as_root(tmp_path, cfg, capsys, monkeypatch):
+def test_refuses_to_run_as_root(cfg, capsys, monkeypatch):
+    set_environment(monkeypatch, cfg)
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(observer_main.asyncio, "run", lambda *a, **k: pytest.fail("must not run"))
-    assert main(["--config", str(write_config(tmp_path, cfg))]) == 1
-    err = capsys.readouterr().err
-    assert err.startswith("vitality-observerd: ") and "root" in err
+    assert main(["run"]) == 1
+    assert capsys.readouterr().err == (
+        "vitality-observer: refusing to run as root; set VITALITY_UID to your own user\n")
     assert not cfg.state_dir.exists()
 
 
-def test_unusable_state_dir_returns_1(tmp_path, cfg, capsys):
+def test_unusable_state_dir_returns_1(tmp_path, cfg, capsys, monkeypatch):
     (tmp_path / "afile").write_text("")
-    path = tmp_path / "observer.toml"
-    path.write_text(f'state_dir = "{tmp_path / "afile" / "state"}"\n')
-    assert main(["--config", str(path)]) == 1
-    assert capsys.readouterr().err.startswith("vitality-observerd: ")
+    set_environment(monkeypatch, cfg)
+    monkeypatch.setenv("OBSERVER_STATE_DIR", str(tmp_path / "afile" / "state"))
+    assert main(["run"]) == 1
+    assert capsys.readouterr().err.startswith("vitality-observer: ")
 
 
-def test_main_creates_state_dir_and_serves_with_claude_code(tmp_path, cfg, monkeypatch):
+def test_run_creates_state_dir_and_serves_with_claude_code(cfg, monkeypatch):
     served = {}
 
     async def fake_serve(config, observer):
         served.update(config=config, observer=observer)
 
+    set_environment(monkeypatch, cfg)
     monkeypatch.setattr(observer_main, "serve", fake_serve)
-    assert main(["--config", str(write_config(tmp_path, cfg))]) == 0
+    assert main(["run"]) == 0
     assert cfg.state_dir.is_dir()
     assert served["config"] == cfg
     assert isinstance(served["observer"], observer_main.ClaudeCode)
 
 
-def test_keyboard_interrupt_is_a_normal_stop(tmp_path, cfg, monkeypatch):
+def test_keyboard_interrupt_is_a_normal_stop(cfg, monkeypatch):
     def interrupted(coroutine):
         coroutine.close()
         raise KeyboardInterrupt
 
+    set_environment(monkeypatch, cfg)
     monkeypatch.setattr(observer_main.asyncio, "run", interrupted)
-    assert main(["--config", str(write_config(tmp_path, cfg))]) == 0
+    assert main(["run"]) == 0
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="the observer refuses to run as root")
-def test_sigterm_stops_the_service_with_exit_code_0(tmp_path, cfg):
-    config = write_config(tmp_path, cfg)
+def test_sigterm_stops_the_service_with_exit_code_0(cfg):
     cfg.captures_dir.mkdir()
     process = subprocess.Popen(
         [sys.executable, "-c", "import sys; from vitality_observer.main import main; sys.exit(main(sys.argv[1:]))",
-         "--config", str(config)],
+         "run"],
+        env={**os.environ,
+             "OBSERVER_CAPTURES_DIR": str(cfg.captures_dir),
+             "OBSERVER_MODEL_DIR": str(cfg.model_dir),
+             "OBSERVER_STATE_DIR": str(cfg.state_dir)},
         stderr=subprocess.PIPE, text=True)
     assert process.stderr is not None
     try:
