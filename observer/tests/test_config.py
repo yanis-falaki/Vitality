@@ -2,64 +2,67 @@ from pathlib import Path
 
 import pytest
 
-from vitality_observer.config import DEFAULT_CONFIG, ObserverConfig, load_observer_config
+from vitality_observer.config import ObserverConfig, load_observer_config
 
 
-def test_defaults_when_missing(tmp_path):
-    c = load_observer_config(tmp_path / "none.toml")
+def test_defaults_with_no_variables():
+    c = load_observer_config({})
     assert c == ObserverConfig()
-    assert c.batch_size == 10 and c.context_size == 15 and c.model is None
-    assert c.captures_dir == Path("/srv/vitality/captures")
-    assert c.model_dir == Path("/srv/vitality-model")
-    assert c.state_dir == Path("/var/lib/vitality-librarian")
-    assert c.call_timeout_seconds == 600
-    assert DEFAULT_CONFIG == Path("/etc/vitality/observer.toml")
+    assert c.captures_dir == Path("/captures")
+    assert c.model_dir == Path("/model")
+    assert c.state_dir == Path("/state")
+    assert (c.batch_size, c.context_size, c.call_timeout_seconds, c.model) == (10, 15, 600, None)
 
 
-def test_loads_values(tmp_path):
-    p = tmp_path / "o.toml"
-    p.write_text('model_dir = "/x"\nbatch_size = 3\nmodel = "sonnet"\n')
-    c = load_observer_config(p)
-    assert (c.model_dir, c.batch_size, c.model) == (Path("/x"), 3, "sonnet")
-    assert c.context_size == 15
+def test_reads_every_variable():
+    env = {
+        "OBSERVER_CAPTURES_DIR": "/c",
+        "OBSERVER_MODEL_DIR": "/m",
+        "OBSERVER_STATE_DIR": "/s",
+        "OBSERVER_BATCH_SIZE": "2",
+        "OBSERVER_CONTEXT_SIZE": "4",
+        "OBSERVER_CALL_TIMEOUT_SECONDS": "12.5",
+        "OBSERVER_MODEL": "sonnet",
+    }
+    assert load_observer_config(env) == ObserverConfig(Path("/c"), Path("/m"), Path("/s"), 2, 4, 12.5, "sonnet")
 
 
-def test_loads_every_key(tmp_path):
-    p = tmp_path / "o.toml"
-    p.write_text(
-        'captures_dir = "/c"\nmodel_dir = "/m"\nstate_dir = "/s"\n'
-        "batch_size = 2\ncontext_size = 4\ncall_timeout_seconds = 12.5\n"
-    )
-    c = load_observer_config(p)
-    assert c == ObserverConfig(Path("/c"), Path("/m"), Path("/s"), 2, 4, 12.5, None)
+def test_empty_model_means_claude_codes_default():
+    assert load_observer_config({"OBSERVER_MODEL": ""}).model is None
 
 
-@pytest.mark.parametrize("text,key", [
-    ("nope = 1", "nope"),
-    ('batch_size = "x"', "batch_size"),
-    ("batch_size = true", "batch_size"),
-    ("batch_size = 2.5", "batch_size"),
-    ("context_size = 0", "context_size"),
-    ("call_timeout_seconds = 0", "call_timeout_seconds"),
-    ("call_timeout_seconds = -1.5", "call_timeout_seconds"),
-    ('call_timeout_seconds = "soon"', "call_timeout_seconds"),
-    ("call_timeout_seconds = inf", "call_timeout_seconds"),
-    ("call_timeout_seconds = nan", "call_timeout_seconds"),
-    ("model = 5", "model"),
-    ('model = ""', "model"),
-    ("captures_dir = 3", "captures_dir"),
-    ('model_dir = ""', "model_dir"),
-    ("state_dir = []", "state_dir"),
+@pytest.mark.parametrize("name,value", [
+    ("OBSERVER_BATCH_SIZE", "0"),
+    ("OBSERVER_BATCH_SIZE", "x"),
+    ("OBSERVER_BATCH_SIZE", "2.5"),
+    ("OBSERVER_CONTEXT_SIZE", "-1"),
+    ("OBSERVER_CALL_TIMEOUT_SECONDS", "inf"),
+    ("OBSERVER_CALL_TIMEOUT_SECONDS", "nan"),
+    ("OBSERVER_CALL_TIMEOUT_SECONDS", "0"),
+    ("OBSERVER_CALL_TIMEOUT_SECONDS", "-1.5"),
+    ("OBSERVER_CALL_TIMEOUT_SECONDS", "soon"),
 ])
-def test_rejects_bad_values(tmp_path, text, key):
-    p = tmp_path / "o.toml"
-    p.write_text(text + "\n")
-    with pytest.raises(ValueError, match=key):
-        load_observer_config(p)
+def test_bad_values_name_the_variable(name, value):
+    with pytest.raises(ValueError, match=name):
+        load_observer_config({name: value})
 
 
-def test_malformed_toml_is_a_clear_error(tmp_path):
-    p = tmp_path / "o.toml"
-    p.write_text("batch_size = = 3\n")
-    with pytest.raises(ValueError, match=r"o\.toml.*not valid TOML.*line 1"):
-        load_observer_config(p)
+@pytest.mark.parametrize("name", ["OBSERVER_CAPTURES_DIR", "OBSERVER_MODEL_DIR", "OBSERVER_STATE_DIR"])
+def test_empty_directory_is_refused(name):
+    with pytest.raises(ValueError, match=name):
+        load_observer_config({name: ""})
+
+
+@pytest.mark.parametrize("name,default", [
+    ("OBSERVER_BATCH_SIZE", 10),
+    ("OBSERVER_CONTEXT_SIZE", 15),
+    ("OBSERVER_CALL_TIMEOUT_SECONDS", 600),
+])
+def test_empty_number_means_the_default(name, default):
+    c = load_observer_config({name: ""})
+    assert c == ObserverConfig()
+    assert default in (c.batch_size, c.context_size, c.call_timeout_seconds)
+
+
+def test_unrelated_variables_are_ignored():
+    assert load_observer_config({"PATH": "/bin", "SERVER_PORT": "9"}) == ObserverConfig()
