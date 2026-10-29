@@ -21,7 +21,6 @@ Write each observation to `observations/<name>.md`, relative to your working dir
 ---
 interaction: laptop/2026-10-25/17-00-00
 observed: 2026-10-27T15:42:10Z
-model: <model id>
 ---
 Read the co-op portal posting for the Stanford ML research internship and scrolled to the application section.
 
@@ -30,7 +29,6 @@ Read the co-op portal posting for the Stanford ML research internship and scroll
 
 - `interaction`: the interaction's name, exactly as given.
 - `observed`: the current time in UTC, ISO 8601, as in the example. Get it by running `date -u +%Y-%m-%dT%H:%M:%SZ`.
-- `model`: the id of the model you are running as.
 - Body: one to three plain sentences on what the person did. Then the key text from the screen, copied verbatim, one `>` line each: dates, names, titles, numbers, anything someone would later want to look up. Plain sentences are your interpretation; `>` lines are exactly what was on screen.
 
 Keep it short. Do not narrate every screenshot, and do not quote text that does not matter.

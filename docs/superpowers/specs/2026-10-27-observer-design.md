@@ -105,7 +105,6 @@ Everything, on both machines. **(new)** marks what this design adds.
 ---
 interaction: laptop/2026-10-25/17-00-00
 observed: 2026-10-27T15:42:10Z
-model: <model id>
 ---
 Read the co-op portal posting for the Stanford ML research internship and scrolled to the application section.
 
@@ -114,7 +113,7 @@ Read the co-op portal posting for the Stanford ML research internship and scroll
 
 - `interaction`: the interaction's name, also the observation's id.
 - `observed`: when the observation was written (UTC).
-- `model`: the model that wrote it.
+- Which model wrote it is recorded in `calls.jsonl` (the call that listed this interaction).
 - Body: 1–3 sentences on what the person did; then any key text quoted verbatim, one `>` line
   each (dates, names, titles, numbers). Plain sentences are interpretation; `>` lines are copied
   from the screen.
