@@ -1,0 +1,90 @@
+# Vitality: the two long-running services, built from this checkout.
+#   docker compose up -d --build     start (or update) both
+#   docker compose ps                state and health
+#   docker compose logs -f server    follow one service's log
+# Settings come from .env (copy .env.example); see it for what each one does.
+
+# Options both services share: they run as the data folder's owner and are locked down
+# (the systemd sandbox of the old install, as container settings).
+x-common: &common
+  # Not root: files written to the data folder belong to the owner (VITALITY_UID:VITALITY_GID).
+  user: "${VITALITY_UID:-1000}:${VITALITY_GID:-1000}"
+  # Come back after a crash or a reboot, but stay down after `docker compose stop`.
+  restart: unless-stopped
+  # The image is immutable; anything a service writes goes to a mount or to /tmp.
+  read_only: true
+  tmpfs:
+    - /tmp
+  # No privilege gain, no Linux capabilities.
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  # Keep logs from growing without bound: 3 files of 10 MB per service.
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+
+  # Receives the interactions that clients upload and stores them under /data.
+  server:
+    <<: *common
+    image: vitality-server
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    command: ["vitality-server", "serve"]
+    # The host's network, so the server can listen on the host's Tailscale address (SERVER_PORT).
+    network_mode: host
+    environment:
+      SERVER_PORT: ${SERVER_PORT:-8100}
+      SERVER_ALLOWED_CLIENTS: ${SERVER_ALLOWED_CLIENTS:-}
+    volumes:
+      # Captures, upload staging and the index: the server's data.
+      - ${VITALITY_DATA:-${HOME}/vitality-data}/server:/data
+      # How the server asks Tailscale who is calling. The directory is mounted, not the socket
+      # file, so a restarted tailscaled (which makes a new socket) is still reachable.
+      - /var/run/tailscale:/var/run/tailscale
+      # Log timestamps in the host's time zone.
+      - /etc/localtime:/etc/localtime:ro
+    # `vitality-server healthcheck` can take ~10 s (5 s to find the Tailscale address, 5 s for the HTTP call).
+    healthcheck:
+      test: ["CMD", "vitality-server", "healthcheck"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+
+  # Reads new captures and has Claude Code write an observation of each into /model.
+  observer:
+    <<: *common
+    image: vitality-observer
+    build:
+      context: .
+      dockerfile: observer/Dockerfile
+    command: ["vitality-observer", "run"]
+    environment:
+      OBSERVER_BATCH_SIZE: ${OBSERVER_BATCH_SIZE:-10}
+      OBSERVER_CONTEXT_SIZE: ${OBSERVER_CONTEXT_SIZE:-15}
+      OBSERVER_CALL_TIMEOUT_SECONDS: ${OBSERVER_CALL_TIMEOUT_SECONDS:-600}
+      OBSERVER_MODEL: ${OBSERVER_MODEL:-}
+    # /home/observer is Claude Code's home: private and in memory, so it can write its caches without
+    # touching the host. (/tmp is listed again because this replaces the shared tmpfs list.)
+    tmpfs:
+      - /tmp
+      - /home/observer:mode=0700,uid=${VITALITY_UID:-1000},gid=${VITALITY_GID:-1000}
+    volumes:
+      # What the server captured: read-only, the observer never changes it.
+      - ${VITALITY_DATA:-${HOME}/vitality-data}/server/captures:/captures:ro
+      # The observations Claude writes (and the folder it works in).
+      - ${VITALITY_DATA:-${HOME}/vitality-data}/model:/model
+      # The observer's own record: calls.jsonl and skipped.txt.
+      - ${VITALITY_DATA:-${HOME}/vitality-data}/observer:/state
+      # The owner's Claude Code login and settings, shared with the observer.
+      - ${HOME}/.claude:/home/observer/.claude
+      - ${HOME}/.claude.json:/home/observer/.claude.json
+      # Timestamps in the host's time zone.
+      - /etc/localtime:/etc/localtime:ro
