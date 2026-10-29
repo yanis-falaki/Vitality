@@ -5,108 +5,76 @@ Markdown account of what the person did, written by Claude from the interaction'
 screenshots. Observations are the first layer of the user model; the design is in
 [`docs/superpowers/specs/2026-10-27-observer-design.md`](../docs/superpowers/specs/2026-10-27-observer-design.md).
 
-It runs on the same VM as the server, as a systemd service, `vitality-observerd`, under its
-own account, `vitality-librarian`. It finds new work by watching the captures folder and by
-rescanning it every 60 seconds. For each batch of unobserved interactions it
-runs Claude Code headless (`claude -p`) in `/srv/vitality-model`, and Claude writes the
-observation files. The account can read the captures but not change them: they belong to
-`vitality`, and the unit mounts `/srv/vitality` read-only.
+It runs as the `observer` service of Docker Compose, started by `vitality-observer run`, on the
+same VM as the server. To install, run, configure, upgrade or read its logs, see the
+[root README](../README.md); this page is about what the observer does.
+
+It finds new work by watching the captures folder and by rescanning it every 60 seconds. For
+each batch of unobserved interactions it runs Claude Code headless (`claude -p`) in the model
+folder, and Claude writes the observation files. The observer can read the captures but not
+change them: Compose mounts them read-only. It uses the owner's own Claude Code login
+(`~/.claude/`, `~/.claude.json`), mounted into the container, and refuses to run as root.
 
 ## What is where
 
+Inside the container, with the host folder each comes from (`~/vitality-data` by default):
+
 ```
-/opt/vitality-observer/                   the installed observer (its prompt.md ships inside it)
-/usr/local/bin/vitality-observerd         the service's command
-/etc/systemd/system/vitality-observerd.service
-/etc/vitality/observer.toml               settings
-/var/lib/vitality-librarian/              the account's home
-  .claude/                                  Claude Code's login
-  .local/bin/claude                         Claude Code itself (updates itself)
-  calls.jsonl                               one line per Claude call
-  skipped.txt                               interactions given up on
-/srv/vitality-model/                      the user model, a git repository (750, owned by vitality-librarian)
-  observations/<device>/<day>/<time>.md     one observation per interaction
-/srv/vitality/captures/<device>/<day>/<time>/   the interactions (written by vitality-server)
+/captures/                                 ~/vitality-data/server/captures (read-only; the server's interactions)
+/model/                                    ~/vitality-data/model (the user model)
+  observations/<device>/<day>/<time>.md      one observation per interaction
+/state/                                    ~/vitality-data/observer
+  calls.jsonl                                one line per Claude call
+  skipped.txt                                interactions given up on
 ```
 
 `<device>/<day>/<time>` is the interaction's name, for example `laptop/2026-10-25/17-00-00`:
 an observation's path is its interaction's name under `observations/`.
 
-## Setup
+## Settings
 
-1. Install and start the server first (`./server/install.sh`, see [`server/README.md`](../server/README.md)).
+Set in `.env` (see the [root README](../README.md#changing-settings)):
 
-2. On the VM, from the repo checkout:
+| Variable | Default | Meaning |
+|---|---|---|
+| `OBSERVER_BATCH_SIZE` | 10 | most interactions handed to one Claude call |
+| `OBSERVER_CONTEXT_SIZE` | 15 | earlier observations of the same device given as context |
+| `OBSERVER_CALL_TIMEOUT_SECONDS` | 600 | a Claude call running longer is killed |
+| `OBSERVER_MODEL` | empty | model for Claude Code; empty is its default |
 
-   ```sh
-   ./observer/install.sh
-   ```
+The folders (`OBSERVER_CAPTURES_DIR`, `OBSERVER_MODEL_DIR`, `OBSERVER_STATE_DIR`) default to the
+container paths above; Compose does not set them, but they let the program run outside a
+container.
 
-   The script installs Python 3.14 with `uv` and the observer, with its dependencies at the
-   exact versions (and hashes) in `observer/uv.lock`, into `/opt/vitality-observer`. It
-   creates the `vitality-librarian` system user (home `/var/lib/vitality-librarian`, no login
-   shell, in group `vitality` so it can read the captures), adds you to the
-   `vitality-librarian` group (so you can read the model; log in again once), creates
-   `/srv/vitality-model` as a git repository, writes `/etc/vitality/observer.toml` (never
-   overwriting an existing one), installs and enables the systemd unit, and starts it if Claude
-   Code is ready (step 3). Rerunning it upgrades the code: it stops the service while the
-   program is replaced and starts it again. To update, pull the repo and run it again.
+## Commands
 
-3. Install Claude Code for the `vitality-librarian` account and log it in, once. The install
-   script does not do this for you: Claude Code lives in the account's own home, where
-   Anthropic's installer puts it and keeps it up to date, and logging in needs a browser.
-   `install.sh` ends by checking both, and prints only what is still missing.
+| Command | What it is |
+|---|---|
+| `vitality-observer run` | the observer itself; Compose runs it |
+| `vitality-observer status` | how far it has got, in one line |
 
-   ```sh
-   sudo -u vitality-librarian -H bash -c 'cd && curl -fsSL https://claude.ai/install.sh | bash'
-   sudo -u vitality-librarian -H bash -c 'cd && ~/.local/bin/claude'
-   ```
+`./vitality status` runs `status` in a throwaway container. It only reads.
 
-   (The `cd` is because `sudo` keeps your current directory, which the account cannot enter.)
-
-   In the second, type `/login`, follow the link to log in to your Claude subscription, then
-   exit. On a first install the service is enabled but not yet started, which simply avoids
-   a service that fails and retries until you log in. Once Claude Code is ready, start it:
-
-   ```sh
-   sudo systemctl start vitality-observerd
-   ```
-
-   The unit puts `/var/lib/vitality-librarian/.local/bin` first on `PATH`, which is how it
-   finds this `claude`. If you reboot before this is done, the service starts anyway; that is
-   harmless, because a failure that never reaches Claude never skips an interaction.
-
-## Configuration
-
-`/etc/vitality/observer.toml` (see [`observer.toml.example`](observer.toml.example)):
-
-```toml
-captures_dir = "/srv/vitality/captures"     # the server's interactions; the observer only reads them
-model_dir = "/srv/vitality-model"           # the user model (a git repository); observations/ lives here
-state_dir = "/var/lib/vitality-librarian"   # where calls.jsonl and skipped.txt are kept
-batch_size = 10                             # most interactions handed to one Claude call
-context_size = 15                           # earlier observations of the same device given as context
-call_timeout_seconds = 600                  # a Claude call running longer is killed
-# model = "…"                               # unset: Claude Code's default
+```
+observer: 560 / 595 observed · 2 skipped · last call 21:28:26 EDT ok (40 s)
 ```
 
-`model_dir` and `state_dir` must stay under the paths in `ReadWritePaths` in the unit, and
-`captures_dir` under `/srv/vitality`: the service can write nowhere else. Changes take effect
-after `sudo systemctl restart vitality-observerd`. To use another file, run
-`vitality-observerd --config PATH`. The program refuses to run as root.
+Observed out of all interactions in the captures, the entries in `skipped.txt`, and the last
+line of `calls.jsonl` (local time, then `ok` or `failed: <detail>`, then its duration), or
+`no calls yet`.
 
 ## How it behaves
 
 The observer makes one Claude call at a time. It takes the oldest unobserved interaction and
-the next ones from the same device (other devices' wait their turn), up to `batch_size`,
+the next ones from the same device (other devices' wait their turn), up to the batch size,
 strictly oldest first within the device, and gives Claude the last
-`context_size` observations of that device before them. When a call finishes it looks again,
+context-size observations of that device before them. When a call finishes it looks again,
 so a backlog is worked through in batches, oldest first, and when it is idle a new interaction
 is picked up at once.
 
 A call that writes at least one of its observations has worked, even if Claude reported an
-error. A call that writes none has failed (an error, a hang cut off at `call_timeout_seconds`,
-or simply nothing written). Failures follow three rules:
+error. A call that writes none has failed (an error, a hang cut off at the call timeout, or
+simply nothing written). Failures follow three rules:
 
 1. **Back off.** After a failed call the observer sleeps 5 seconds, then doubles the pause each
    time up to 5 minutes; a call that worked, or having nothing to do, starts it over. A usage
@@ -129,41 +97,36 @@ observer logs a warning and carries on, and the 60-second rescan keeps things wo
 
 ## Logs and cost
 
-```sh
-journalctl -u vitality-observerd -f      # what it did: batches observed, failures, waits, skips
-systemctl status vitality-observerd
-```
+`./vitality logs observer` shows what it did: batches observed, failures, waits, skips.
 
-Each Claude call also adds one line to `/var/lib/vitality-librarian/calls.jsonl`: `time`,
-the `interactions` in it, `exit` code, `ok`, `detail` (why it failed), `duration_ms`,
-`cost` (Claude Code's estimate in USD), `input_tokens`, `output_tokens`,
+Each Claude call also adds one line to `calls.jsonl` (`~/vitality-data/observer/calls.jsonl` on
+the VM): `time`, the `interactions` in it, `exit` code, `ok`, `detail` (why it failed),
+`duration_ms`, `cost` (Claude Code's estimate in USD), `input_tokens`, `output_tokens`,
 `cache_read_input_tokens`, `cache_creation_input_tokens` and the `models` it used (Claude Code
-sometimes adds a small one for side tasks). For
-example, calls and cost per day (needs `jq`; the file may need `sudo` to read):
+sometimes adds a small one for side tasks). For example, calls and cost per day (needs `jq`):
 
 ```sh
 jq -s 'group_by(.time[:10]) | map({day: .[0].time[:10], calls: length, cost: (map(.cost // 0) | add)})' \
-  /var/lib/vitality-librarian/calls.jsonl
+  ~/vitality-data/observer/calls.jsonl
 ```
 
 ## Putting right what it got wrong
 
-You can read `/srv/vitality-model` as a member of the `vitality-librarian` group, but only
-that account can change it, so these use `sudo -u vitality-librarian`.
+The data folder is yours, so these are plain file edits on the VM; the observer notices at its
+next look (at most a minute).
 
 - **An interaction was skipped.** Each line of `skipped.txt` is an interaction name, a tab and
-  the reason. Delete the interaction's line and it is offered again at the next look (at most
-  a minute), with fresh strikes:
+  the reason. Delete the interaction's line and it is offered again, with fresh strikes:
 
   ```sh
-  sudo -u vitality-librarian sed -i '\|^laptop/2026-10-25/17-00-00\t|d' /var/lib/vitality-librarian/skipped.txt
+  sed -i '\|^laptop/2026-10-25/17-00-00\t|d' ~/vitality-data/observer/skipped.txt
   ```
 
 - **An observation is wrong and should be redone.** Delete its file. The interaction counts
-  as unobserved again and is picked up at the next look, and the new observation replaces it:
+  as unobserved again, and the new observation replaces it:
 
   ```sh
-  sudo -u vitality-librarian rm /srv/vitality-model/observations/laptop/2026-10-25/17-00-00.md
+  rm ~/vitality-data/model/observations/laptop/2026-10-25/17-00-00.md
   ```
 
   An empty observation file counts as missing. To redo everything, delete the `observations`

@@ -129,12 +129,12 @@ service again.
 ## Upload to a server
 
 Optional. Each interaction is uploaded as soon as it ends, to a `vitality-server` that is
-only reachable over Tailscale (set it up with [`server/README.md`](../server/README.md)).
+only reachable over Tailscale (set it up with the [root README](../README.md)).
 Without `upload_server` in `client.toml`, nothing is uploaded and `status` shows
 `upload: disabled`.
 
 1. Join the laptop to the same tailnet as the server, under the name the server's
-   `allowed_clients` lists (`laptop`):
+   `SERVER_ALLOWED_CLIENTS` lists (`laptop`):
 
    ```sh
    sudo pacman -S tailscale
@@ -160,7 +160,7 @@ Without `upload_server` in `client.toml`, nothing is uploaded and `status` shows
    checks, and `vitality-client status` should show `upload: ok`.
 
 Uploads retry on their own: offline or a server error backs off from 5 s to 5 min, and a
-refusal because the laptop is not in `allowed_clients` is retried every 5 min. An
+refusal because the laptop is not in `SERVER_ALLOWED_CLIENTS` is retried every 5 min. An
 interaction the server rejects as invalid or too large (or whose files are missing) is skipped and
 logged, not retried. Uploads continue while capture is paused. Captures are always kept
 locally after they upload.
@@ -196,7 +196,7 @@ upload: ok · 0 pending · last 17:00:43
 
 The upload state is `disabled` (no `upload_server`), `ok`, `offline` (the server cannot be
 reached; interactions queue up) or `rejected` (the server refused this laptop: check
-`allowed_clients`). `pending` counts finished interactions not yet uploaded; `last` is the
+`SERVER_ALLOWED_CLIENTS`). `pending` counts finished interactions not yet uploaded; `last` is the
 time of the last successful upload. With no server set, the line is just `upload: disabled`.
 `status --json` carries it as an `upload` object (`state`, `pending`, `last_upload`).
 

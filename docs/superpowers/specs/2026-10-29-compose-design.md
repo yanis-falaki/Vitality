@@ -78,25 +78,42 @@ observer/Dockerfile
 | `/state` | `$VITALITY_DATA/observer` | — | read-write |
 | `/home/observer` | a private tmpfs (HOME) | — | read-write |
 | `/home/observer/.claude`, `/home/observer/.claude.json` | the owner's `~/.claude/`, `~/.claude.json` | — | read-write |
-| `/var/run/tailscale/tailscaled.sock` | the host's | yes | — |
+| `/var/run/tailscale` | the host's directory of that name | yes | — |
 | `/etc/localtime` | the host's | read-only | read-only |
+
+The server gets Tailscale's socket directory, not the socket file: a restarted `tailscaled` makes a
+new socket file, which a single-file mount would keep pointing at the old, dead one.
 
 ## 5. Settings
 
 `.env.example`, with defaults:
 ```
-# VITALITY_DATA=/home/you/vitality-data   # the data folder; unset: $HOME/vitality-data
-# VITALITY_UID=1000                       # who owns the data: the containers run as this user
+# Vitality settings. Copy to .env (git-ignored) and edit: cp .env.example .env
+# Only SERVER_ALLOWED_CLIENTS must be filled in; everything else has the default shown.
+# (Comments sit on their own lines: after an empty value, a trailing "# ..." would become the value.)
+
+# Where the data lives, and who owns it. compose.yaml supplies these defaults, so leave them
+# commented out unless yours differ.
+#   VITALITY_DATA: the data folder; unset: $HOME/vitality-data
+#   VITALITY_UID / VITALITY_GID: who owns the data; the containers run as this user and group
+# VITALITY_DATA=/home/you/vitality-data
+# VITALITY_UID=1000
 # VITALITY_GID=1000
 
-SERVER_PORT=8100                    # served on the VM's Tailscale address only
-SERVER_ALLOWED_CLIENTS=             # comma-separated Tailscale device names, e.g. laptop
+# Served on the VM's Tailscale address only.
+SERVER_PORT=8100
+# Comma-separated Tailscale device names that may upload, e.g. laptop
+SERVER_ALLOWED_CLIENTS=
 
 OBSERVER_BATCH_SIZE=10
 OBSERVER_CONTEXT_SIZE=15
 OBSERVER_CALL_TIMEOUT_SECONDS=600
-OBSERVER_MODEL=                     # empty: Claude Code's default
+# Empty: Claude Code's default model.
+OBSERVER_MODEL=
 ```
+
+Every comment is on its own line, never after a value: Compose reads a trailing `# ...` after an
+empty value (`SERVER_ALLOWED_CLIENTS=   # ...`) as the value itself.
 
 `compose.yaml` supplies the defaults for the first three (`${VITALITY_DATA:-${HOME}/vitality-data}`,
 `${VITALITY_UID:-1000}`, `${VITALITY_GID:-1000}`), so a fresh `.env` needs only
