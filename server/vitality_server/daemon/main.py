@@ -1,74 +1,63 @@
-"""`vitality-serverd [--config PATH]`: load the settings, open the store, serve on Tailscale.
+"""Serve: open the store, find the Tailscale address, run the app there.
 
-This is the server itself, run by systemd. The `vitality-server` command, which inspects it,
-is in `vitality_server.cli`.
+This is the server itself; it runs as `vitality-server serve` in its container. The rest of
+the `vitality-server` command, which loads the settings and inspects the server, is in
+`vitality_server.cli`.
 """
 
-import argparse
 import asyncio
 import logging
 import sys
-from collections.abc import Sequence
-from pathlib import Path
 
 import uvicorn
 
 from vitality_server.daemon.app import create_app
-from vitality_server.shared.config import DEFAULT_CONFIG, load_server_config
+from vitality_server.shared.config import ServerConfig
 from vitality_server.shared.identity import TailscaleIdentity, tailscale_ipv4
 from vitality_server.shared.storage import FileStore
 
 log = logging.getLogger(__name__)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def serve(config: ServerConfig) -> int:
     """Run the server until it is stopped; return the process exit code.
 
-    `argv` is the argument list (default: `sys.argv[1:]`); `--config PATH` names the
-    settings file. At startup, in order:
+    Sets up logging to stderr (INFO), then, in order:
 
-        1. Parse the arguments and set up logging to stderr.
-        2. Load the settings (a missing file means the defaults) and open the store in
-           `data_dir`.
-        3. Recover: delete leftover tmp/ folders and index complete interactions the
+        1. Open the store in `config.data_dir`.
+        2. Recover: delete leftover tmp/ folders and index complete interactions the
            index lacks.
-        4. Warn if `allowed_clients` is empty (every upload will then be refused).
-        5. Find this machine's Tailscale IPv4 address; the server listens only there,
+        3. Warn if `allowed_clients` is empty (every upload will then be refused).
+        4. Find this machine's Tailscale IPv4 address; the server listens only there,
            never on every interface.
-        6. Serve until stopped, then close the store.
+        5. Serve until stopped, then close the store.
 
-    Exit codes: 0 after serving and stopping; 1 for unusable settings or data directory,
-    a failed recovery, or no Tailscale address (the reason goes to stderr, nothing is
-    served). A bad command line exits 2 (argparse).
+    Exit codes: 0 after serving and stopping; 1 for an unusable data directory, a failed
+    recovery, or no Tailscale address (the reason goes to stderr, nothing is served).
     """
-    parser = argparse.ArgumentParser(prog="vitality-serverd", description=__doc__)
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG,
-                        help=f"settings file (default: {DEFAULT_CONFIG})")
-    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     try:
-        config = load_server_config(args.config)
         store = FileStore(config.data_dir)
-    except (ValueError, OSError) as e:  # bad settings, or a data directory we cannot use
-        print(f"vitality-serverd: {e}", file=sys.stderr)
+    except OSError as e:  # a data directory we cannot use
+        print(f"vitality-server: {e}", file=sys.stderr)
         return 1
 
     try:
         try:
             recovered = store.recover()
         except OSError as e:
-            print(f"vitality-serverd: {e}", file=sys.stderr)
+            print(f"vitality-server: {e}", file=sys.stderr)
             return 1
         if recovered:
             log.info("recovery indexed %d interactions the index was missing", recovered)
         if not config.allowed_clients:
-            log.warning("allowed_clients is empty: every upload will be refused")
+            log.warning("SERVER_ALLOWED_CLIENTS is empty: every upload will be refused")
         try:
             ip = asyncio.run(tailscale_ipv4())
         except RuntimeError as e:  # never fall back to listening on every interface
-            print(f"vitality-serverd: cannot find the Tailscale address: {e}", file=sys.stderr)
+            print(f"vitality-server: cannot find the Tailscale address: {e}", file=sys.stderr)
             return 1
         log.info("serving on %s:%d for %s", ip, config.port, ", ".join(config.allowed_clients) or "nobody")
         uvicorn.run(create_app(store, TailscaleIdentity(), config.allowed_clients),

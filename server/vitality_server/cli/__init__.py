@@ -1,15 +1,13 @@
-"""The `vitality-server` command line: looks at, and upgrades, the server (`vitality-serverd`) on this machine.
+"""The `vitality-server` command, the one program in the server's container.
 
-    status    what each device has uploaded, the free disk space and where things live
+    serve         run the server                                  (daemon/main.py)
+    status        what each device has uploaded and the free disk space
                                                                   status.py
-    doctor    check the setup, one line per check                 doctor.py (+ checks.py)
-    upgrade   pull the latest main from GitHub, reinstall,        upgrade.py (+ commands.py)
-              then run doctor
+    healthcheck   exit 0 if the running server answers /health    healthcheck.py
 
-`main(argv) -> exit code` is the entry point; `main.py` parses arguments and dispatches. The
-block of paths `status` and `doctor` end with is in `paths.py`; `display.py` formats sizes and
-times; `commands.py` runs other programs (git, install.sh) so tests can replace it. `status`
-and `doctor` change nothing on disk; `upgrade` reinstalls the server.
+`main(argv) -> exit code` is the entry point; `main.py` loads the settings from the
+environment, parses arguments and dispatches, handing each command a `ServerConfig`.
+`display.py` formats sizes and times. `status` and `healthcheck` change nothing on disk.
 """
 
 from vitality_server.cli.main import main

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 from vitality_server.cli import status as status_module
 from vitality_server.cli.status import status
+from vitality_server.shared.config import ServerConfig
 
 from stored import store_with
 
@@ -19,38 +20,23 @@ def utc_clock(monkeypatch):
     time.tzset()
 
 
-def config_for(tmp_path, data_dir):
-    path = tmp_path / "server.toml"
-    path.write_text(f'data_dir = "{data_dir}"\n')
-    return path
+def config_for(data_dir):
+    return ServerConfig(data_dir=data_dir)
 
 
-def paths_block(config, data):
-    return [
-        f"config:   {config}",
-        f"data:     {data}",
-        f"captures: {data}/captures",
-        f"index:    {data}/index.sqlite",
-        "program:  /opt/vitality-server",
-        "service:  /etc/systemd/system/vitality-serverd.service",
-        "logs:     journalctl -u vitality-serverd",
-    ]
-
-
-def test_one_line_per_device_then_disk_then_paths(tmp_path, capsys):
+def test_one_line_per_device_then_disk(tmp_path, capsys):
     data = tmp_path / "data"
     store_with(data, {
         "laptop": [("2026-10-25T21:00:00Z", 2, datetime(2026, 10, 25, 21, 30, 37, tzinfo=UTC)),
                    ("2026-10-25T21:10:00Z", 1, datetime(2026, 10, 25, 21, 10, 0, tzinfo=UTC))],
         "desk": [("2026-10-20T09:00:00Z", 1, datetime(2026, 10, 20, 9, 5, 0, tzinfo=UTC))],
     })
-    config = config_for(tmp_path, data)
-    assert status(config) == 0
+    assert status(config_for(data)) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "desk: 1 interactions · 1 shots · 0.0 kB · last received 2026-10-20 09:05 UTC"
     assert lines[1] == "laptop: 2 interactions · 3 shots · 0.1 kB · last received 21:30:37 UTC"
     assert lines[2].startswith("disk: ") and lines[2].endswith(" free")
-    assert lines[3:] == paths_block(config, data)
+    assert len(lines) == 3
 
 
 def test_sizes_use_decimal_units(tmp_path, capsys, monkeypatch):
@@ -60,7 +46,7 @@ def test_sizes_use_decimal_units(tmp_path, capsys, monkeypatch):
     import sqlite3
     with sqlite3.connect(data / "index.sqlite") as db:
         db.execute("UPDATE shots SET bytes = 201000000")
-    status(config_for(tmp_path, data))
+    status(config_for(data))
     out = capsys.readouterr().out.splitlines()
     assert out[0] == "laptop: 1 interactions · 1 shots · 201.0 MB · last received 21:00:00 UTC"
     assert out[1] == "disk: 19.7 GB free"
@@ -72,7 +58,7 @@ def test_last_received_is_shown_in_local_time(tmp_path, capsys, monkeypatch):
     data = tmp_path / "data"
     store_with(data, {"laptop": [("2026-10-25T21:00:00Z", 1, datetime(2026, 10, 25, 21, 30, 37, tzinfo=UTC))]})
     monkeypatch.setattr(status_module, "_now", lambda: datetime(2026, 10, 25, 22, 0, tzinfo=UTC))
-    status(config_for(tmp_path, data))
+    status(config_for(data))
     assert "last received 14:30:37 PDT" in capsys.readouterr().out
 
 
@@ -80,32 +66,28 @@ def test_empty_index(tmp_path, capsys):
     from vitality_server.shared.storage import FileStore
     data = tmp_path / "data"
     FileStore(data).close()
-    config = config_for(tmp_path, data)
-    assert status(config) == 0
+    assert status(config_for(data)) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "no interactions stored yet"
     assert lines[1].startswith("disk: ")
-    assert lines[2:] == paths_block(config, data)
+    assert len(lines) == 2
 
 
-def test_missing_index_says_so_on_stderr_and_still_prints_paths(tmp_path, capsys):
+def test_missing_index_says_so_on_stderr(tmp_path, capsys):
     data = tmp_path / "data"
     data.mkdir()
-    config = config_for(tmp_path, data)
-    assert status(config) == 1
+    assert status(config_for(data)) == 1
     captured = capsys.readouterr()
     assert captured.err.startswith(f"cannot read {data}/index.sqlite: ")
-    assert captured.out.splitlines()[-7:] == paths_block(config, data)
     assert list(data.iterdir()) == []  # status creates nothing
 
 
-def test_missing_data_folder_says_so_on_stderr_and_still_prints_paths(tmp_path, capsys):
+def test_missing_data_folder_says_so_on_stderr(tmp_path, capsys):
     data = tmp_path / "nowhere"
-    config = config_for(tmp_path, data)
-    assert status(config) == 1
+    assert status(config_for(data)) == 1
     captured = capsys.readouterr()
     assert "cannot read" in captured.err and str(data) in captured.err
-    assert captured.out.splitlines() == paths_block(config, data)
+    assert captured.out == ""
     assert not data.exists()
 
 
@@ -113,28 +95,19 @@ def test_corrupt_index_says_so_on_stderr(tmp_path, capsys):
     data = tmp_path / "data"
     data.mkdir()
     (data / "index.sqlite").write_text("not a database")
-    assert status(config_for(tmp_path, data)) == 1
+    assert status(config_for(data)) == 1
     assert capsys.readouterr().err.startswith(f"cannot read {data}/index.sqlite: ")
 
 
-def test_bad_config_goes_to_stderr_and_exits_1(tmp_path, capsys):
-    path = tmp_path / "server.toml"
-    path.write_text("bogus = 1\n")
-    assert status(path) == 1
-    captured = capsys.readouterr()
-    assert captured.err.startswith("vitality-server: ") and "bogus" in captured.err
-    assert captured.out == ""
-
-
-def test_permission_problem_hints_at_the_vitality_group(tmp_path, capsys, monkeypatch):
+def test_permission_error_hints_at_the_owner(tmp_path, capsys, monkeypatch):
     data = tmp_path / "data"
     data.mkdir()
 
     def denied(data_dir):
         raise PermissionError(13, "Permission denied", str(data_dir / "index.sqlite"))
     monkeypatch.setattr(status_module, "read_summary", denied)
-    assert status(config_for(tmp_path, data)) == 1
+    assert status(config_for(data)) == 1
     err = capsys.readouterr().err
     assert err == (f"cannot read {data}/index.sqlite: Permission denied; "
-                   "are you in the vitality group? log in again after install.sh adds you\n")
+                   "does VITALITY_UID own the data folder?\n")
     assert "sudo" not in err
