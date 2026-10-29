@@ -83,8 +83,9 @@ services:
       - ${VITALITY_DATA:-${HOME}/vitality-data}/model:/model
       # The observer's own record: calls.jsonl and skipped.txt.
       - ${VITALITY_DATA:-${HOME}/vitality-data}/observer:/state
-      # The owner's Claude Code login and settings, shared with the observer.
+      # The owner's Claude Code login (.credentials.json) and settings, shared with the observer.
+      # Only the folder: Claude Code saves ~/.claude.json by renaming a new file over it, which a
+      # single-file mount breaks. The observer keeps its own .claude.json in its tmpfs home.
       - ${HOME}/.claude:/home/observer/.claude
-      - ${HOME}/.claude.json:/home/observer/.claude.json
       # Timestamps in the host's time zone.
       - /etc/localtime:/etc/localtime:ro

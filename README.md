@@ -19,7 +19,9 @@ stores them, and an observer has Claude write a short Markdown observation of ea
 You need Docker with the Compose plugin, Tailscale joined to your tailnet (the client README
 addresses the VM as `vitality-librarian`: `sudo tailscale set --hostname=vitality-librarian`),
 and Claude Code, logged in as the user who will own the data:
-run `claude`, then `/login` inside it. The observer uses that login.
+run `claude`, then `/login` inside it. The observer uses that login, which Claude Code keeps in
+`~/.claude/.credentials.json` on a server; on a desktop with a keyring it is kept in the keyring
+instead, which the container cannot use, so run the VM side on a server.
 
 ```sh
 git clone https://github.com/yanis-falaki/Vitality.git ~/Vitality && cd ~/Vitality
@@ -28,7 +30,7 @@ docker compose up -d
 ```
 
 `./vitality setup` creates `.env` from `.env.example` and the data folders (so Docker does not
-create them owned by root), and stops if the Claude login is missing. In `.env`, put the
+create them owned by root), and stops if the Claude login file is missing. In `.env`, put the
 Tailscale device names that may upload, for example `SERVER_ALLOWED_CLIENTS=laptop`. An empty
 list refuses every upload. The first `docker compose up -d` builds both images, which takes a
 few minutes. Then check:
@@ -67,10 +69,12 @@ Everything is plain files under one folder, `~/vitality-data` by default, owned 
   server/      captures/<device>/<day>/<time>/ (the interactions), tmp/, index.sqlite
   model/       observations/<device>/<day>/<time>.md (what the observer writes)
   observer/    calls.jsonl, skipped.txt
-~/.claude/, ~/.claude.json    your own Claude Code login, shared with the observer
+~/.claude/                   your own Claude Code login (.credentials.json) and settings, shared with the observer
 ```
 
-The observer reads `server/captures` read-only. Its Claude Code runs with your login and your
+The observer reads `server/captures` read-only. Only the `~/.claude/` folder is shared, not
+`~/.claude.json` (Claude Code replaces that file by renaming, which a single-file mount breaks);
+the observer keeps its own in memory. Its Claude Code runs with your login and your
 `~/.claude/` settings, so the account your `claude` uses is the one that pays for it, and
 your hooks, permissions and MCP servers apply to its runs too. To switch accounts, run
 `claude` and `/login` as usual.

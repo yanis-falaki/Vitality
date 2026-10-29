@@ -68,10 +68,15 @@ cmd_setup() {
     mkdir -p "$data/server/captures" "$data/model" "$data/observer"
     echo "Data folders are in place under $data"
 
-    # Docker would create a missing ~/.claude owned by root, which the observer could not use.
-    if [[ ! -d $HOME/.claude || ! -f $HOME/.claude.json ]]; then
-        die "Claude Code is not logged in (~/.claude/ or ~/.claude.json is missing).
-Run 'claude' on this machine, then '/login' inside it, and run ./vitality setup again."
+    # The login is the file ~/.claude/.credentials.json, which the observer reads through the
+    # ~/.claude mount. (Docker would create a missing ~/.claude owned by root, unusable to the observer.)
+    # On a desktop with a keyring (gnome-keyring, KWallet) Claude Code keeps the login there instead,
+    # and the container cannot use it: run the VM side on a server.
+    if [[ ! -f $HOME/.claude/.credentials.json ]]; then
+        die "Claude Code is not logged in on this machine with a file-based login
+(~/.claude/.credentials.json is missing). Run 'claude', then '/login' inside it, and run
+./vitality setup again. On a desktop with a keyring the login is not stored in that file, so
+run the VM side on a server."
     fi
 
     local allowed

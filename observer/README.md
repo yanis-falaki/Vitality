@@ -13,7 +13,7 @@ It finds new work by watching the captures folder and by rescanning it every 60 
 each batch of unobserved interactions it runs Claude Code headless (`claude -p`) in the model
 folder, and Claude writes the observation files. The observer can read the captures but not
 change them: Compose mounts them read-only. It uses the owner's own Claude Code login
-(`~/.claude/`, `~/.claude.json`), mounted into the container, and refuses to run as root.
+(the `~/.claude/` folder), mounted into the container, and refuses to run as root.
 
 ## What is where
 
