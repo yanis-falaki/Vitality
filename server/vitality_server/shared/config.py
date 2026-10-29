@@ -1,62 +1,52 @@
-"""The server's settings, read from a TOML file.
+"""The server's settings, read from environment variables.
 
-Recognised keys: `data_dir`, `port`, `allowed_clients`. Anything omitted keeps the
-default of `ServerConfig`. `DEFAULT_CONFIG` is where the server and its command line look for
-the file when `--config` is not given.
+Variable                  Default   Meaning
+SERVER_DATA_DIR           /data     Directory holding captures/, tmp/ and index.sqlite. If set,
+                                    it must not be empty.
+SERVER_PORT               8100      TCP port to listen on, an integer from 1 to 65535. Empty
+                                    means the default.
+SERVER_ALLOWED_CLIENTS    (none)    Comma-separated Tailscale device names allowed to upload.
+                                    Whitespace around names and empty names are dropped; empty
+                                    means no client is allowed.
+
+A variable that is unset keeps the default of `ServerConfig`. Other variables are ignored.
 """
 
-import tomllib
+import os
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_CONFIG = Path("/etc/vitality/server.toml")
-"""The settings file used when `--config` is not given."""
-
-
 @dataclass(frozen=True)
 class ServerConfig:
-    data_dir: Path = Path("/srv/vitality")      # holds captures/, tmp/ and index.sqlite
+    data_dir: Path = Path("/data")              # holds captures/, tmp/ and index.sqlite
     port: int = 8100
     allowed_clients: tuple[str, ...] = ()       # Tailscale device names allowed to upload
 
 
-def load_server_config(path: Path) -> ServerConfig:
-    """Load settings from a TOML file; a missing file yields the defaults.
+def load_server_config(environ: Mapping[str, str] = os.environ) -> ServerConfig:
+    """Read the settings from `environ` (the process environment by default).
 
-    `data_dir` must be a non-empty string, `port` an integer from 1 to 65535 and
-    `allowed_clients` a list of strings.
-
-    Raises ValueError, naming the key, for an unknown key or a value of the wrong type or
-    range. A file that is not valid TOML raises `tomllib.TOMLDecodeError` (a ValueError); one
-    that cannot be read raises OSError.
+    Raises ValueError, naming the variable, if `SERVER_DATA_DIR` is set but empty or
+    `SERVER_PORT` is not an integer from 1 to 65535.
     """
-    try:
-        with open(path, "rb") as f:
-            raw = tomllib.load(f)
-    except FileNotFoundError:
-        return ServerConfig()
-
-    unknown = [key for key in raw if key not in ("data_dir", "port", "allowed_clients")]
-    if unknown:
-        raise ValueError(f"unknown config key: {unknown[0]}")
-
     values: dict[str, Path | int | tuple[str, ...]] = {}
-    if "data_dir" in raw:
-        data_dir = raw["data_dir"]
-        if not isinstance(data_dir, str) or not data_dir:
-            raise ValueError(f"config key data_dir must be a non-empty path, got {data_dir!r}")
+
+    data_dir = environ.get("SERVER_DATA_DIR")
+    if data_dir is not None:
+        if not data_dir:
+            raise ValueError("SERVER_DATA_DIR must be a non-empty path, got ''")
         values["data_dir"] = Path(data_dir)
-    if "port" in raw:
-        port = raw["port"]
-        if not isinstance(port, int) or isinstance(port, bool):
-            raise ValueError(f"config key port must be an integer, got {port!r}")
-        if not 1 <= port <= 65535:
-            raise ValueError(f"config key port must be between 1 and 65535, got {port!r}")
-        values["port"] = port
-    if "allowed_clients" in raw:
-        clients = raw["allowed_clients"]
-        if not isinstance(clients, list) or not all(isinstance(c, str) for c in clients):
-            raise ValueError(f"config key allowed_clients must be a list of strings, got {clients!r}")
-        values["allowed_clients"] = tuple(clients)
+
+    port = environ.get("SERVER_PORT", "").strip()
+    if port:
+        if not re.fullmatch(r"[0-9]+", port) or not 1 <= int(port) <= 65535:
+            raise ValueError(f"SERVER_PORT must be an integer from 1 to 65535, got {port!r}")
+        values["port"] = int(port)
+
+    clients = [name.strip() for name in environ.get("SERVER_ALLOWED_CLIENTS", "").split(",")]
+    values["allowed_clients"] = tuple(name for name in clients if name)
+
     return ServerConfig(**values)  # pyright: ignore[reportArgumentType]  # types validated above
