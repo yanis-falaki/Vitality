@@ -126,13 +126,13 @@ async def test_success_logs_usage(cfg):
     assert line["cost"] == 0.02
     assert line["input_tokens"] == 10
     assert line["output_tokens"] == 5
-    assert "model" not in line
+    assert line["models"] is None
 
 
-async def test_records_the_configured_model(cfg):
-    config = ObserverConfig(state_dir=cfg.state_dir, model="sonnet")
-    result = await ClaudeCode(config, FakeRunner(0, success_json())).observe([], [])
-    assert result.record["model"] == "sonnet"
+async def test_records_the_models_used(cfg):
+    stdout = success_json(modelUsage={"claude-opus-5-5": {"costUSD": 0.02}, "claude-haiku-5-5": {"costUSD": 0.0}})
+    result = await ClaudeCode(cfg, FakeRunner(0, stdout)).observe([], [])
+    assert result.record["models"] == ["claude-haiku-5-5", "claude-opus-5-5"]
 
 
 async def test_calls_are_appended(cfg):

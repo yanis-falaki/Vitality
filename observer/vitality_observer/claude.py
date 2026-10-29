@@ -144,9 +144,8 @@ class ClaudeCode(Observer):
             "output_tokens": usage.get("output_tokens"),
             "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
             "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+            "models": _models(output),
         }
-        if config.model:
-            record["model"] = config.model
         self._log_call(config.state_dir / "calls.jsonl", record)
 
         return CallResult(
@@ -223,6 +222,12 @@ def _parse_output(stdout: str) -> dict:
 def _text(output: dict, key: str) -> str:
     value = output.get(key)
     return value if isinstance(value, str) else ""
+
+
+def _models(output: dict) -> list[str] | None:
+    """The ids of the models the call used, from Claude Code's `modelUsage` (it may use a small one on the side)."""
+    usage = output.get("modelUsage")
+    return sorted(usage) if isinstance(usage, dict) else None
 
 
 def _duration_ms(output: dict, measured: int) -> int | float:

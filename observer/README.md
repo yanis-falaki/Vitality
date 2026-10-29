@@ -136,7 +136,8 @@ systemctl status vitality-observerd
 Each Claude call also adds one line to `/var/lib/vitality-librarian/calls.jsonl`: `time`,
 the `interactions` in it, `exit` code, `ok`, `detail` (why it failed), `duration_ms`,
 `cost` (Claude Code's estimate in USD), `input_tokens`, `output_tokens`,
-`cache_read_input_tokens`, `cache_creation_input_tokens` and the `model` if one is set. For
+`cache_read_input_tokens`, `cache_creation_input_tokens` and the `models` it used (Claude Code
+sometimes adds a small one for side tasks). For
 example, calls and cost per day (needs `jq`; the file may need `sudo` to read):
 
 ```sh

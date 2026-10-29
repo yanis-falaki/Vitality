@@ -168,7 +168,7 @@ claude -p "<the batch's interaction paths, then the context observations>" \
   default tools. The OS-level protections in §8 are what keep the captures safe.
 - `--output-format json` returns the call's result, token usage and estimated cost. The observer
   appends one line per call to `calls.jsonl`: start time, interactions, duration, tokens,
-  estimated cost, exit status.
+  estimated cost, exit status, and the models used.
 
 **The system prompt** (`observer/vitality_observer/prompt.md`, versioned in the repo) tells Claude:
 1. Its job: write one observation per interaction given, at the path mirroring the interaction
