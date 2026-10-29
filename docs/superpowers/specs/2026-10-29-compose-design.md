@@ -11,7 +11,7 @@ what each service is, what it can read and write, and where the data lives. Inst
 clone + `docker compose up -d`; upgrading becomes one command for both services.
 
 What must not change: uploads stay Tailscale-only and identify devices by their Tailscale name;
-captures stay read-only to the observer; the observer keeps its own Claude login; the existing
+captures stay read-only to the observer; the observer uses Claude Code with a subscription login; the existing
 captures and observations carry over; the laptop client needs no change.
 
 ## 2. Scope
@@ -39,7 +39,7 @@ captures and observations carry over; the laptop client needs no change.
 | Images | Built on the VM from the checkout (`build:` in compose) | No registry or CI needed; trying a branch is `docker compose run --rm --build …` |
 | Whose files | Both containers run as the owner (uid/gid from `.env`, default 1000) | Every file is the owner's: no groups, no sudo; containers still isolate the services |
 | Data | Bind mounts under one data folder, `~/vitality-data` by default | Plain files, easy to reach and back up; outside the git checkout |
-| Claude login | Named volume `claude`, mounted as the observer's home | Credentials and Claude Code internals, not Vitality data |
+| Claude login | The owner's own login on the VM (`~/.claude/`, `~/.claude.json`), mounted into the observer | One login, switched with the normal `/login`; the observer uses whatever account the owner's `claude` uses, and the owner's Claude settings (hooks, permissions, MCP servers) apply to its runs too |
 | Settings | One `.env` next to `compose.yaml`; compose passes values as environment variables | One place for every setting, the usual Compose way |
 | Admin commands | Run in a throwaway container from the service's image (`docker compose run --rm`) | The installed code lives in the image; works even when the service is stopped |
 | `doctor` | Replaced by a Compose healthcheck on the server, plus start-up errors in the logs | Its systemd checks no longer apply; the server already checks its settings at start |
@@ -65,7 +65,7 @@ observer/Dockerfile
   server/                    captures/, tmp/, index.sqlite
   model/                     observations/
   observer/                  calls.jsonl, skipped.txt
-docker volume "claude"       the observer's home: Claude login (~/.claude/, ~/.claude.json)
+~/.claude/, ~/.claude.json  the owner's own Claude Code login and settings, shared with the observer
 ```
 
 **Inside the containers** (fixed by the mounts; also the code's defaults):
@@ -76,7 +76,8 @@ docker volume "claude"       the observer's home: Claude login (~/.claude/, ~/.c
 | `/captures` | `$VITALITY_DATA/server/captures` | — | read-only |
 | `/model` | `$VITALITY_DATA/model` | — | read-write |
 | `/state` | `$VITALITY_DATA/observer` | — | read-write |
-| `/home/observer` | volume `claude` | — | read-write (HOME) |
+| `/home/observer` | a private tmpfs (HOME) | — | read-write |
+| `/home/observer/.claude`, `/home/observer/.claude.json` | the owner's `~/.claude/`, `~/.claude.json` | — | read-write |
 | `/var/run/tailscale/tailscaled.sock` | the host's | yes | — |
 | `/etc/localtime` | the host's | read-only | read-only |
 
@@ -116,11 +117,11 @@ command-line program, pinned. Runs `vitality-server serve` with the host's netwo
 The `tailscale` program talks to the VM's own Tailscale through the mounted socket.
 
 **Observer** (`observer/Dockerfile`): Python 3.14; the observer package from `observer/uv.lock`;
-Claude Code at a pinned version, installed outside the home (so a rebuilt image's Claude Code is
-the one that runs, not a copy in the volume), with self-updating off; `bash` and the basic tools
-Claude's Bash tool uses, plus one for cropping or zooming images. The image creates
-`/home/observer` owned by `VITALITY_UID:VITALITY_GID` (build arguments), so the `claude` volume
-starts out writable. Runs `vitality-observer run`.
+Claude Code at a pinned version, installed in the image (not in the home), with self-updating
+off; `bash` and the basic tools Claude's Bash tool uses, plus one for cropping or zooming images.
+Its home (`HOME=/home/observer`) is a private tmpfs, so Claude Code can write its caches; the
+owner's `~/.claude/` and `~/.claude.json` are mounted inside it, which is where the login comes
+from. Runs `vitality-observer run`.
 
 **Both**, in `compose.yaml`:
 - `user: ${VITALITY_UID}:${VITALITY_GID}`, `restart: unless-stopped`.
@@ -151,21 +152,23 @@ starts out writable. Runs `vitality-observer run`.
 **`./vitality`** (bash, in the repo root; prints each `docker compose …` line before running it):
 ```
 ./vitality setup             create .env from .env.example if missing, and the data folders
-                             (server/captures, model, observer) owned by the owner
+                             (server/captures, model, observer) owned by the owner; check that
+                             the owner's claude is logged in (~/.claude/ and ~/.claude.json exist)
 ./vitality status            docker compose ps; then the server's and the observer's status
                              (each via `docker compose run --rm`); then the data folder from .env
 ./vitality logs [service]    docker compose logs -f
 ./vitality upgrade           git pull (fast-forward only; lists the new commits), then
                              docker compose up -d --build
-./vitality login             docker compose run --rm observer claude   (then /login, /exit)
 ```
 
-Docker creates a missing bind-mount folder owned by root, which the containers (running as
-the owner) could not write; `setup` creates them first. A fresh install is:
+Docker creates a missing bind-mount source owned by root (a folder, even where a file was
+meant, as for `~/.claude.json`), which the containers, running as the owner, could not use;
+`setup` creates the data folders first and refuses to go on until the owner's Claude login
+exists. A fresh install, with Claude Code installed and logged in as the owner (`claude`, then
+`/login`), is:
 ```
 git clone https://github.com/yanis-falaki/Vitality.git ~/Vitality && cd ~/Vitality
 ./vitality setup                 # then set SERVER_ALLOWED_CLIENTS in .env
-./vitality login
 docker compose up -d
 ```
 
@@ -186,7 +189,7 @@ docker compose up -d
    own it. Copy, not move: the old setup stays intact until the new one is proven.
 3. `git pull`; `./vitality setup`; set `SERVER_ALLOWED_CLIENTS=laptop` in `.env`;
    `docker compose build`.
-4. `./vitality login` (school account).
+4. Log the owner's own `claude` on the VM into the account the observer should use (`claude`, `/login`).
 5. `docker compose up -d`; `./vitality status`: server healthy, a laptop upload arrives, the
    observer writes a batch.
 6. When the owner is satisfied: remove the old units, `/opt/vitality-{server,observer,python}`,
@@ -203,6 +206,12 @@ Until step 6, going back is `docker compose down` and re-enabling the two old un
 - Build both images locally; inside them, `claude --version`, `tailscale version`, and
   `vitality-observer status` against a sample data folder; start the server image against the
   laptop's own Tailscale (socket mount, healthcheck turning healthy).
+- The shared login, before anything depends on it: in the observer image, with the owner's
+  `~/.claude/` and `~/.claude.json` mounted, `claude -p "say ok" --output-format json` works and
+  a token refresh is written back. Claude Code may replace `~/.claude.json` by renaming a new
+  file over it, which a single-file bind mount does not allow; if it does, mount only
+  `~/.claude/` and let the container keep its own `.claude.json` in its tmpfs home, provided
+  the call still works with the credentials alone.
 - `bash -n vitality` (and shellcheck if available).
 - End to end: migration step 5, on the VM.
 
