@@ -24,8 +24,9 @@ limit that hit after some files were written counts too).
 class Loop(Protocol):
     """Keeps every interaction observed, one Claude call at a time, by three rules.
 
-    A batch is the oldest waiting interaction plus the ones right after it from the same
-    device, at most `batch_size`. Parameters named below belong to `ObserveLoop`.
+    A batch is the oldest waiting interaction plus the next ones from the same device, at
+    most `batch_size`; other devices' interactions wait their turn. Within a device the order
+    is strictly oldest first. Parameters named below belong to `ObserveLoop`.
 
     1. Back off. After a failed call, sleep `retry_initial` seconds (5), doubling each time up
        to `retry_max` (300); an observed or idle round resets it. A usage limit instead waits
@@ -182,15 +183,16 @@ class ObserveLoop(Loop):
         return "failed"
 
     def _front_batch(self, waiting: Sequence[Interaction]) -> list[Interaction]:
-        """The oldest interaction and those after it from its device, up to `batch_size` (1 if `_alone`)."""
+        """The oldest interaction and the next ones from its device, up to `batch_size` (1 if `_alone`).
+
+        Other devices' interactions in between are left for later rounds: order matters within a
+        device (each observation's context is that device's earlier ones), not across devices.
+        """
+        if not waiting:
+            return []
+        device = device_of(waiting[0].name)
         size = 1 if self._alone else self._config.batch_size
-        batch: list[Interaction] = []
-        for interaction in waiting[:size]:
-            # Stop at the first other device: the context given to Claude is per device.
-            if device_of(interaction.name) != device_of(waiting[0].name):
-                break
-            batch.append(interaction)
-        return batch
+        return [i for i in waiting if device_of(i.name) == device][:size]
 
     def _start_over(self) -> None:
         """After an observed or idle round: the first backoff, and failures are logged afresh."""

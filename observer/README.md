@@ -98,7 +98,8 @@ after `sudo systemctl restart vitality-observerd`. To use another file, run
 ## How it behaves
 
 The observer makes one Claude call at a time. It takes the oldest unobserved interaction and
-the ones after it from the same device, up to `batch_size`, and gives Claude the last
+the next ones from the same device (other devices' wait their turn), up to `batch_size`,
+strictly oldest first within the device, and gives Claude the last
 `context_size` observations of that device before them. When a call finishes it looks again,
 so a backlog is worked through in batches, oldest first, and when it is idle a new interaction
 is picked up at once.

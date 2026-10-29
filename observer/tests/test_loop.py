@@ -198,18 +198,16 @@ async def test_batch_capped_at_batch_size(cfg):
     assert observer.batches == [names[:10], names[10:]]
 
 
-async def test_batch_stops_at_device_change(cfg):
+async def test_batch_is_the_oldest_device_skipping_other_devices(cfg):
     for name in ("laptop/2026-10-25/10-00-00", "desktop/2026-10-25/10-00-01",
                  "laptop/2026-10-25/10-00-02", "laptop/2026-10-25/10-00-03"):
         capture(cfg, name)
     observer = FakeObserver(cfg)
     loop = ObserveLoop(cfg, observer)
-    for _ in range(3):
-        await loop.step()
+    assert [await loop.step() for _ in range(3)] == ["observed", "observed", "idle"]
     assert observer.batches == [
-        ["laptop/2026-10-25/10-00-00"],
+        ["laptop/2026-10-25/10-00-00", "laptop/2026-10-25/10-00-02", "laptop/2026-10-25/10-00-03"],
         ["desktop/2026-10-25/10-00-01"],
-        ["laptop/2026-10-25/10-00-02", "laptop/2026-10-25/10-00-03"],
     ]
 
 
@@ -341,7 +339,7 @@ async def test_a_call_that_wrote_some_resumes_full_batches(cfg):
     assert observer.batches == [names, names[:1], names[1:]]
 
 
-async def test_isolated_batches_still_stop_at_a_device_change(cfg):
+async def test_isolated_batches_stay_on_one_device(cfg):
     for name in ("laptop/2026-10-25/10-00-00", "desktop/2026-10-25/10-00-01",
                  "desktop/2026-10-25/10-00-02"):
         capture(cfg, name)

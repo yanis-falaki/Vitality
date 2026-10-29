@@ -133,9 +133,10 @@ already contains `interaction.json`.
 
 **Coalescing.** One Claude call at a time:
 1. When idle and work appears, start a call immediately.
-2. A call takes the oldest waiting interaction and those right after it from the same device,
-   up to `batch_size` (10), in time order: the front run of one device, so the context (below)
-   fits the whole batch.
+2. A call takes the oldest waiting interaction and the next ones from the same device, up to
+   `batch_size` (10), in time order, passing over other devices' interactions (they wait their
+   turn): one device per batch, so the context (below) fits the whole batch. Order is strict
+   within a device, where context depends on it, not across devices.
 3. While a call runs, new interactions wait.
 4. When it finishes, check again; start the next call at once if anything waits.
 
