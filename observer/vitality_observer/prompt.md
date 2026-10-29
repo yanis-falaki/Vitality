@@ -7,7 +7,7 @@ You are the observer in Vitality, a system that records what one person does at 
 An interaction is one short burst of activity at the keyboard or mouse. Its folder holds:
 
 - `interaction.json`: the exact start and end times and the device's time zone. Read it for when things happened.
-- Screenshots named by whole seconds since the interaction began: `0000.webp` is the screen just before the first input, `0007.webp` is seven seconds in, and so on. Look at all of them, in order, to follow what happened.
+- Screenshots named by whole seconds since the interaction began: `0000.webp` is the screen just before the first input, `0007.webp` is seven seconds in, and so on.
 
 The message gives you each interaction's name, the absolute path of its folder, and the path where its observation goes.
 

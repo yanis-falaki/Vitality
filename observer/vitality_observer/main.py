@@ -99,7 +99,7 @@ async def watch_captures(captures_dir: Path, wake: Callable[[], None]) -> None:
 
 async def _serve_until_stopped(config: ObserverConfig, observer: Observer) -> None:
     """`serve`, until SIGTERM (systemd's stop) or SIGINT (Ctrl-C) cancels it; that is a normal end."""
-    task = asyncio.ensure_future(serve(config, observer))
+    task = asyncio.create_task(serve(config, observer))
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(signum, task.cancel)
