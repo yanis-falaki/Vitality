@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# The owner's helper for running Vitality with Docker Compose. Run it from anywhere; it works in
+# the folder it lives in.
+#
+#   ./vitality setup            create .env and the data folders, check the Claude login
+#   ./vitality status           containers, then the server's and the observer's status
+#   ./vitality logs [service]   follow the logs (service: server or observer; default: both)
+#   ./vitality upgrade          fast-forward to the newest main, then rebuild and restart
+#
+# Every docker and git command is printed (after a "$ ") before it runs, so nothing is hidden.
+
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+# == Helpers ==
+
+# Print a command the way a shell prompt would show it.
+show() { printf '$ %s\n' "$*"; }
+
+# Print a command, then run it.
+run() { show "$@"; "$@"; }
+
+# Stop with a message.
+die() { echo "vitality: $*" >&2; exit 1; }
+
+# The last value NAME has in .env (no value if the file or the line is missing).
+# Comment lines are ignored; surrounding quotes are removed; " # ..." after a value is a comment.
+# A "# ..." right after an empty "NAME=" is kept, because that is what compose reads there.
+env_file_value() {
+    [[ -f .env ]] || return 0
+    local line value=""
+    while IFS= read -r line; do
+        if [[ $line =~ ^[[:space:]]*"$1"[[:space:]]*=(.*)$ ]]; then
+            value="${BASH_REMATCH[1]}"
+        fi
+    done < .env
+    value="${value#"${value%%[![:space:]]*}"}"   # trim leading blanks
+    if [[ $value =~ ^\"([^\"]*)\" || $value =~ ^\'([^\']*)\' ]]; then
+        value="${BASH_REMATCH[1]}"
+    else
+        value="${value%%[[:space:]]#*}"
+    fi
+    value="${value%"${value##*[![:space:]]}"}"   # trim trailing blanks
+    printf '%s' "$value"
+}
+
+# The data folder, found the way compose.yaml finds it: the environment, else .env, else the default.
+data_dir() {
+    local dir="${VITALITY_DATA:-}"
+    [[ -n $dir ]] || dir="$(env_file_value VITALITY_DATA)"
+    printf '%s' "${dir:-$HOME/vitality-data}"
+}
+
+# == Commands ==
+
+# Create .env and the data folders, and check that the owner's Claude Code is logged in. Safe to rerun.
+cmd_setup() {
+    if [[ -f .env ]]; then
+        echo ".env already exists; leaving it alone."
+    else
+        cp .env.example .env
+        echo "Created .env from .env.example."
+    fi
+
+    local data
+    data="$(data_dir)"
+    mkdir -p "$data/server/captures" "$data/model" "$data/observer"
+    echo "Data folders are in place under $data"
+
+    # Docker would create a missing ~/.claude owned by root, which the observer could not use.
+    if [[ ! -d $HOME/.claude || ! -f $HOME/.claude.json ]]; then
+        die "Claude Code is not logged in (~/.claude/ or ~/.claude.json is missing).
+Run 'claude' on this machine, then '/login' inside it, and run ./vitality setup again."
+    fi
+
+    local allowed
+    allowed="$(env_file_value SERVER_ALLOWED_CLIENTS)"
+    if [[ -z $allowed || $allowed == \#* ]]; then
+        echo "Next: set SERVER_ALLOWED_CLIENTS in .env to your clients' Tailscale device names,"
+        echo "on its own line, no trailing comment. Then: docker compose up -d"
+    else
+        echo "Ready. Start Vitality with: docker compose up -d"
+    fi
+}
+
+# Show the containers, then what the server and the observer say; carry on past a failing part.
+cmd_status() {
+    local failed=0
+    run docker compose ps || failed=1
+    run docker compose run --rm --no-deps server vitality-server status || failed=1
+    run docker compose run --rm --no-deps observer vitality-observer status || failed=1
+    echo "data: $(data_dir)"
+    return "$failed"
+}
+
+# Follow the logs of both services, or of the one named.
+cmd_logs() {
+    run docker compose logs -f "$@"
+}
+
+# Fast-forward to the newest main (only from a clean main), then rebuild and restart.
+cmd_upgrade() {
+    show git rev-parse --abbrev-ref HEAD
+    local branch
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    [[ $branch == main ]] || die "upgrade only runs on main (this is '$branch'). Switch with: git switch main"
+
+    show git status --porcelain --untracked-files=no
+    [[ -z "$(git status --porcelain --untracked-files=no)" ]] \
+        || die "tracked files are modified; commit or stash them first (see: git status)"
+
+    run git fetch origin main
+
+    show git rev-list --count HEAD..origin/main
+    if [[ "$(git rev-list --count HEAD..origin/main)" == 0 ]]; then
+        # Still go on to the build below: a build that failed last time can then be retried.
+        echo "Already up to date."
+    else
+        echo "New commits:"
+        run git log --oneline HEAD..origin/main
+        run git merge --ff-only origin/main \
+            || die "cannot fast-forward: this copy has commits of its own that origin/main lacks"
+    fi
+
+    run docker compose up -d --build
+}
+
+# Say what the commands are.
+usage() {
+    cat <<'EOF'
+usage: ./vitality <command>
+
+  setup             create .env and the data folders, check the Claude login
+  status            containers, then the server's and the observer's status
+  logs [service]    follow the logs (service: server or observer; default: both)
+  upgrade           fast-forward to the newest main, then rebuild and restart
+EOF
+}
+
+# == Main ==
+
+case "${1:-}" in
+    setup)   cmd_setup ;;
+    status)  cmd_status ;;
+    logs)    shift; cmd_logs "$@" ;;
+    upgrade) cmd_upgrade ;;
+    *)       usage >&2; exit 2 ;;
+esac
