@@ -6,7 +6,6 @@ from collections.abc import Sequence
 
 from vitality_server.cli.healthcheck import healthcheck
 from vitality_server.cli.status import status
-from vitality_server.daemon.main import serve
 from vitality_server.shared.config import load_server_config
 
 
@@ -34,6 +33,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     match args.command:
         case "serve":
+            # Imported here so status and healthcheck (every 30 s) don't load uvicorn and fastapi.
+            from vitality_server.daemon.main import serve
             return serve(config)
         case "status":
             return status(config)

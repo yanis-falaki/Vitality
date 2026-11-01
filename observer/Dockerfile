@@ -14,7 +14,8 @@ ENV UV_PYTHON_DOWNLOADS=never \
     UV_PYTHON=/usr/local/bin/python3.14 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=0
+    UV_COMPILE_BYTECODE=1
+# (Bytecode is compiled now: the root is read-only at run time, so Python could not cache it.)
 WORKDIR /src
 COPY observer/ observer/
 RUN cd observer && uv sync --locked --no-dev --no-editable
@@ -37,6 +38,8 @@ FROM python:3.14-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends imagemagick \
     && rm -rf /var/lib/apt/lists/*
+# The image's own standard library ships without bytecode; compile it too (see the build stage).
+RUN python -m compileall -q /usr/local/lib/python3.14
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
