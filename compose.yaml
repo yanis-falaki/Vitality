@@ -45,8 +45,10 @@ services:
     volumes:
       # Captures, upload staging and the index: the server's data.
       - ${VITALITY_DATA:-${HOME}/vitality-data}/server:/data
-      # How the server asks Tailscale who is calling. The directory is mounted, not the socket
-      # file, so a restarted tailscaled (which makes a new socket) is still reachable.
+      # How the server asks Tailscale who is calling: the directory holding the socket. A restarted
+      # tailscaled replaces the directory itself, which this mount cannot follow; the server then
+      # finds Tailscale unreachable, exits after about 90 s, and Docker restarts it with a
+      # fresh mount (see `serve` in server/vitality_server/daemon/main.py).
       - /var/run/tailscale:/var/run/tailscale
       # Log timestamps in the host's time zone.
       - /etc/localtime:/etc/localtime:ro

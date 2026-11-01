@@ -55,6 +55,11 @@ The log shows the device, the interaction name and any rejection; it never conta
 contents. If the server will not start, the log says why; the usual cause is that Tailscale is
 not up on the VM, since the server refuses to listen anywhere else.
 
+While serving, the server asks Tailscale for its address every 30 s. After 3 failures in a row
+(a restarted `tailscaled` replaces `/var/run/tailscale`, which the container's mount cannot
+follow) or a changed address, it logs one warning saying why and exits with code 1; Docker then
+restarts it with a fresh mount. One such restart after a Tailscale restart is expected.
+
 ## What is stored
 
 In the container, `/data` is `~/vitality-data/server` on the VM:
