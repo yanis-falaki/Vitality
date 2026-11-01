@@ -9,7 +9,8 @@ the `vitality-server` command, which loads the settings and inspects the server,
 import asyncio
 import logging
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any
 
 import uvicorn
 
@@ -45,9 +46,10 @@ def serve(config: ServerConfig, *,
 
     Why the watchdog: the host's tailscaled deletes and recreates /run/tailscale whenever it
     restarts, which leaves the container's mount of it pointing at the deleted folder, so no
-    upload can be identified again. Exiting lets Docker (`restart: unless-stopped`) start a
-    new container, whose mount is the fresh folder. The same goes for a changed address,
-    since the server stays bound to the old one. The reason is logged as one warning.
+    upload can be identified again. Exiting lets Docker (`restart: unless-stopped`) restart
+    the container, which sets its mounts up again on the fresh folder. The same goes for a
+    changed address, since the server stays bound to the old one. The reason is logged as
+    one warning.
 
     Exit codes: 0 after serving and being stopped; 1 for an unusable data directory, a failed
     recovery, or no Tailscale address (the reason goes to stderr, nothing is served), and 1
@@ -90,15 +92,15 @@ def serve(config: ServerConfig, *,
         store.close()
 
 
-async def _serve_until_stopped(server: uvicorn.Server, watchdog: Awaitable[str]) -> int:
+async def _serve_until_stopped(server: uvicorn.Server, watchdog: Coroutine[Any, Any, str]) -> int:
     """Run `server` and `watchdog` side by side until one of them ends; return the exit code.
 
     The server ending (it was stopped) gives 0. The watchdog ending gives 1: its result, the
     reason, is logged, and the server is told to stop and awaited (it finishes the requests
     in progress). An exception from the server is raised as before.
     """
-    serving = asyncio.ensure_future(server.serve())
-    watching = asyncio.ensure_future(watchdog)
+    serving = asyncio.create_task(server.serve())
+    watching = asyncio.create_task(watchdog)
     await asyncio.wait({serving, watching}, return_when=asyncio.FIRST_COMPLETED)
     if not serving.done():
         log.warning("%s", watching.result())
