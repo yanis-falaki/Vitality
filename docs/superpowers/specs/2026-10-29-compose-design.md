@@ -207,33 +207,73 @@ docker compose up -d
 
 1. Stop and disable `vitality-serverd` and `vitality-observerd`. The laptop client keeps its
    interactions and retries.
-2. Copy the data into `~/vitality-data` (`server/`, `model/`, `observer/`) and make the owner
-   own it. Copy, not move: the old setup stays intact until the new one is proven.
+2. Copy the data into `~/vitality-data` and make the owner own it. Copy, not move: the old setup
+   stays intact until the new one is proven.
+   ```
+   mkdir -p ~/vitality-data/server ~/vitality-data/model ~/vitality-data/observer
+   sudo cp -a /srv/vitality/. ~/vitality-data/server/
+   sudo cp -a /var/lib/vitality-librarian/calls.jsonl /var/lib/vitality-librarian/skipped.txt \
+       ~/vitality-data/observer/
+   sudo cp -a /srv/vitality-model/. ~/vitality-data/model/
+   sudo chown -R "$USER:" ~/vitality-data && chmod 700 ~/vitality-data
+   ```
+   The whole server folder, so `index.sqlite-wal` and `index.sqlite-shm` come along if present.
+   From `/var/lib/vitality-librarian` only those two files: it is the old observer account's
+   home, with its own Claude login and transcripts, none of which belongs in the new setup.
+   (Either file may be missing if the old observer never wrote it.)
 3. `git pull`; `./vitality setup`; set `SERVER_ALLOWED_CLIENTS=laptop` in `.env`;
    `docker compose build`.
-4. Log the owner's own `claude` on the VM into the account the observer should use (`claude`, `/login`).
+4. Log the owner's own `claude` on the VM into the account the observer should use (`claude`,
+   `/login`), then run the login check of §10 (before `up -d`).
 5. `docker compose up -d`; `./vitality status`: server healthy, a laptop upload arrives, the
    observer writes a batch.
 6. When the owner is satisfied: remove the old units, `/opt/vitality-{server,observer,python}`,
    the `/usr/local/bin` links, `/etc/vitality`, the `vitality` and `vitality-librarian` accounts
    and their home, and the old `/srv` copies.
 
-Until step 6, going back is `docker compose down` and re-enabling the two old units.
+Until step 6, going back is: `docker compose down`; then, if step 5 ran, copy what arrived
+since the switch back into the old folders, without overwriting anything there, and give it
+back to the old accounts:
+```
+sudo cp -an ~/vitality-data/server/captures/. /srv/vitality/captures/
+sudo chown -R vitality: /srv/vitality/captures
+sudo cp -an ~/vitality-data/model/observations/. /srv/vitality-model/observations/
+sudo chown -R vitality-librarian: /srv/vitality-model/observations
+```
+then re-enable the two old units. The old server's `recover()` indexes the copied captures when
+it starts. Without the copy, uploads received by the new server would be missing from the old one,
+and the laptop would not send them again.
 
 ## 10. Testing
 
 - Unit tests: settings from environment (defaults, overrides, invalid values) for both
-  packages; the subcommands; the observer status line; the server status without paths.
-- `docker compose config` with `.env.example` resolves cleanly.
+  packages; the subcommands; the observer status line; the server status without paths; the
+  server's Tailscale watchdog (gives up after 3 failures in a row, not 2; a success resets the
+  count; a changed address ends it), with a fake address lookup.
+- `docker compose config` with `.env.example` resolves cleanly; a missing data folder makes
+  `docker compose up --no-start` fail and creates nothing.
 - Build both images locally; inside them, `claude --version`, `tailscale version`, and
   `vitality-observer status` against a sample data folder; start the server image against the
   laptop's own Tailscale (socket mount, healthcheck turning healthy).
-- The shared login, on the VM before `docker compose up -d`: in the observer image, with the
-  owner's `~/.claude/` mounted, `claude -p "say ok" --output-format json` works without the
-  owner's `~/.claude.json`, and a token refresh is written back to `~/.claude/.credentials.json`.
-  If it does not work, the fallback is a long-lived token: `claude setup-token`, then
-  `CLAUDE_CODE_OAUTH_TOKEN` in `.env`. On a desktop with a keyring the login is in the keyring,
-  not in that file, so this setup needs a machine where `claude` writes `.credentials.json`.
+- The shared login, on the VM before `docker compose up -d` (after `./vitality setup`, with
+  captures already copied). In the observer's own container settings (read-only root, no passwd
+  entry for the owner's uid, `noexec` tmpfs `/tmp` and home), with the owner's `~/.claude/`
+  mounted and no `~/.claude.json`:
+  ```
+  docker compose run --rm --no-deps observer claude -p "Run date -u. Then, with magick, crop \
+  the top-left 300x300 pixels of /captures/laptop/<day>/<time>/0000.webp into /tmp/crop.png, \
+  read /tmp/crop.png, and describe it in one line. Then say ok." \
+      --permission-mode bypassPermissions --output-format json
+  ```
+  (with a real capture's path). It passes when the JSON has `"is_error": false`, tools were
+  used (`num_turns` above 1, and the answer has the date and describes the crop), and nothing
+  mentions a missing passwd entry (`no user`, `getpwuid`, `I have no name`) or `noexec` /
+  `Permission denied` on `/tmp` or the home. A token refresh is written back to
+  `~/.claude/.credentials.json`. If it fails because of the shared login, the fallback is a
+  long-lived token: `claude setup-token`, then `CLAUDE_CODE_OAUTH_TOKEN` in `.env`, passed to
+  the observer in place of the `~/.claude` mount (README, "The shared `~/.claude`"). On a
+  desktop with a keyring the login is in the keyring, not in that file, so this setup needs a
+  machine where `claude` writes `.credentials.json`.
 - `bash -n vitality` (and shellcheck if available).
 - End to end: migration step 5, on the VM.
 
