@@ -29,8 +29,10 @@ git clone https://github.com/yanis-falaki/Vitality.git ~/Vitality && cd ~/Vitali
 docker compose up -d
 ```
 
-`./vitality setup` creates `.env` from `.env.example` and the data folders (so Docker does not
-create them owned by root), and stops if the Claude login file is missing. In `.env`, put the
+`./vitality setup` creates `.env` from `.env.example` and the data folders (readable only by
+you: they hold screenshots), and stops if the Claude login file is missing. `docker compose up`
+refuses to start a service whose data folder or `~/.claude` is missing, rather than letting
+Docker create it owned by root. In `.env`, put the
 Tailscale device names that may upload, for example `SERVER_ALLOWED_CLIENTS=laptop`. An empty
 list refuses every upload. The first `docker compose up -d` builds both images, which takes a
 few minutes. Then check:

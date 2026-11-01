@@ -66,10 +66,12 @@ cmd_setup() {
     local data
     data="$(data_dir)"
     mkdir -p "$data/server/captures" "$data/model" "$data/observer"
-    echo "Data folders are in place under $data"
+    chmod 700 "$data"   # it holds screenshots: only the owner may look inside
+    echo "Data folders are in place under $data (only you can read them)"
 
     # The login is the file ~/.claude/.credentials.json, which the observer reads through the
-    # ~/.claude mount. (Docker would create a missing ~/.claude owned by root, unusable to the observer.)
+    # ~/.claude mount. (compose.yaml makes a missing ~/.claude an error, so Docker cannot create it
+    # owned by root.)
     # On a desktop with a keyring (gnome-keyring, KWallet) Claude Code keeps the login there instead,
     # and the container cannot use it: run the VM side on a server.
     if [[ ! -f $HOME/.claude/.credentials.json ]]; then

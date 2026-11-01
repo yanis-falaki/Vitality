@@ -42,10 +42,17 @@ services:
     environment:
       SERVER_PORT: ${SERVER_PORT:-8100}
       SERVER_ALLOWED_CLIENTS: ${SERVER_ALLOWED_CLIENTS:-}
+    # The data mounts are in the long form with create_host_path: false, so a missing folder stops
+    # `docker compose up` with an error instead of Docker creating it owned by root
+    # (`./vitality setup` creates them). The short-form mounts below may be created.
     volumes:
       # Captures, upload staging and the index: the server's data.
-      - ${VITALITY_DATA:-${HOME}/vitality-data}/server:/data
-      # How the server asks Tailscale who is calling: the directory holding the socket. A restarted
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/server
+        target: /data
+        bind: {create_host_path: false}
+      # How the server asks Tailscale who is calling: the directory holding the socket (short form:
+      # /run is emptied at boot, so it may not exist yet when Docker starts). A restarted
       # tailscaled replaces the directory itself, which this mount cannot follow; the server then
       # finds Tailscale unreachable, exits after about 90 s, and Docker restarts it with a
       # fresh mount (see `serve` in server/vitality_server/daemon/main.py).
@@ -68,6 +75,8 @@ services:
       context: .
       dockerfile: observer/Dockerfile
     command: ["vitality-observer", "run"]
+    # A small init as process 1, which reaps processes that `claude` runs leave orphaned.
+    init: true
     environment:
       OBSERVER_BATCH_SIZE: ${OBSERVER_BATCH_SIZE:-10}
       OBSERVER_CONTEXT_SIZE: ${OBSERVER_CONTEXT_SIZE:-15}
@@ -78,16 +87,31 @@ services:
     tmpfs:
       - /tmp
       - /home/observer:mode=0700,uid=${VITALITY_UID:-1000},gid=${VITALITY_GID:-1000}
+    # As for the server: a missing source folder is an error, never created by Docker.
     volumes:
       # What the server captured: read-only, the observer never changes it.
-      - ${VITALITY_DATA:-${HOME}/vitality-data}/server/captures:/captures:ro
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/server/captures
+        target: /captures
+        read_only: true
+        bind: {create_host_path: false}
       # The observations Claude writes (and the folder it works in).
-      - ${VITALITY_DATA:-${HOME}/vitality-data}/model:/model
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/model
+        target: /model
+        bind: {create_host_path: false}
       # The observer's own record: calls.jsonl and skipped.txt.
-      - ${VITALITY_DATA:-${HOME}/vitality-data}/observer:/state
-      # The owner's Claude Code login (.credentials.json) and settings, shared with the observer.
-      # Only the folder: Claude Code saves ~/.claude.json by renaming a new file over it, which a
-      # single-file mount breaks. The observer keeps its own .claude.json in its tmpfs home.
-      - ${HOME}/.claude:/home/observer/.claude
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/observer
+        target: /state
+        bind: {create_host_path: false}
+      # The owner's Claude Code login (.credentials.json) and settings, shared with the observer,
+      # read-write (see "The shared ~/.claude" in README.md). Only the folder: Claude Code saves
+      # ~/.claude.json by renaming a new file over it, which a single-file mount breaks. The
+      # observer keeps its own .claude.json in its tmpfs home.
+      - type: bind
+        source: ${HOME}/.claude
+        target: /home/observer/.claude
+        bind: {create_host_path: false}
       # Timestamps in the host's time zone.
       - /etc/localtime:/etc/localtime:ro

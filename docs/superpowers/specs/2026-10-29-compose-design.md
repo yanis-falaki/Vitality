@@ -147,6 +147,7 @@ its own in the tmpfs home. Runs `vitality-observer run`.
 - `read_only: true` with a private `/tmp` (tmpfs), `security_opt: no-new-privileges`,
   `cap_drop: ALL`: the systemd sandbox, as container settings.
 - Log rotation: the json-file driver with a size cap (10 MB × 3 files per service).
+- The observer has `init: true`: a small init as process 1 reaps what `claude` runs leave orphaned.
 - The server's healthcheck: `vitality-server healthcheck` (GET `/health` on its Tailscale
   address and port; exit 0 when it answers) every 30 s.
 
@@ -181,8 +182,10 @@ its own in the tmpfs home. Runs `vitality-observer run`.
 ```
 
 Docker creates a missing bind-mount source owned by root, which the containers, running as the
-owner, could not use; `setup` creates the data folders first and refuses to go on until the owner's
-Claude login file exists. On a desktop with a keyring the login is not in that file, so the VM side
+owner, could not use. So the data mounts and `~/.claude` use the long bind form with
+`create_host_path: false` (a missing source stops `docker compose up` with an error), and `setup`
+creates the data folders first (the data folder with mode 700: it holds screenshots) and refuses
+to go on until the owner's Claude login file exists. On a desktop with a keyring the login is not in that file, so the VM side
 runs on a server. A fresh install, with Claude Code installed and logged in as the owner (`claude`, then
 `/login`), is:
 ```
