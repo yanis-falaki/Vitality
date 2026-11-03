@@ -23,8 +23,8 @@ the VM.
 
 **In:**
 - The model folder: its layout, the file format of every level, IDs, links and locks, tracked in git.
-- `model/`: a new shared package `vitality_model` (file formats, loading, ID allocation, the check)
-  with a `vitality-model` command.
+- `usermodel/`: a new shared package `vitality_usermodel` (file formats, loading, ID allocation, the check)
+  with a `vitality-usermodel` command.
 - The observer, rewritten: one direct Claude API call per interaction that returns a transcript and
   operations as JSON; code writes the files.
 - The modeler, new: a scheduled, ephemeral Claude Code run that maintains actions, activities and
@@ -36,7 +36,7 @@ the VM.
 **Out (for now):**
 - Evaluation: rating sheets, competency questions, experiment runs. Every call and run records its
   model and prompt/playbook version, so evaluation can be added later.
-- A UI, an HTTP API and an MCP server over the model. `vitality_model` is the library they would be
+- A UI (planned as phase 3, §13), an HTTP API and an MCP server over the model. `vitality_usermodel` is the library they would be
   built on.
 - Preferences, interests and dated obligations as their own kinds. Strivings cover duty-driven
   goals through `aspiration_vs_obligation`; the rest waits until the hierarchy has run on real data.
@@ -63,8 +63,9 @@ the VM.
 | IDs | By rule: actions by start time; activities and strivings by a running number; never reused |
 | Merges | Real merges: the absorbed file is deleted and links are rewritten; git keeps its history |
 | Owner edits | `locked: true` makes a file off-limits to the modeler; the owner's edits are their own commits |
-| Safety | Evidence mounted read-only for the modeler; `vitality-model check` run by the agent and again as the gate before committing |
-| Triggers | A run when 20 new operations are waiting, or after 5 idle minutes with at least 5; at most 50 per run |
+| Safety | Evidence mounted read-only for the modeler; `vitality-usermodel check` run by the agent and again as the gate before committing |
+| Triggers | Tempo's rule: a run when 20 new operations are waiting, or when anything is waiting and no new operation has arrived for 5 minutes; at most 50 per run |
+| Times | Names and paths stay UTC identifiers; every time inside a file is local with its offset; people and agents read only those, and status (later the UI) shows local 12-hour times |
 | v1 observations | Moved out of the data folder to `~/vitality-archive/observations-v1` |
 
 ## 4. Levels
@@ -122,6 +123,7 @@ end: 2026-11-03T09:22:31-05:00
 ```markdown
 ---
 interaction: laptop/2026-11-03/14-22-05
+device: laptop
 start: 2026-11-03T09:22:05-05:00
 end: 2026-11-03T09:22:31-05:00
 operations:
@@ -215,9 +217,13 @@ locked: false
   covering all operations). A trivial operation forms a small action of its own.
 - **IDs never change and are never reused.** Actions take the start time of their first operation,
   with `-2`, `-3`… on a clash. Activities and strivings take the next number from `.next-ids`
-  (`vitality-model next-id activity|striving`). Renaming changes `title`, not the ID.
+  (`vitality-usermodel next-id activity|striving`). Renaming changes `title`, not the ID.
 - **Merging** rewrites the surviving file, replaces the absorbed ID in every link, and deletes the
   absorbed file. Its number stays retired.
+- **Times.** Interaction names, paths and action IDs are UTC identifiers, not times to read. Every
+  timestamp inside a file is local time with its offset, taken from the interaction's own time zone in
+  `interaction.json`, so it stays right when the owner travels. Which day something belongs to is
+  decided when reading, from these local times, not from folder names.
 - **Locked files** (`locked: true`) are not changed by the modeler: not edited, merged, deleted or
   relinked. Files that link to them may change. Only the owner sets or clears `locked`.
 
@@ -233,7 +239,8 @@ and are non-empty.
 One request per interaction to the Claude Messages API:
 
 - **In:** every screenshot in the interaction, in order, each labelled with its offset (`0000`,
-  `0007`…); the start and end times from `interaction.json`; the observation prompt.
+  `0007`…); the start and end times from `interaction.json`, in local time with offset; the
+  observation prompt.
 - **Not in:** `user-context.md` or earlier observations. Evidence stays independent of beliefs, and
   editing the user context never makes past observations stale.
 - **Out:** JSON constrained to a schema: `{transcript: string, operations: [{text, confidence}]}`.
@@ -278,7 +285,7 @@ The model provider sits behind the existing `Observer` interface, so an OpenAI-c
 3. It runs Claude Code once: `claude -p <run message> --append-system-prompt <playbook.md>
    --permission-mode bypassPermissions --output-format stream-json [--model …]`, working directory
    the model folder, with a timeout.
-4. It runs `vitality-model check`. On failure it resumes the same session once with the errors to
+4. It runs `vitality-usermodel check`. On failure it resumes the same session once with the errors to
    fix, then checks again.
 5. **Pass:** stage the run's changes alongside the staged evidence, commit as
    `modeler run <run-id>: <counts>`, append to `runs.jsonl`. **Fail:** reset tracked files to the
@@ -289,13 +296,13 @@ The model provider sits behind the existing `Observer` interface, so an OpenAI-c
 ### When it runs
 
 - 20 or more operations not yet in any action, or
-- at least 5 waiting and no new interaction for 5 minutes;
+- any waiting and no new operation for 5 minutes (each new operation restarts the 5 minutes);
 - each run is offered at most the 50 oldest waiting operations, so a backlog is worked through in
   successive runs.
 
 ### What the run message gives
 
-- the waiting operations (paths, up to 50);
+- the waiting operations (paths with their local start times, up to 50);
 - every activity and striving as one line each (id, title, status, `part_of`);
 - when strivings were last revised (from `runs.jsonl`);
 - pointers to `user-context.md` and `modeler-notes.md`.
@@ -303,11 +310,13 @@ The model provider sits behind the existing `Observer` interface, so an OpenAI-c
 The agent reads further on its own: older actions, observations, screenshots under the captures
 folder (read-only), anything in the model. It may delegate heavy evidence reading to sub-agents.
 
-### The playbook (`modeler/vitality_modeler/playbook.md`)
+### The playbook (`modeler/vitality_usermodeler/playbook.md`)
 
 Tempo's method written as ordered steps:
 
 1. Read `modeler-notes.md` and `user-context.md`. User context is background, not evidence.
+   Reason about time of day only from timestamps inside files (local time); file and folder names
+   are UTC identifiers.
 2. Segment the waiting operations into actions at shifts of intent (covering every operation).
 3. File each new action under existing activities, or propose new ones (`status: tentative`);
    then reconcile the affected activities: match, revise, merge or create. Promote an activity to
@@ -317,7 +326,7 @@ Tempo's method written as ordered steps:
    or drop accordingly; keep conflicting strivings both, linked by `conflicts_with`.
 5. Change only with evidence; give reasons in the file body; never touch locked files or evidence.
 6. Update `modeler-notes.md`: open questions, hunches, things to watch.
-7. Run `vitality-model check` and fix what it reports.
+7. Run `vitality-usermodel check` and fix what it reports.
 
 ### Continuity
 
@@ -325,7 +334,7 @@ Each run is a fresh session. What carries over is in files: the model and `model
 
 ## 9. The check
 
-`vitality-model check [--since <commit>]`, used by the agent and by the harness. It fails, listing
+`vitality-usermodel check [--since <commit>]`, used by the agent and by the harness. It fails, listing
 every problem, when:
 
 1. A file's frontmatter does not parse, misses a required field, or has a value outside its type or
@@ -359,8 +368,7 @@ every problem, when:
 | `OBSERVER_PARALLEL` | `4` | direct mode only |
 | `MODELER_MODEL` | (empty: Claude Code's default) | |
 | `MODELER_BATCH_OPERATIONS` | `20` | waiting operations that start a run |
-| `MODELER_IDLE_MINUTES` | `5` | quiet time that starts a smaller run |
-| `MODELER_IDLE_MIN_OPERATIONS` | `5` | minimum for an idle run |
+| `MODELER_IDLE_MINUTES` | `5` | quiet time after which anything waiting starts a run |
 | `MODELER_MAX_OPERATIONS` | `50` | most operations offered to one run |
 | `MODELER_RUN_TIMEOUT_SECONDS` | `1800` | |
 
@@ -376,7 +384,7 @@ every problem, when:
   modeler:  run 2026-11-03T14-30-00Z committed (6 actions, 1 activity revised) · 12 operations waiting
   ```
 - `./vitality logs modeler`.
-- `vitality-model check | next-id <kind>` inside the modeler container (`docker compose exec`).
+- `vitality-usermodel check | next-id <kind>` inside the modeler container (`docker compose exec`).
 
 ### `user-context.md`
 
@@ -422,20 +430,20 @@ Contract first, as the rest of Vitality: components have a Protocol (`interface.
 `# == Contract ==` section); plain-function modules list public functions first.
 
 ```
-model/vitality_model/          shared library and the vitality-model command
+usermodel/vitality_usermodel/  shared library and the vitality-usermodel command
   formats.py                   the frontmatter of each kind as Pydantic models; read/write a file
   ids.py                       ID formats, next-id from .next-ids
   check.py                     the rules of §9
-  cli.py                       vitality-model check | next-id
+  cli.py                       vitality-usermodel check | next-id
 observer/vitality_observer/
   loop.py, status.py, work.py  kept, adjusted to interactions-per-call and the new "observed" test
   provider/                    interface.py (Observer), anthropic_api.py (direct and batch)
   prompt.md, writer.py         the prompt; turning a reply into the two files
-modeler/vitality_modeler/
+modeler/vitality_usermodeler/
   scheduler.py                 when a run is due; the lock
   run.py                       one Claude Code session; resume once with check errors
   repo.py                      clean-tree test, commit, revert, change counts
-  status.py, main.py           vitality-modeler run | status
+  status.py, main.py           vitality-usermodeler run | status
   playbook.md
 ```
 
@@ -443,11 +451,16 @@ modeler/vitality_modeler/
 
 Each phase gets its own implementation plan.
 
-1. **Store and observer:** `vitality_model` (formats, IDs, check), the rewritten observer, the
+1. **Store and observer:** `vitality_usermodel` (formats, IDs, check), the rewritten observer, the
    migration, and re-observing the backlog. Done when every interaction has an observation and
    operations file in the new format and the owner has read a day of them.
 2. **Modeler:** the scheduler, the run harness, the playbook, status and logs. Done when the backlog
    has been worked into actions, activities and strivings, and runs keep up with new evidence.
+
+Later, in its own spec: **phase 3, a web UI** for browsing and editing the hierarchy (trace a
+striving down to operations, transcripts and screenshots; rename, lock, reassign, merge, committed as
+the owner), served on the VM through exe.dev's proxy, which is private to people with access to the
+VM. It must never be made public.
 
 ## 14. Migration (with the owner, one step at a time)
 
@@ -461,7 +474,7 @@ Each phase gets its own implementation plan.
 
 ## 15. Testing
 
-- **`vitality_model`:** fixture model folders, valid and broken, one per check rule; format round
+- **`vitality_usermodel`:** fixture model folders, valid and broken, one per check rule; format round
   trips; next-id.
 - **Observer:** a fake provider for the loop; reply parsing and file writing (including bad JSON and
   schema violations); batch submit and poll against a fake batch API; the credit-exhausted pause.
@@ -478,6 +491,6 @@ Each phase gets its own implementation plan.
   using the API key, in batch mode, and logs each call.
 - The modeler maintains actions, activities and strivings in the model repo through scheduled runs,
   each checked and committed or reverted, with `runs.jsonl` and transcripts kept.
-- `vitality-model check` passes on the model after every committed run.
+- `vitality-usermodel check` passes on the model after every committed run.
 - `./vitality status` shows both, and the owner has read a day of observations and the first
   strivings.
