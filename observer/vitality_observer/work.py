@@ -1,8 +1,9 @@
-"""Finding the interactions that still need an observation, and the context to give with them.
+"""Finding the interactions that still need observing.
 
 An interaction is a folder `<captures_dir>/<device>/<YYYY-MM-DD>/<HH-MM-SS>[-n]` holding an
-`interaction.json`; its name is that path relative to `captures_dir`. Its observation is
-`<model_dir>/observations/<name>.md`, and counts as existing only if the file is non-empty.
+`interaction.json`; its name is that path relative to `captures_dir`. Observing it writes two
+files, `<model_dir>/observations/<name>.md` and `<model_dir>/operations/<name>.md`; it counts
+as observed only when both exist and are non-empty.
 Interactions the observer gave up on are listed in `skipped.txt`, one `<name>\\t<reason>` per line.
 """
 
@@ -20,6 +21,7 @@ class Interaction:
     name: str           # `<device>/<YYYY-MM-DD>/<HH-MM-SS>[-n]`, relative to `captures_dir`
     folder: Path        # the captured folder, holding `interaction.json` and the screenshots
     observation: Path   # where its observation is (or will be) written
+    operations: Path    # where its operations are (or will be) written
 
 
 def device_of(name: str) -> str:
@@ -63,46 +65,22 @@ def interactions(config: ObserverConfig) -> list[Interaction]:
         if not folder.is_dir() or not (folder / "interaction.json").is_file():
             continue
         name = folder.relative_to(config.captures_dir).as_posix()
-        found.append(Interaction(name, folder, _observation_path(config, name)))
+        found.append(Interaction(
+            name,
+            folder,
+            config.model_dir / "observations" / f"{name}.md",
+            config.model_dir / "operations" / f"{name}.md",
+        ))
     found.sort(key=lambda interaction: chronological_key(interaction.name))
     return found
 
 
 def unobserved(config: ObserverConfig, skipped: Container[str]) -> list[Interaction]:
-    """The `interactions` with no non-empty observation and not in `skipped`, oldest first."""
-    return [i for i in interactions(config) if i.name not in skipped and not _is_observed(i.observation)]
-
-
-def context(config: ObserverConfig, before: Interaction) -> list[tuple[str, str]]:
-    """The last `context_size` existing observations of `before`'s device that sort before it.
-
-    Returns `(name, observation text)` pairs, oldest first; observations of earlier days
-    count. Only files of the same device are read; one that vanishes or cannot be decoded is
-    skipped. Returns an empty list when `context_size` is not positive.
-    """
-    if config.context_size <= 0:
-        return []
-    device = device_of(before.name)
-    limit = sort_key(before.name)
-    observations = config.model_dir / "observations"
-    earlier: list[str] = []
-    for path in (observations / device).glob("*/*.md"):
-        name = path.relative_to(observations).with_suffix("").as_posix()
-        if sort_key(name) < limit and _is_observed(path):
-            earlier.append(name)
-    earlier.sort(key=sort_key)
-
-    found: list[tuple[str, str]] = []
-    for name in reversed(earlier):      # newest first, so a file we cannot read is replaced by an older one
-        try:
-            text = _observation_path(config, name).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        found.append((name, text))
-        if len(found) == config.context_size:
-            break
-    found.reverse()
-    return found
+    """The `interactions` not in `skipped` whose observation or operations file is missing or empty, oldest first."""
+    return [
+        i for i in interactions(config)
+        if i.name not in skipped and not (_is_written(i.observation) and _is_written(i.operations))
+    ]
 
 
 def read_skipped(path: Path) -> dict[str, str]:
@@ -130,11 +108,7 @@ def add_skipped(path: Path, name: str, reason: str) -> None:
         f.write(f"{name}\t{reason}\n")
 
 
-def _observation_path(config: ObserverConfig, name: str) -> Path:
-    return config.model_dir / "observations" / f"{name}.md"
-
-
-def _is_observed(path: Path) -> bool:
+def _is_written(path: Path) -> bool:
     try:
         return path.is_file() and path.stat().st_size > 0
     except OSError:

@@ -1,11 +1,18 @@
 [project]
 name = "vitality-observer"
 version = "0.1.0"
-description = "Turns each captured Vitality interaction into a Markdown observation via Claude Code"
+description = "Turns each captured Vitality interaction into a Markdown observation via the Anthropic API"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic",
+    "vitality-protocol",
+    "vitality-usermodel",
     "watchfiles",
 ]
+
+[tool.uv.sources]
+vitality-protocol = { path = "../protocol", editable = true }
+vitality-usermodel = { path = "../usermodel", editable = true }
 
 [dependency-groups]
 dev = [
