@@ -4,14 +4,14 @@
 reported; both carry the interaction's local start and end.
 """
 
-from vitality_protocol.messages import Interaction as Captured
+from vitality_protocol.messages import Interaction
 from vitality_usermodel.formats import ObservationMeta, Operation, OperationsMeta, write_file
 
 from vitality_observer.request import Reply, local_span
-from vitality_observer.work import Interaction, device_of
+from vitality_observer.work import WorkItem, device_of
 
 
-def write_evidence(interaction: Interaction, captured: Captured, reply: Reply) -> int:
+def write_evidence(interaction: WorkItem, captured: Interaction, reply: Reply) -> int:
     """Write the observation, then the operations file, replacing any earlier ones; return the number of operations.
 
     The operations come last, so an interaction counts as observed only once both are in place.

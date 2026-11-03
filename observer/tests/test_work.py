@@ -4,7 +4,7 @@ import pytest
 
 from vitality_observer.config import ObserverConfig
 from vitality_observer.work import (
-    Interaction,
+    WorkItem,
     add_skipped,
     chronological_key,
     device_of,
@@ -40,7 +40,7 @@ def observe(cfg: ObserverConfig, name: str, text: str = "seen", operations: str 
         path.write_text(content, encoding="utf-8")
 
 
-def names(found: list[Interaction]) -> list[str]:
+def names(found: list[WorkItem]) -> list[str]:
     return [i.name for i in found]
 
 
@@ -63,7 +63,7 @@ def test_chronological_key_puts_day_and_time_before_device():
 def test_unobserved_returns_interactions_with_paths(cfg):
     capture(cfg, "laptop/2026-10-25/17-00-00")
     [found] = unobserved(cfg, set())
-    assert found == Interaction(
+    assert found == WorkItem(
         name="laptop/2026-10-25/17-00-00",
         folder=cfg.captures_dir / "laptop/2026-10-25/17-00-00",
         observation=cfg.model_dir / "observations/laptop/2026-10-25/17-00-00.md",

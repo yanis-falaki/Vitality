@@ -13,10 +13,10 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from vitality_protocol.layout import INTERACTION_FILE
-from vitality_protocol.messages import Interaction as Captured
+from vitality_protocol.messages import Interaction
 
 from vitality_observer.config import ObserverConfig
-from vitality_observer.work import Interaction, device_of
+from vitality_observer.work import WorkItem, device_of
 
 PROMPT: str = (resources.files("vitality_observer") / "prompt.md").read_text(encoding="utf-8")
 """The instructions given to Claude with every call."""
@@ -74,24 +74,24 @@ class Reply(BaseModel):
         return _not_blank(value)
 
 
-def read_captured(interaction: Interaction) -> Captured:
+def read_captured(interaction: WorkItem) -> Interaction:
     """The interaction's `interaction.json`. Raises ValueError if it is missing, unreadable or invalid."""
     path = interaction.folder / INTERACTION_FILE
     try:
-        return Captured.model_validate_json(path.read_bytes())
+        return Interaction.model_validate_json(path.read_bytes())
     except OSError as e:
         raise ValueError(f"cannot read {path}: {e.strerror or e}") from e
     except ValidationError as e:
         raise ValueError(f"invalid {path}: {_first_problem(e)}") from e
 
 
-def local_span(captured: Captured) -> tuple[datetime, datetime]:
+def local_span(captured: Interaction) -> tuple[datetime, datetime]:
     """When the interaction started and ended, in the device's own time zone (`captured.tz`)."""
     zone = ZoneInfo(captured.tz)
     return captured.start.astimezone(zone), captured.end.astimezone(zone)
 
 
-def build_params(interaction: Interaction, config: ObserverConfig, captured: Captured | None = None) -> dict:
+def build_params(interaction: WorkItem, config: ObserverConfig, captured: Interaction | None = None) -> dict:
     """The keyword arguments of `messages.create` (and the `params` of a batch request) for `interaction`.
 
     The user message is a text header with the local times, then for each screenshot, in order,

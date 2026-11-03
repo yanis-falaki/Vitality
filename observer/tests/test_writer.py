@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from captured import make_captured, make_interaction
-from vitality_protocol.messages import Interaction as Captured
+from vitality_protocol.messages import Interaction
 from vitality_usermodel.formats import ObservationMeta, OperationsMeta, read_file
 
 from vitality_observer.request import Reply, ReplyOperation
@@ -14,7 +14,7 @@ def reply(transcript: str = "Terminal open.", *texts: str) -> Reply:
 
 
 def test_write_evidence(tmp_path: Path):
-    captured: Captured = make_captured("2026-11-03T14:22:05Z")
+    captured: Interaction = make_captured("2026-11-03T14:22:05Z")
     interaction = make_interaction(tmp_path, captured)
 
     count = write_evidence(interaction, captured, reply())

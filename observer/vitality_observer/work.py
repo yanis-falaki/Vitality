@@ -15,8 +15,11 @@ from vitality_observer.config import ObserverConfig
 
 
 @dataclass(frozen=True)
-class Interaction:
-    """One captured interaction. Sort lists of them with `chronological_key(i.name)`, or `sort_key(i.name)` within a device."""
+class WorkItem:
+    """Where one interaction's files are: what it captured and what observing it writes.
+
+    Nothing is read here; the content of its `interaction.json` is `vitality_protocol.messages.Interaction`.
+    Sort lists of them with `chronological_key(i.name)`, or `sort_key(i.name)` within a device."""
 
     name: str           # `<device>/<YYYY-MM-DD>/<HH-MM-SS>[-n]`, relative to `captures_dir`
     folder: Path        # the captured folder, holding `interaction.json` and the screenshots
@@ -53,19 +56,19 @@ def chronological_key(name: str) -> tuple[str, str, int, str]:
     return day, time, number, device
 
 
-def interactions(config: ObserverConfig) -> list[Interaction]:
+def interactions(config: ObserverConfig) -> list[WorkItem]:
     """Every interaction under `captures_dir`, oldest first across devices, by `chronological_key`.
 
     Only folders exactly three levels under `captures_dir`, holding an `interaction.json`,
     count; a missing `captures_dir` yields an empty list. Whether they are observed is not
     looked at.
     """
-    found: list[Interaction] = []
+    found: list[WorkItem] = []
     for folder in config.captures_dir.glob("*/*/*"):
         if not folder.is_dir() or not (folder / "interaction.json").is_file():
             continue
         name = folder.relative_to(config.captures_dir).as_posix()
-        found.append(Interaction(
+        found.append(WorkItem(
             name,
             folder,
             config.model_dir / "observations" / f"{name}.md",
@@ -75,7 +78,7 @@ def interactions(config: ObserverConfig) -> list[Interaction]:
     return found
 
 
-def unobserved(config: ObserverConfig, skipped: Container[str]) -> list[Interaction]:
+def unobserved(config: ObserverConfig, skipped: Container[str]) -> list[WorkItem]:
     """The `interactions` not in `skipped` whose observation or operations file is missing or empty, oldest first."""
     return [
         i for i in interactions(config)

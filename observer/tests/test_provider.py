@@ -17,7 +17,7 @@ from vitality_observer.config import Mode, ObserverConfig
 from vitality_observer.provider.anthropic_api import BATCH_DEADLINE, CREDIT_WAIT, PRICES, AnthropicObserver
 from vitality_observer.provider.interface import Outcome
 from vitality_observer.request import PROMPT_VERSION
-from vitality_observer.work import Interaction
+from vitality_observer.work import WorkItem
 
 GOOD = json.dumps({
     "transcript": "A terminal is open.",
@@ -151,17 +151,17 @@ def records(cfg: ObserverConfig) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
-def interaction_at(tmp_path: Path, start: str = "2026-11-03T14:22:05Z", **kwargs: Any) -> Interaction:
+def interaction_at(tmp_path: Path, start: str = "2026-11-03T14:22:05Z", **kwargs: Any) -> WorkItem:
     captured = make_captured(start)
     name = captured.start.strftime("%Y-%m-%d/%H-%M-%S")
     return make_interaction(tmp_path, captured.model_copy(update={"name": name}), **kwargs)
 
 
-def three(tmp_path: Path) -> list[Interaction]:
+def three(tmp_path: Path) -> list[WorkItem]:
     return [interaction_at(tmp_path, f"2026-11-03T14:2{n}:05Z") for n in range(3)]
 
 
-async def observe_one(cfg: ObserverConfig, interaction: Interaction, client: FakeClient) -> Outcome:
+async def observe_one(cfg: ObserverConfig, interaction: WorkItem, client: FakeClient) -> Outcome:
     [outcome] = await make_observer(cfg, client).observe([interaction])
     return outcome
 

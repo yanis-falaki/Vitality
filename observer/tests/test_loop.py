@@ -11,7 +11,7 @@ from vitality_observer import loop as loop_module
 from vitality_observer.config import ObserverConfig
 from vitality_observer.loop import BATCH_LIMIT, ObserveLoop
 from vitality_observer.provider.interface import Outcome
-from vitality_observer.work import Interaction, add_skipped, read_skipped, unobserved
+from vitality_observer.work import WorkItem, add_skipped, read_skipped, unobserved
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ class FakeObserver:
         self.batches: list[list[str]] = []
         self.called = asyncio.Event()
 
-    async def observe(self, batch: Sequence[Interaction]) -> list[Outcome]:
+    async def observe(self, batch: Sequence[WorkItem]) -> list[Outcome]:
         self.batches.append([i.name for i in batch])
         self.called.set()
         if self.on_call:

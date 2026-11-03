@@ -47,12 +47,12 @@ import anthropic
 from anthropic.types import Message
 from anthropic.types.messages import MessageBatchResult
 from anthropic.types.beta import BetaMessage
-from vitality_protocol.messages import Interaction as Captured
+from vitality_protocol.messages import Interaction
 
 from vitality_observer.config import ObserverConfig
 from vitality_observer.provider.interface import Observer, Outcome
 from vitality_observer.request import PROMPT_VERSION, build_params, parse_reply, read_captured
-from vitality_observer.work import Interaction
+from vitality_observer.work import WorkItem
 from vitality_observer.writer import write_evidence
 
 PRICES: dict[str, tuple[float, float, float]] = {
@@ -103,7 +103,7 @@ class AnthropicObserver(Observer):
         self._sleep = sleep
         self._calls_log_broken = False      # warned that calls.jsonl cannot be written
 
-    async def observe(self, batch: Sequence[Interaction]) -> list[Outcome]:
+    async def observe(self, batch: Sequence[WorkItem]) -> list[Outcome]:
         if self._config.mode == "batch":
             return await self._observe_batch(batch)
         settled = await asyncio.gather(*(self._observe_direct(i) for i in batch), return_exceptions=True)
@@ -118,7 +118,7 @@ class AnthropicObserver(Observer):
                 raise outcome                       # cancelled, or another BaseException
         return outcomes
 
-    async def _observe_direct(self, interaction: Interaction) -> Outcome:
+    async def _observe_direct(self, interaction: WorkItem) -> Outcome:
         config = self._config
         started = self._clock()
         captured, prepared = _prepare(interaction, config)
@@ -137,7 +137,7 @@ class AnthropicObserver(Observer):
         duration_ms = round((self._clock() - started) * 1000)
         return self._finish(interaction, captured, verdict, message, started, duration_ms, None)
 
-    async def _observe_batch(self, batch: Sequence[Interaction]) -> list[Outcome]:
+    async def _observe_batch(self, batch: Sequence[WorkItem]) -> list[Outcome]:
         prepared = [_prepare(interaction, self._config) for interaction in batch]
         requests = [
             {"custom_id": f"i{index}", "params": params}
@@ -196,7 +196,7 @@ class AnthropicObserver(Observer):
                 failing = False
         return True
 
-    def _finish(self, interaction: Interaction, captured: Captured | None, verdict: _Verdict,
+    def _finish(self, interaction: WorkItem, captured: Interaction | None, verdict: _Verdict,
                 message: Message | BetaMessage | None, started: float, duration_ms: int,
                 batch_id: str | None) -> Outcome:
         """The outcome for `interaction`, after appending its line to calls.jsonl."""
@@ -232,9 +232,9 @@ class AnthropicObserver(Observer):
         self._calls_log_broken = error is not None
 
 
-def _prepare(interaction: Interaction, config: ObserverConfig) -> tuple[Captured | None, dict | _Verdict]:
+def _prepare(interaction: WorkItem, config: ObserverConfig) -> tuple[Interaction | None, dict | _Verdict]:
     """The interaction's `interaction.json` (if readable) and its request parameters, or why it is bad."""
-    captured: Captured | None = None
+    captured: Interaction | None = None
     try:
         captured = read_captured(interaction)
         return captured, build_params(interaction, config, captured)
@@ -246,7 +246,7 @@ def _prepare(interaction: Interaction, config: ObserverConfig) -> tuple[Captured
         return captured, _unexpected(e, interaction.name)
 
 
-def _judge_result(interaction: Interaction, captured: Captured, result: MessageBatchResult | None,
+def _judge_result(interaction: WorkItem, captured: Interaction, result: MessageBatchResult | None,
                   failure: _Verdict) -> tuple[_Verdict, Message | None]:
     """The verdict for a submitted interaction from its batch result, and the message if it succeeded.
 
@@ -261,7 +261,7 @@ def _judge_result(interaction: Interaction, captured: Captured, result: MessageB
     return _Verdict(False, False, f"request {result.type}"), None
 
 
-def _settle(interaction: Interaction, captured: Captured, message: Message | BetaMessage) -> _Verdict:
+def _settle(interaction: WorkItem, captured: Interaction, message: Message | BetaMessage) -> _Verdict:
     """Write the evidence files from the model's answer, or say why not."""
     if message.stop_reason == "refusal":
         category = message.stop_details.category if message.stop_details is not None else None

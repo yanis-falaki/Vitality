@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from vitality_observer.work import Interaction
+from vitality_observer.work import WorkItem
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class Outcome:
 
 
 class Observer(Protocol):
-    async def observe(self, batch: Sequence[Interaction]) -> list[Outcome]:
+    async def observe(self, batch: Sequence[WorkItem]) -> list[Outcome]:
         """Observe every interaction in `batch`; never raises.
 
         Returns one outcome per interaction, in the order of `batch`. On success the
