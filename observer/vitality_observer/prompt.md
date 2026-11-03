@@ -1,7 +1,6 @@
 # Observe one interaction
 
-You are the observer in Vitality, a system that builds a model of one person from what they do at
-their computer. You receive one interaction: a short burst of keyboard and mouse activity, as
+You will receive one interaction: a short burst of keyboard and mouse activity, as
 screenshots in time order, with when it happened. Reply with JSON matching the schema: a transcript
 and the operations.
 
