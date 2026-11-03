@@ -18,9 +18,13 @@ How each interaction's outcome is decided, most specific first:
   other API error, connection error, timeout       False  False          None                short reason
   anything else (files not writable, a bug, ...)   False  False          None                <ExceptionType>: <message>, logged
 
-A batch result that errored is `reached_model` only for an `invalid_request_error`; a canceled
-or expired one never is. A batch that cannot be submitted or polled fails each of its
-interactions by the table above (results already read are still used).
+A batch result that errored maps by its error type the same way: `billing_error` (or "credit
+balance is too low") waits CREDIT_WAIT, `rate_limit_error` is "rate limited", and only an
+`invalid_request_error` is `reached_model`; a canceled or expired result never is. A batch that
+cannot be submitted, or whose results cannot be read, fails each of its interactions by the table
+above (results already read are still used). A failing status check while polling is logged once
+per streak and polling goes on; a batch not ended BATCH_DEADLINE after submission fails each
+interaction with "batch did not finish" (not `reached_model`).
 """
 
 # == Contract ==
@@ -49,15 +53,18 @@ from vitality_observer.request import PROMPT_VERSION, build_params, parse_reply,
 from vitality_observer.work import Interaction
 from vitality_observer.writer import write_evidence
 
-PRICES: dict[str, tuple[float, float]] = {
-    "claude-sonnet-5-5": (2.0, 10.0),
-    "claude-opus-5-5": (4.0, 20.0),
-    "claude-haiku-5-5": (0.10, 0.50),
+PRICES: dict[str, tuple[float, float, float]] = {
+    "claude-sonnet-5-5": (2.0, 10.0, 0.10),
+    "claude-opus-5-5": (4.0, 20.0, 0.20),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01),
 }
-"""Dollars per million (input, output) tokens; cache reads count at 5% of the input price, batches at half."""
+"""Dollars per million (input, output, cache read) tokens; batches cost half."""
 
 CREDIT_WAIT = 6 * 3600
 """Seconds to wait when the account is out of credits."""
+
+BATCH_DEADLINE = 25 * 3600
+"""Seconds after submission a batch may take to end before it counts as failed (the API's limit is 24 h)."""
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 """The beta that lets a direct request fall back to another model (`fallbacks="default"`)."""
@@ -133,12 +140,11 @@ class AnthropicObserver(Observer):
             try:
                 created = await batches.create(requests=requests)  # pyright: ignore[reportArgumentType]  # params from build_params
                 batch_id = created.id
-                status = created.processing_status
-                while status != "ended":
-                    await self._sleep(self._poll_seconds)
-                    status = (await batches.retrieve(batch_id)).processing_status
-                async for item in await batches.results(batch_id):
-                    results[item.custom_id] = item.result
+                if await self._wait_for_end(batch_id, created.processing_status, started):
+                    async for item in await batches.results(batch_id):
+                        results[item.custom_id] = item.result
+                else:
+                    failure = _Verdict(False, False, "batch did not finish")
             except Exception as e:
                 failure = _from_error(e, f"batch {batch_id or '(not submitted)'}", None)
         duration_ms = round((self._clock() - started) * 1000)
@@ -156,13 +162,32 @@ class AnthropicObserver(Observer):
                 message = result.message
                 verdict = _settle(interaction, captured, message)
             elif result.type == "errored":
-                error = result.error.error
-                verdict = _Verdict(False, error.type == "invalid_request_error",
-                                   f"{error.type}: {_short(error.message)}")
+                verdict = _from_batch_error(result.error.error.type, result.error.error.message)
             else:
                 verdict = _Verdict(False, False, f"request {result.type}")
             outcomes.append(self._finish(interaction, captured, verdict, message, started, duration_ms, batch_id))
         return outcomes
+
+    async def _wait_for_end(self, batch_id: str, status: str, submitted: float) -> bool:
+        """Poll until the batch has ended (True) or BATCH_DEADLINE has passed since `submitted` (False).
+
+        A failing status check is logged, once until one works again, and polling goes on.
+        """
+        failing = False
+        while status != "ended":
+            if self._clock() - submitted >= BATCH_DEADLINE:
+                log.warning("batch %s has not ended after %d h; giving up on it", batch_id, BATCH_DEADLINE // 3600)
+                return False
+            await self._sleep(self._poll_seconds)
+            try:
+                status = (await self._client.messages.batches.retrieve(batch_id)).processing_status
+            except Exception as e:
+                if not failing:
+                    log.warning("cannot check batch %s (%s); still polling", batch_id, _short(f"{type(e).__name__}: {e}"))
+                failing = True
+            else:
+                failing = False
+        return True
 
     def _finish(self, interaction: Interaction, captured: Captured | None, verdict: _Verdict,
                 message: Message | BetaMessage | None, started: float, duration_ms: int,
@@ -239,7 +264,7 @@ def _from_error(error: Exception, label: str, timeout: float | None) -> _Verdict
     """The verdict for an API call (or batch) for `label` that raised `error`."""
     if isinstance(error, anthropic.APIStatusError):
         text = _api_message(error)
-        if error.type == "billing_error" or "credit balance is too low" in text.lower():
+        if _out_of_credits(error.type, text):
             return _Verdict(False, False, "out of API credits", CREDIT_WAIT)
         if isinstance(error, anthropic.RateLimitError):
             return _Verdict(False, False, "rate limited", _retry_after(error.response.headers.get("retry-after")))
@@ -249,6 +274,19 @@ def _from_error(error: Exception, label: str, timeout: float | None) -> _Verdict
     if isinstance(error, anthropic.APIConnectionError):
         return _Verdict(False, False, f"connection error: {_short(error.message)}")
     return _unexpected(error, label)
+
+
+def _from_batch_error(error_type: str, message: str) -> _Verdict:
+    """The verdict for a batch request whose result errored with `error_type`."""
+    if _out_of_credits(error_type, message):
+        return _Verdict(False, False, "out of API credits", CREDIT_WAIT)
+    if error_type == "rate_limit_error":
+        return _Verdict(False, False, "rate limited")
+    return _Verdict(False, error_type == "invalid_request_error", f"{error_type}: {_short(message)}")
+
+
+def _out_of_credits(error_type: str | None, message: str) -> bool:
+    return error_type == "billing_error" or "credit balance is too low" in message.lower()
 
 
 def _unexpected(error: Exception, label: str) -> _Verdict:
@@ -280,8 +318,8 @@ def _cost(model: str, input_tokens: int, output_tokens: int, cache_read_tokens: 
     """Dollars for a call by `PRICES`; None for a model without a price."""
     if model not in PRICES:
         return None
-    price_in, price_out = PRICES[model]
-    cost = (input_tokens * price_in + output_tokens * price_out + cache_read_tokens * price_in * 0.05) / 1e6
+    price_in, price_out, price_cache_read = PRICES[model]
+    cost = (input_tokens * price_in + output_tokens * price_out + cache_read_tokens * price_cache_read) / 1e6
     return cost / 2 if halved else cost
 
 

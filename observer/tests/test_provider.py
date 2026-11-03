@@ -14,7 +14,7 @@ from captured import make_captured, make_interaction
 from vitality_usermodel.formats import OperationsMeta, read_file
 
 from vitality_observer.config import Mode, ObserverConfig
-from vitality_observer.provider.anthropic_api import CREDIT_WAIT, PRICES, AnthropicObserver
+from vitality_observer.provider.anthropic_api import BATCH_DEADLINE, CREDIT_WAIT, PRICES, AnthropicObserver
 from vitality_observer.provider.interface import Outcome
 from vitality_observer.request import PROMPT_VERSION
 from vitality_observer.work import Interaction
@@ -69,25 +69,33 @@ class FakeMessages:
 class FakeBatches:
     """Ends after one poll; returns `results` (dicts) reversed, so out of order."""
 
-    def __init__(self, results: Callable[[list[dict]], list[dict]] | None = None, fail: Exception | None = None):
+    def __init__(self, results: Callable[[list[dict]], list[dict]] | None = None, fail: Exception | None = None,
+                 retrieve_errors: int = 0, ends: bool = True):
         self.make_results = results or (lambda requests: [
             {"custom_id": r["custom_id"], "result": {"type": "succeeded", "message": message_dict()}}
             for r in requests
         ])
         self.fail = fail
+        self.retrieve_errors = retrieve_errors     # the first this many retrieves raise
+        self.ends = ends
         self.requests: list[dict] = []
+        self.created = 0
         self.retrieved = 0
 
     async def create(self, *, requests: list[dict]) -> Any:
         if self.fail is not None:
             raise self.fail
+        self.created += 1
         self.requests = requests
         return SimpleNamespace(id="msgbatch_1", processing_status="in_progress")
 
     async def retrieve(self, batch_id: str) -> Any:
         assert batch_id == "msgbatch_1"
         self.retrieved += 1
-        return SimpleNamespace(id=batch_id, processing_status="ended" if self.retrieved >= 2 else "in_progress")
+        if self.retrieved <= self.retrieve_errors:
+            raise connection_error()
+        ended = self.ends and self.retrieved >= 2
+        return SimpleNamespace(id=batch_id, processing_status="ended" if ended else "in_progress")
 
     async def results(self, batch_id: str) -> Any:
         assert batch_id == "msgbatch_1"
@@ -110,14 +118,15 @@ class FakeClient:
 
 
 class Clock:
-    """Starts at T0 and moves half a second each time it is read."""
+    """Starts at T0 and moves `step` seconds each time it is read."""
 
-    def __init__(self):
+    def __init__(self, step: float = 0.5):
         self.now = T0
+        self.step = step
 
     def __call__(self) -> float:
         now = self.now
-        self.now += 0.5
+        self.now += self.step
         return now
 
 
@@ -130,9 +139,10 @@ def cfg(tmp_path: Path) -> ObserverConfig:
     return ObserverConfig(captures_dir=tmp_path / "captures", model_dir=tmp_path / "model", state_dir=tmp_path / "state")
 
 
-def make_observer(cfg: ObserverConfig, client: FakeClient, mode: Mode = "direct") -> AnthropicObserver:
+def make_observer(cfg: ObserverConfig, client: FakeClient, mode: Mode = "direct",
+                  clock: Clock | None = None) -> AnthropicObserver:
     config = ObserverConfig(**{**cfg.__dict__, "mode": mode})
-    return AnthropicObserver(config, client=cast(Any, client), clock=Clock(), poll_seconds=0.01, sleep=no_sleep)
+    return AnthropicObserver(config, client=cast(Any, client), clock=clock or Clock(), poll_seconds=0.01, sleep=no_sleep)
 
 
 def records(cfg: ObserverConfig) -> list[dict]:
@@ -375,9 +385,21 @@ async def test_cost_counts_cache_reads(tmp_path: Path, cfg: ObserverConfig):
 
     outcome = await observe_one(cfg, interaction_at(tmp_path), client)
 
-    assert PRICES["claude-opus-5-5"] == (4.0, 20.0)
+    assert PRICES["claude-opus-5-5"] == (4.0, 20.0, 0.20)
     assert outcome.record["model"] == "claude-opus-5-5"
-    assert outcome.record["cost"] == pytest.approx((1000 * 4.0 + 200 * 20.0 + 2000 * 4.0 * 0.05) / 1e6)
+    assert outcome.record["cost"] == pytest.approx((1000 * 4.0 + 200 * 20.0 + 2000 * 0.20) / 1e6)
+
+
+@pytest.mark.parametrize("model, expected", [
+    ("claude-sonnet-5-5", (1000 * 2.0 + 200 * 10.0 + 5000 * 0.10) / 1e6),
+    ("claude-haiku-5-5", (1000 * 0.10 + 200 * 0.50 + 5000 * 0.01) / 1e6),
+])
+async def test_cache_read_price_per_model(tmp_path: Path, cfg: ObserverConfig, model: str, expected: float):
+    client = FakeClient(lambda kwargs: message(model=model, tokens=(1000, 200, 5000)))
+
+    outcome = await observe_one(cfg, interaction_at(tmp_path), client)
+
+    assert outcome.record["cost"] == pytest.approx(expected)
 
 
 async def test_unknown_model_cost_none(tmp_path: Path, cfg: ObserverConfig):
@@ -484,3 +506,49 @@ async def test_batch_missing_result(tmp_path: Path, cfg: ObserverConfig):
 
     assert (outcome.ok, outcome.reached_model) == (False, False)
     assert outcome.detail
+
+
+def errored(kind: str, text: str = "nope") -> dict:
+    return {"type": "errored", "error": {"type": "error", "error": {"type": kind, "message": text}}}
+
+
+@pytest.mark.parametrize("kind, expected", [
+    ("billing_error", (False, CREDIT_WAIT, "out of API credits")),
+    ("rate_limit_error", (False, None, "rate limited")),
+    ("overloaded_error", (False, None, "overloaded_error: nope")),
+    ("api_error", (False, None, "api_error: nope")),
+    ("invalid_request_error", (True, None, "invalid_request_error: nope")),
+])
+async def test_batch_errored_maps_by_type(tmp_path: Path, cfg: ObserverConfig, kind: str, expected: tuple):
+    batches = FakeBatches(lambda requests: [{"custom_id": "i0", "result": errored(kind)}])
+
+    [outcome] = await make_observer(cfg, FakeClient(batches=batches), "batch").observe([interaction_at(tmp_path)])
+
+    assert outcome.ok is False
+    assert (outcome.reached_model, outcome.wait_seconds, outcome.detail) == expected
+
+
+async def test_batch_retrieve_errors_keep_polling(tmp_path: Path, cfg: ObserverConfig,
+                                                  caplog: pytest.LogCaptureFixture):
+    batches = FakeBatches(retrieve_errors=2)
+    batch = three(tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger="vitality_observer"):
+        outcomes = await make_observer(cfg, FakeClient(batches=batches), "batch").observe(batch)
+
+    assert all(o.ok for o in outcomes)
+    assert batches.created == 1 and batches.retrieved == 3   # two failures, then ended
+    assert caplog.text.count("cannot check batch") == 1
+
+
+async def test_batch_gives_up_after_deadline(tmp_path: Path, cfg: ObserverConfig):
+    batches = FakeBatches(retrieve_errors=1000, ends=False)
+    clock = Clock(step=3600)
+
+    [outcome] = await make_observer(cfg, FakeClient(batches=batches), "batch", clock).observe([interaction_at(tmp_path)])
+
+    assert (outcome.ok, outcome.reached_model, outcome.wait_seconds, outcome.detail) == (
+        False, False, None, "batch did not finish")
+    assert batches.created == 1
+    assert batches.retrieved == BATCH_DEADLINE // 3600 - 1
+    assert outcome.record["batch"] == "msgbatch_1"
