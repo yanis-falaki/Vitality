@@ -47,7 +47,11 @@ class Loop(Protocol):
        written. At `max_attempts` (3) it is added to `skipped.txt` with that outcome's `detail`
        and never offered again; deleting its line offers it again. Nothing else strikes: a
        failure that did not reach the model, an `ok` outcome whose files are missing, or an
-       error raised in a round.
+       error raised in a round. Nor a uniform rejection (ruling R12): in a round of 2 or more
+       interactions where every outcome failed with `reached_model` and the same `detail`
+       starting with `api 400` or `api 413`, the request, not the interactions, is the likely
+       fault, so the round counts as not reached: no strikes, the ordinary backoff of rule 4,
+       and one warning naming the detail.
     """
 
     def wake(self) -> None:
@@ -154,12 +158,16 @@ class ObserveLoop(Loop):
         for interaction in written:
             self._strikes.pop(interaction.name, None)
 
-        # Strike the interactions that failed by their own fault (rule 5), in any round.
+        # Strike the interactions that failed by their own fault (rule 5), in any round, unless
+        # every request was rejected the same way (ruling R12).
         offered = {i.name for i in batch}
-        for outcome in outcomes:
-            if (outcome.name in offered and outcome.name in still_waiting and not outcome.ok
-                    and outcome.reached_model and outcome.wait_seconds is None):
-                self._strike(outcome)
+        ours = [o for o in outcomes if o.name in offered]
+        rejection = _uniform_rejection(ours)
+        if rejection is None:
+            for outcome in ours:
+                if (outcome.name in still_waiting and not outcome.ok
+                        and outcome.reached_model and outcome.wait_seconds is None):
+                    self._strike(outcome)
 
         # Something was written: progress. The backoff resets.
         if written:
@@ -178,6 +186,9 @@ class ObserveLoop(Loop):
             return "failed"
 
         # Nothing written, any other reason: a failure, backed off by run() (rule 4).
+        if rejection is not None:
+            self._log_failure(f"every request was rejected the same way: {rejection}; not striking")
+            return "failed"
         failures = [o.detail for o in outcomes if not o.ok and o.detail]
         self._log_failure(failures[0] if failures else "nothing written")
         return "failed"
@@ -217,3 +228,15 @@ class ObserveLoop(Loop):
             self._waiting = True
             until = datetime.fromtimestamp(self._clock() + seconds, UTC).isoformat(timespec="seconds")
             log.warning("%s, waiting until %s", detail or "asked to wait", until)
+
+
+def _uniform_rejection(outcomes: list[Outcome]) -> str | None:
+    """The shared detail if 2 or more outcomes all failed after reaching the model with the same
+    `api 400` or `api 413` detail (ruling R12); None otherwise."""
+    if len(outcomes) < 2:
+        return None
+    details = {o.detail for o in outcomes}
+    if len(details) != 1 or any(o.ok or not o.reached_model or o.wait_seconds is not None for o in outcomes):
+        return None
+    detail = details.pop()
+    return detail if detail.startswith(("api 400", "api 413")) else None

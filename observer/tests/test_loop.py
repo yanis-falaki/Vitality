@@ -392,6 +392,37 @@ async def test_strike_in_mixed_round(cfg):
     assert observer.batches[3] == [good[9]]
 
 
+async def test_a_uniform_rejection_is_not_struck(cfg, caplog):
+    names = captures(cfg, 4)
+    observer = FakeObserver(cfg, *["fail:api 400: x"] * 3)
+    sleeps = Sleeps(3)
+    with caplog.at_level(logging.INFO, logger="vitality_observer"):
+        await run_to_stop(ObserveLoop(cfg, observer, sleep=sleeps))
+    assert observer.batches == [names] * 3
+    assert sleeps.seconds == [5, 10, 20]        # the ordinary backoff
+    assert skipped(cfg) == {}
+    warnings = [r.getMessage() for r in caplog.records if "rejected the same way" in r.getMessage()]
+    assert warnings == ["observing failed, retrying with backoff: "
+                        "every request was rejected the same way: api 400: x; not striking"]
+
+
+async def test_a_lone_rejection_is_struck(cfg):
+    bad, *good = captures(cfg, 2)
+    observer = FakeObserver(cfg, *["fail:api 400: x"] * 3)
+    loop = ObserveLoop(replace(cfg, parallel=1), observer)
+    assert [await loop.step() for _ in range(3)] == ["failed"] * 3
+    assert skipped(cfg) == {bad: "api 400: x"}
+
+
+async def test_a_rejection_in_a_mixed_round_is_struck(cfg):
+    bad1, bad2, *good = captures(cfg, 8)
+    plan: dict[str, Behaviour] = {bad1: "fail:api 400: x", bad2: "fail:api 400: x"}
+    observer = FakeObserver(cfg, plan, plan, plan)
+    loop = ObserveLoop(cfg, observer)
+    assert [await loop.step() for _ in range(3)] == ["observed"] * 3
+    assert skipped(cfg) == {bad1: "api 400: x", bad2: "api 400: x"}
+
+
 async def test_a_lone_failure_three_times_is_skipped(cfg):
     bad, *good = captures(cfg, 4)
     observer = FakeObserver(cfg, poison={bad})
