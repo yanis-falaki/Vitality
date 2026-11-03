@@ -289,6 +289,15 @@ async def test_wait_takes_the_largest(cfg):
     assert sleeps.seconds == [21600]
 
 
+@pytest.mark.parametrize("wait", [0, -30])
+async def test_a_wait_is_at_least_retry_initial(cfg, wait):
+    captures(cfg, 2)
+    sleeps = Sleeps(2)
+    observer = FakeObserver(cfg, ("wait", wait), ("wait", wait))
+    await run_to_stop(ObserveLoop(cfg, observer, sleep=sleeps))
+    assert sleeps.seconds == [5, 5]
+
+
 async def test_a_wait_leaves_the_backoff_alone(cfg):
     captures(cfg, 1)
     sleeps = Sleeps(4)

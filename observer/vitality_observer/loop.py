@@ -35,7 +35,8 @@ class Loop(Protocol):
     2. Judge by the disk. The interactions observed afterwards (both files written) count as
        written. Any written: the round is "observed" and the backoff resets.
     3. Wait. Nothing written and some outcome has `wait_seconds` (the account, not the
-       interaction, is the problem): sleep the largest of them, leaving the backoff as it was.
+       interaction, is the problem): sleep the largest of them, but at least `retry_initial`
+       seconds (5), leaving the backoff as it was.
        Logged once, with its end, until a round writes again. Those outcomes earn no strike.
     4. Back off. Nothing written otherwise: the round is "failed"; sleep `retry_initial` seconds
        (5), doubling each time up to `retry_max` (300). An observed or idle round resets it.
@@ -172,7 +173,8 @@ class ObserveLoop(Loop):
         waits = [o for o in outcomes if not o.ok and o.wait_seconds is not None]
         if waits:
             longest = max(waits, key=lambda o: o.wait_seconds or 0)
-            self._enter_wait(longest.wait_seconds or 0, longest.detail)
+            # At least retry_initial: a wait of 0 (say `retry-after: 0`) must not call again at once.
+            self._enter_wait(max(longest.wait_seconds or 0, self._retry_initial), longest.detail)
             return "failed"
 
         # Nothing written, any other reason: a failure, backed off by run() (rule 4).
