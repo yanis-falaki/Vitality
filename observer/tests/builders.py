@@ -10,7 +10,7 @@ from vitality_protocol.messages import Shot
 from vitality_observer.work import WorkItem
 
 
-def make_captured(start: str, tz: str = "America/Toronto", seconds: tuple[int, ...] = (0, 7)) -> Interaction:
+def make_interaction(start: str, tz: str = "America/Toronto", seconds: tuple[int, ...] = (0, 7)) -> Interaction:
     first = datetime.fromisoformat(start)
     shots = [
         Shot(
@@ -34,16 +34,16 @@ def make_captured(start: str, tz: str = "America/Toronto", seconds: tuple[int, .
     )
 
 
-def make_interaction(tmp_path: Path, captured: Interaction, *, write_shots: bool = True) -> WorkItem:
-    folder = tmp_path / "captures" / "laptop" / captured.name
+def make_item(tmp_path: Path, interaction: Interaction, *, write_shots: bool = True) -> WorkItem:
+    folder = tmp_path / "captures" / "laptop" / interaction.name
     folder.mkdir(parents=True)
-    (folder / "interaction.json").write_text(captured.model_dump_json(), encoding="utf-8")
+    (folder / "interaction.json").write_text(interaction.model_dump_json(), encoding="utf-8")
     if write_shots:
-        for shot in captured.shots:
+        for shot in interaction.shots:
             (folder / shot.file).write_bytes(b"fake-" + shot.file.encode())
     return WorkItem(
-        f"laptop/{captured.name}",
+        f"laptop/{interaction.name}",
         folder,
-        tmp_path / "model" / "observations" / f"laptop/{captured.name}.md",
-        tmp_path / "model" / "operations" / f"laptop/{captured.name}.md",
+        tmp_path / "model" / "observations" / f"laptop/{interaction.name}.md",
+        tmp_path / "model" / "operations" / f"laptop/{interaction.name}.md",
     )

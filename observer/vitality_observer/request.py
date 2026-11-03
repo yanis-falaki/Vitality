@@ -74,9 +74,9 @@ class Reply(BaseModel):
         return _not_blank(value)
 
 
-def read_captured(interaction: WorkItem) -> Interaction:
+def read_interaction(item: WorkItem) -> Interaction:
     """The interaction's `interaction.json`. Raises ValueError if it is missing, unreadable or invalid."""
-    path = interaction.folder / INTERACTION_FILE
+    path = item.folder / INTERACTION_FILE
     try:
         return Interaction.model_validate_json(path.read_bytes())
     except OSError as e:
@@ -85,35 +85,33 @@ def read_captured(interaction: WorkItem) -> Interaction:
         raise ValueError(f"invalid {path}: {_first_problem(e)}") from e
 
 
-def local_span(captured: Interaction) -> tuple[datetime, datetime]:
-    """When the interaction started and ended, in the device's own time zone (`captured.tz`)."""
-    zone = ZoneInfo(captured.tz)
-    return captured.start.astimezone(zone), captured.end.astimezone(zone)
+def local_span(interaction: Interaction) -> tuple[datetime, datetime]:
+    """When the interaction started and ended, in the device's own time zone (`interaction.tz`)."""
+    zone = ZoneInfo(interaction.tz)
+    return interaction.start.astimezone(zone), interaction.end.astimezone(zone)
 
 
-def build_params(interaction: WorkItem, config: ObserverConfig, captured: Interaction | None = None) -> dict:
-    """The keyword arguments of `messages.create` (and the `params` of a batch request) for `interaction`.
+def build_params(item: WorkItem, interaction: Interaction, config: ObserverConfig) -> dict:
+    """The keyword arguments of `messages.create` (and the `params` of a batch request) for `item`.
 
+    `interaction` is the item's `interaction.json`, already read (`read_interaction`).
     The user message is a text header with the local times, then for each screenshot, in order,
     a line saying which one it is and the image. Excludes `betas`, `fallbacks` and `timeout`.
-    `captured` is the interaction's `interaction.json` if already read; otherwise it is read here.
-    Raises ValueError, naming the file, if `interaction.json` or a listed screenshot is
-    missing or unreadable, or a screenshot's name does not start with digits.
+    Raises ValueError, naming the file, if a listed screenshot is missing or unreadable, or its
+    name does not start with digits.
     """
-    if captured is None:
-        captured = read_captured(interaction)
-    start, end = local_span(captured)
+    start, end = local_span(interaction)
     content: list[dict] = [{
         "type": "text",
-        "text": f"Interaction {interaction.name} on {device_of(interaction.name)}, "
-                f"from {start.isoformat(timespec='seconds')} to {end.isoformat(timespec='seconds')} ({captured.tz}).",
+        "text": f"Interaction {item.name} on {device_of(item.name)}, "
+                f"from {start.isoformat(timespec='seconds')} to {end.isoformat(timespec='seconds')} ({interaction.tz}).",
     }]
-    for shot in captured.shots:
-        path = interaction.folder / shot.file
+    for shot in interaction.shots:
+        path = item.folder / shot.file
         try:
             data = base64.b64encode(path.read_bytes()).decode("ascii")
         except OSError as e:
-            raise ValueError(f"cannot read screenshot {shot.file} of {interaction.name}: {e.strerror or e}") from e
+            raise ValueError(f"cannot read screenshot {shot.file} of {item.name}: {e.strerror or e}") from e
         content.append({"type": "text", "text": f"{shot.file}, {_seconds_in(shot.file)} s after the first input:"})
         content.append({"type": "image", "source": {"type": "base64", "media_type": "image/webp", "data": data}})
     return {

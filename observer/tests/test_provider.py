@@ -10,7 +10,7 @@ import httpx2
 import pytest
 from anthropic.types.beta import BetaMessage
 from anthropic.types.messages import MessageBatchIndividualResponse
-from captured import make_captured, make_interaction
+from builders import make_interaction, make_item
 from vitality_usermodel.formats import OperationsMeta, read_file
 
 from vitality_observer.config import Mode, ObserverConfig
@@ -151,18 +151,18 @@ def records(cfg: ObserverConfig) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
-def interaction_at(tmp_path: Path, start: str = "2026-11-03T14:22:05Z", **kwargs: Any) -> WorkItem:
-    captured = make_captured(start)
-    name = captured.start.strftime("%Y-%m-%d/%H-%M-%S")
-    return make_interaction(tmp_path, captured.model_copy(update={"name": name}), **kwargs)
+def item_at(tmp_path: Path, start: str = "2026-11-03T14:22:05Z", **kwargs: Any) -> WorkItem:
+    interaction = make_interaction(start)
+    name = interaction.start.strftime("%Y-%m-%d/%H-%M-%S")
+    return make_item(tmp_path, interaction.model_copy(update={"name": name}), **kwargs)
 
 
 def three(tmp_path: Path) -> list[WorkItem]:
-    return [interaction_at(tmp_path, f"2026-11-03T14:2{n}:05Z") for n in range(3)]
+    return [item_at(tmp_path, f"2026-11-03T14:2{n}:05Z") for n in range(3)]
 
 
-async def observe_one(cfg: ObserverConfig, interaction: WorkItem, client: FakeClient) -> Outcome:
-    [outcome] = await make_observer(cfg, client).observe([interaction])
+async def observe_one(cfg: ObserverConfig, item: WorkItem, client: FakeClient) -> Outcome:
+    [outcome] = await make_observer(cfg, client).observe([item])
     return outcome
 
 
@@ -180,20 +180,20 @@ def failing(error: Exception) -> Respond:
 # == Direct mode ==
 
 async def test_direct_success_writes_files_and_logs(tmp_path: Path, cfg: ObserverConfig):
-    interaction = interaction_at(tmp_path)
+    item = item_at(tmp_path)
 
-    outcome = await observe_one(cfg, interaction, FakeClient())
+    outcome = await observe_one(cfg, item, FakeClient())
 
     assert (outcome.name, outcome.ok, outcome.reached_model, outcome.detail, outcome.wait_seconds) == (
-        interaction.name, True, True, "", None)
-    assert interaction.observation.read_text().strip().endswith("A terminal is open.")
-    ops, _ = read_file(interaction.operations, "operations")
+        item.name, True, True, "", None)
+    assert item.observation.read_text().strip().endswith("A terminal is open.")
+    ops, _ = read_file(item.operations, "operations")
     assert isinstance(ops, OperationsMeta)
     assert [o.text for o in ops.operations] == ["Opened a terminal", "Typed ls"]
     [record] = records(cfg)
     assert record == outcome.record
     assert record == {
-        "time": "2026-11-03T14:22:05Z", "interaction": interaction.name, "ok": True, "detail": "",
+        "time": "2026-11-03T14:22:05Z", "interaction": item.name, "ok": True, "detail": "",
         "model": "claude-sonnet-5-5", "prompt": PROMPT_VERSION, "batch": None, "screenshots": 2,
         "operations": 2, "duration_ms": 500, "input_tokens": 1000, "output_tokens": 200,
         "cache_read_input_tokens": 0, "cost": pytest.approx(0.004),
@@ -203,7 +203,7 @@ async def test_direct_success_writes_files_and_logs(tmp_path: Path, cfg: Observe
 async def test_direct_sends_fallbacks(tmp_path: Path, cfg: ObserverConfig):
     client = FakeClient()
 
-    await observe_one(cfg, interaction_at(tmp_path), client)
+    await observe_one(cfg, item_at(tmp_path), client)
 
     [call] = client.calls
     assert call["betas"] == ["server-side-fallback-2026-07-01"]
@@ -223,29 +223,29 @@ async def test_direct_keeps_order_and_logs_each(tmp_path: Path, cfg: ObserverCon
 
 
 async def test_refusal_is_a_strike_not_a_file(tmp_path: Path, cfg: ObserverConfig):
-    interaction = interaction_at(tmp_path)
+    item = item_at(tmp_path)
     client = FakeClient(lambda kwargs: message("", stop_reason="refusal", category="cyber"))
 
-    outcome = await observe_one(cfg, interaction, client)
+    outcome = await observe_one(cfg, item, client)
 
     assert (outcome.ok, outcome.reached_model, outcome.detail) == (False, True, "refused (cyber)")
-    assert not interaction.observation.exists() and not interaction.operations.exists()
+    assert not item.observation.exists() and not item.operations.exists()
     assert outcome.record["operations"] == 0 and outcome.record["input_tokens"] == 1000
 
 
 async def test_refusal_without_category(tmp_path: Path, cfg: ObserverConfig):
     client = FakeClient(lambda kwargs: message("", stop_reason="refusal"))
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), client)
+    outcome = await observe_one(cfg, item_at(tmp_path), client)
 
     assert outcome.detail == "refused (unknown)"
 
 
 async def test_missing_screenshot_reached_model(tmp_path: Path, cfg: ObserverConfig):
-    interaction = interaction_at(tmp_path, write_shots=False)
+    item = item_at(tmp_path, write_shots=False)
     client = FakeClient()
 
-    outcome = await observe_one(cfg, interaction, client)
+    outcome = await observe_one(cfg, item, client)
 
     assert (outcome.ok, outcome.reached_model, outcome.wait_seconds) == (False, True, None)
     assert "0000.webp" in outcome.detail
@@ -255,11 +255,11 @@ async def test_missing_screenshot_reached_model(tmp_path: Path, cfg: ObserverCon
 
 
 async def test_unknown_time_zone_reached_model(tmp_path: Path, cfg: ObserverConfig):
-    interaction = interaction_at(tmp_path)
-    path = interaction.folder / "interaction.json"
+    item = item_at(tmp_path)
+    path = item.folder / "interaction.json"
     path.write_text(path.read_text().replace("America/Toronto", "Nowhere/Atlantis"))
 
-    outcome = await observe_one(cfg, interaction, FakeClient())
+    outcome = await observe_one(cfg, item, FakeClient())
 
     assert (outcome.ok, outcome.reached_model) == (False, True)
     assert "Nowhere/Atlantis" in outcome.detail
@@ -268,7 +268,7 @@ async def test_unknown_time_zone_reached_model(tmp_path: Path, cfg: ObserverConf
 async def test_credits_exhausted_waits(tmp_path: Path, cfg: ObserverConfig):
     error = status_error(anthropic.BadRequestError, 400, "billing_error", "Your credit balance is too low")
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(error)))
+    outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(error)))
 
     assert (outcome.ok, outcome.reached_model, outcome.wait_seconds, outcome.detail) == (
         False, False, 6 * 3600, "out of API credits")
@@ -279,7 +279,7 @@ async def test_credits_exhausted_by_message(tmp_path: Path, cfg: ObserverConfig)
     error = status_error(anthropic.BadRequestError, 400, "invalid_request_error",
                          "Your credit balance is too low to access the Anthropic API.")
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(error)))
+    outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(error)))
 
     assert (outcome.reached_model, outcome.wait_seconds) == (False, CREDIT_WAIT)
 
@@ -287,7 +287,7 @@ async def test_credits_exhausted_by_message(tmp_path: Path, cfg: ObserverConfig)
 async def test_rate_limit_uses_retry_after(tmp_path: Path, cfg: ObserverConfig):
     error = status_error(anthropic.RateLimitError, 429, "rate_limit_error", "slow down", {"retry-after": "42"})
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(error)))
+    outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(error)))
 
     assert (outcome.ok, outcome.reached_model, outcome.wait_seconds, outcome.detail) == (
         False, False, 42.0, "rate limited")
@@ -296,7 +296,7 @@ async def test_rate_limit_uses_retry_after(tmp_path: Path, cfg: ObserverConfig):
 async def test_rate_limit_without_retry_after(tmp_path: Path, cfg: ObserverConfig):
     error = status_error(anthropic.RateLimitError, 429, "rate_limit_error", "slow down")
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(error)))
+    outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(error)))
 
     assert (outcome.wait_seconds, outcome.detail) == (None, "rate limited")
 
@@ -304,7 +304,7 @@ async def test_rate_limit_without_retry_after(tmp_path: Path, cfg: ObserverConfi
 async def test_bad_request_is_a_strike(tmp_path: Path, cfg: ObserverConfig):
     error = status_error(anthropic.BadRequestError, 400, "invalid_request_error", "image too large")
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(error)))
+    outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(error)))
 
     assert (outcome.ok, outcome.reached_model, outcome.wait_seconds, outcome.detail) == (
         False, True, None, "api 400: image too large")
@@ -313,14 +313,14 @@ async def test_bad_request_is_a_strike(tmp_path: Path, cfg: ObserverConfig):
 async def test_server_error_not_a_strike(tmp_path: Path, cfg: ObserverConfig):
     error = status_error(anthropic.InternalServerError, 529, "overloaded_error", "Overloaded")
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(error)))
+    outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(error)))
 
     assert (outcome.ok, outcome.reached_model, outcome.wait_seconds) == (False, False, None)
     assert "529" in outcome.detail
 
 
 async def test_connection_error_not_a_strike(tmp_path: Path, cfg: ObserverConfig):
-    outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(connection_error())))
+    outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(connection_error())))
 
     assert (outcome.ok, outcome.reached_model, outcome.wait_seconds) == (False, False, None)
     assert outcome.detail.startswith("connection error")
@@ -329,43 +329,43 @@ async def test_connection_error_not_a_strike(tmp_path: Path, cfg: ObserverConfig
 async def test_timeout_not_a_strike(tmp_path: Path, cfg: ObserverConfig):
     error = anthropic.APITimeoutError(httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(error)))
+    outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(error)))
 
     assert (outcome.ok, outcome.reached_model) == (False, False)
     assert outcome.detail == "timed out after 600s"
 
 
 async def test_invalid_json_reply(tmp_path: Path, cfg: ObserverConfig):
-    interaction = interaction_at(tmp_path)
+    item = item_at(tmp_path)
 
-    outcome = await observe_one(cfg, interaction, FakeClient(lambda kwargs: message("{not json")))
+    outcome = await observe_one(cfg, item, FakeClient(lambda kwargs: message("{not json")))
 
     assert (outcome.ok, outcome.reached_model, outcome.wait_seconds) == (False, True, None)
     assert outcome.detail.startswith("invalid reply: ")
-    assert not interaction.observation.exists()
+    assert not item.observation.exists()
 
 
 async def test_cut_off_reply(tmp_path: Path, cfg: ObserverConfig):
     client = FakeClient(lambda kwargs: message('{"transcript": "A ter', stop_reason="max_tokens"))
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), client)
+    outcome = await observe_one(cfg, item_at(tmp_path), client)
 
     assert (outcome.ok, outcome.reached_model, outcome.detail) == (False, True, "reply cut off")
 
 
 async def test_unexpected_error_never_raises(tmp_path: Path, cfg: ObserverConfig, caplog: pytest.LogCaptureFixture):
     with caplog.at_level(logging.WARNING, logger="vitality_observer"):
-        outcome = await observe_one(cfg, interaction_at(tmp_path), FakeClient(failing(RuntimeError("boom"))))
+        outcome = await observe_one(cfg, item_at(tmp_path), FakeClient(failing(RuntimeError("boom"))))
 
     assert (outcome.ok, outcome.reached_model, outcome.detail) == (False, False, "RuntimeError: boom")
     assert "boom" in caplog.text
 
 
 async def test_cannot_write_files_not_a_strike(tmp_path: Path, cfg: ObserverConfig):
-    interaction = interaction_at(tmp_path)
+    item = item_at(tmp_path)
     (tmp_path / "model").write_text("not a folder")
 
-    outcome = await observe_one(cfg, interaction, FakeClient())
+    outcome = await observe_one(cfg, item, FakeClient())
 
     assert (outcome.ok, outcome.reached_model) == (False, False)
     assert outcome.detail
@@ -389,7 +389,7 @@ async def test_calls_log_unwritable_warns_once(tmp_path: Path, cfg: ObserverConf
 async def test_cost_counts_cache_reads(tmp_path: Path, cfg: ObserverConfig):
     client = FakeClient(lambda kwargs: message(model="claude-opus-5-5", tokens=(1000, 200, 2000)))
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), client)
+    outcome = await observe_one(cfg, item_at(tmp_path), client)
 
     assert PRICES["claude-opus-5-5"] == (4.0, 20.0, 0.20)
     assert outcome.record["model"] == "claude-opus-5-5"
@@ -403,7 +403,7 @@ async def test_cost_counts_cache_reads(tmp_path: Path, cfg: ObserverConfig):
 async def test_cache_read_price_per_model(tmp_path: Path, cfg: ObserverConfig, model: str, expected: float):
     client = FakeClient(lambda kwargs: message(model=model, tokens=(1000, 200, 5000)))
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), client)
+    outcome = await observe_one(cfg, item_at(tmp_path), client)
 
     assert outcome.record["cost"] == pytest.approx(expected)
 
@@ -411,13 +411,13 @@ async def test_cache_read_price_per_model(tmp_path: Path, cfg: ObserverConfig, m
 async def test_unknown_model_cost_none(tmp_path: Path, cfg: ObserverConfig):
     client = FakeClient(lambda kwargs: message(model="claude-mystery-9"))
 
-    outcome = await observe_one(cfg, interaction_at(tmp_path), client)
+    outcome = await observe_one(cfg, item_at(tmp_path), client)
 
     assert outcome.ok and outcome.record["cost"] is None and outcome.record["model"] == "claude-mystery-9"
 
 
 async def test_cost_halved_in_batch(tmp_path: Path, cfg: ObserverConfig):
-    [outcome] = await make_observer(cfg, FakeClient(), "batch").observe([interaction_at(tmp_path)])
+    [outcome] = await make_observer(cfg, FakeClient(), "batch").observe([item_at(tmp_path)])
 
     assert outcome.ok
     assert outcome.record["cost"] == pytest.approx(0.004 / 2)
@@ -443,8 +443,8 @@ async def test_batch_maps_results_out_of_order(tmp_path: Path, cfg: ObserverConf
     assert [r["custom_id"] for r in batches.requests] == ["i0", "i1", "i2"]
     assert [o.name for o in outcomes] == [i.name for i in batch]
     assert all(o.ok for o in outcomes)
-    for index, interaction in enumerate(batch):
-        assert interaction.observation.read_text().strip().endswith(f"Screen i{index}.")
+    for index, item in enumerate(batch):
+        assert item.observation.read_text().strip().endswith(f"Screen i{index}.")
     for outcome in outcomes:
         assert outcome.record["batch"] == "msgbatch_1"
         assert outcome.record["time"] == "2026-11-03T14:22:05Z"
@@ -454,7 +454,7 @@ async def test_batch_maps_results_out_of_order(tmp_path: Path, cfg: ObserverConf
 async def test_batch_sends_no_fallbacks(tmp_path: Path, cfg: ObserverConfig):
     batches = FakeBatches()
 
-    await make_observer(cfg, FakeClient(batches=batches), "batch").observe([interaction_at(tmp_path)])
+    await make_observer(cfg, FakeClient(batches=batches), "batch").observe([item_at(tmp_path)])
 
     [request] = batches.requests
     params = request["params"]
@@ -463,7 +463,7 @@ async def test_batch_sends_no_fallbacks(tmp_path: Path, cfg: ObserverConfig):
 
 
 async def test_batch_failed_results(tmp_path: Path, cfg: ObserverConfig):
-    batch = [*three(tmp_path), interaction_at(tmp_path, "2026-11-03T14:23:05Z")]
+    batch = [*three(tmp_path), item_at(tmp_path, "2026-11-03T14:23:05Z")]
 
     def results(requests: list[dict]) -> list[dict]:
         def errored(kind: str) -> dict:
@@ -484,8 +484,8 @@ async def test_batch_failed_results(tmp_path: Path, cfg: ObserverConfig):
 
 
 async def test_batch_bad_interaction_not_sent(tmp_path: Path, cfg: ObserverConfig):
-    good = interaction_at(tmp_path)
-    bad = interaction_at(tmp_path, "2026-11-03T14:21:05Z", write_shots=False)
+    good = item_at(tmp_path)
+    bad = item_at(tmp_path, "2026-11-03T14:21:05Z", write_shots=False)
     batches = FakeBatches()
 
     outcomes = await make_observer(cfg, FakeClient(batches=batches), "batch").observe([bad, good])
@@ -510,7 +510,7 @@ async def test_batch_level_failure(tmp_path: Path, cfg: ObserverConfig):
 async def test_batch_missing_result(tmp_path: Path, cfg: ObserverConfig):
     batches = FakeBatches(lambda requests: [])
 
-    [outcome] = await make_observer(cfg, FakeClient(batches=batches), "batch").observe([interaction_at(tmp_path)])
+    [outcome] = await make_observer(cfg, FakeClient(batches=batches), "batch").observe([item_at(tmp_path)])
 
     assert (outcome.ok, outcome.reached_model) == (False, False)
     assert outcome.detail
@@ -530,7 +530,7 @@ def errored(kind: str, text: str = "nope") -> dict:
 async def test_batch_errored_maps_by_type(tmp_path: Path, cfg: ObserverConfig, kind: str, expected: tuple):
     batches = FakeBatches(lambda requests: [{"custom_id": "i0", "result": errored(kind)}])
 
-    [outcome] = await make_observer(cfg, FakeClient(batches=batches), "batch").observe([interaction_at(tmp_path)])
+    [outcome] = await make_observer(cfg, FakeClient(batches=batches), "batch").observe([item_at(tmp_path)])
 
     assert outcome.ok is False
     assert (outcome.reached_model, outcome.wait_seconds, outcome.detail) == expected
@@ -553,7 +553,7 @@ async def test_batch_gives_up_after_deadline(tmp_path: Path, cfg: ObserverConfig
     batches = FakeBatches(retrieve_errors=1000, ends=False)
     clock = Clock(step=3600)
 
-    [outcome] = await make_observer(cfg, FakeClient(batches=batches), "batch", clock).observe([interaction_at(tmp_path)])
+    [outcome] = await make_observer(cfg, FakeClient(batches=batches), "batch", clock).observe([item_at(tmp_path)])
 
     assert (outcome.ok, outcome.reached_model, outcome.wait_seconds, outcome.detail) == (
         False, False, None, "batch did not finish")
@@ -581,7 +581,7 @@ async def test_batch_results_failure_not_a_strike(tmp_path: Path, cfg: ObserverC
         raise error
 
     [outcome] = await make_observer(cfg, FakeClient(batches=FakeBatches(results)), "batch").observe(
-        [interaction_at(tmp_path)])
+        [item_at(tmp_path)])
 
     assert (outcome.ok, outcome.reached_model, outcome.detail) == (False, False, "api 400: bad id")
 

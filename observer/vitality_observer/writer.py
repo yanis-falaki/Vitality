@@ -11,17 +11,17 @@ from vitality_observer.request import Reply, local_span
 from vitality_observer.work import WorkItem, device_of
 
 
-def write_evidence(interaction: WorkItem, captured: Interaction, reply: Reply) -> int:
+def write_evidence(item: WorkItem, interaction: Interaction, reply: Reply) -> int:
     """Write the observation, then the operations file, replacing any earlier ones; return the number of operations.
 
     The operations come last, so an interaction counts as observed only once both are in place.
     Operation IDs are `op1`, `op2`, ... in the order of the reply.
     """
-    start, end = local_span(captured)
-    device = device_of(interaction.name)
+    start, end = local_span(interaction)
+    device = device_of(item.name)
     write_file(
-        interaction.observation,
-        ObservationMeta(interaction=interaction.name, device=device, start=start, end=end),
+        item.observation,
+        ObservationMeta(interaction=item.name, device=device, start=start, end=end),
         reply.transcript.strip(),
     )
     operations = [
@@ -29,7 +29,7 @@ def write_evidence(interaction: WorkItem, captured: Interaction, reply: Reply) -
         for number, operation in enumerate(reply.operations, start=1)
     ]
     write_file(
-        interaction.operations,
-        OperationsMeta(interaction=interaction.name, device=device, start=start, end=end, operations=operations),
+        item.operations,
+        OperationsMeta(interaction=item.name, device=device, start=start, end=end, operations=operations),
     )
     return len(operations)

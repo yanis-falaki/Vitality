@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 import pytest
-from captured import make_captured, make_interaction
+from builders import make_interaction, make_item
 
 from vitality_observer.config import ObserverConfig
 from vitality_observer.request import (
@@ -14,16 +14,16 @@ from vitality_observer.request import (
     build_params,
     local_span,
     parse_reply,
-    read_captured,
+    read_interaction,
 )
 
 
 def test_params_shape(tmp_path: Path):
-    captured = make_captured("2026-11-03T14:22:05Z")
-    interaction = make_interaction(tmp_path, captured)
+    interaction = make_interaction("2026-11-03T14:22:05Z")
+    item = make_item(tmp_path, interaction)
     config = ObserverConfig(model="claude-test", effort="medium")
 
-    params = build_params(interaction, config)
+    params = build_params(item, interaction, config)
 
     assert params["model"] == "claude-test"
     assert params["max_tokens"] == 16000
@@ -54,71 +54,70 @@ def test_params_shape(tmp_path: Path):
 
 
 def test_second_shot_in_same_second_uses_its_seconds(tmp_path: Path):
-    captured = make_captured("2026-11-03T14:22:05Z", seconds=(0, 14))
-    captured = captured.model_copy(update={"shots": [*captured.shots, captured.shots[-1].model_copy(update={"file": "0014-2.webp"})]})
-    interaction = make_interaction(tmp_path, captured)
+    interaction = make_interaction("2026-11-03T14:22:05Z", seconds=(0, 14))
+    interaction = interaction.model_copy(update={"shots": [*interaction.shots, interaction.shots[-1].model_copy(update={"file": "0014-2.webp"})]})
+    item = make_item(tmp_path, interaction)
 
-    content = build_params(interaction, ObserverConfig())["messages"][0]["content"]
+    content = build_params(item, interaction, ObserverConfig())["messages"][0]["content"]
 
     assert content[-2]["text"] == "0014-2.webp, 14 s after the first input:"
 
 
 def test_local_span_dst():
-    before = make_captured("2026-11-01T05:30:00Z")
-    after = make_captured("2026-11-01T06:30:00Z")
+    before = make_interaction("2026-11-01T05:30:00Z")
+    after = make_interaction("2026-11-01T06:30:00Z")
 
     assert local_span(before)[0].isoformat() == "2026-11-01T01:30:00-04:00"
     assert local_span(after)[0].isoformat() == "2026-11-01T01:30:00-05:00"
 
 
 def test_other_device_time_zone():
-    captured = make_captured("2026-11-03T14:22:05Z", tz="America/Los_Angeles")
+    interaction = make_interaction("2026-11-03T14:22:05Z", tz="America/Los_Angeles")
 
-    start, end = local_span(captured)
+    start, end = local_span(interaction)
 
     assert start.isoformat() == "2026-11-03T06:22:05-08:00"
     assert end.isoformat() == "2026-11-03T06:22:12-08:00"
 
 
 def test_missing_screenshot(tmp_path: Path):
-    captured = make_captured("2026-11-03T14:22:05Z", seconds=(0, 4))
-    interaction = make_interaction(tmp_path, captured)
-    (interaction.folder / "0004.webp").unlink()
+    interaction = make_interaction("2026-11-03T14:22:05Z", seconds=(0, 4))
+    item = make_item(tmp_path, interaction)
+    (item.folder / "0004.webp").unlink()
 
     with pytest.raises(ValueError, match=re.escape("0004.webp")):
-        build_params(interaction, ObserverConfig())
+        build_params(item, interaction, ObserverConfig())
 
 
-def test_build_params_uses_a_captured_already_read(tmp_path: Path):
-    captured = make_captured("2026-11-03T14:22:05Z")
-    interaction = make_interaction(tmp_path, captured)
-    (interaction.folder / "interaction.json").unlink()      # not read again
-    assert build_params(interaction, ObserverConfig(), captured) == build_params(
-        make_interaction(tmp_path / "other", captured), ObserverConfig())
+def test_build_params_does_not_read_interaction_json(tmp_path: Path):
+    interaction = make_interaction("2026-11-03T14:22:05Z")
+    item = make_item(tmp_path, interaction)
+    (item.folder / "interaction.json").unlink()
+    build_params(item, interaction, ObserverConfig())
 
 
 def test_screenshot_name_without_digits(tmp_path: Path):
-    captured = make_captured("2026-11-03T14:22:05Z", seconds=(0,))
-    interaction = make_interaction(tmp_path, captured)
-    shot = captured.shots[0].model_copy(update={"file": "shot.webp"})
-    (interaction.folder / "shot.webp").write_bytes(b"x")
-    odd = captured.model_copy(update={"shots": [shot]})
+    interaction = make_interaction("2026-11-03T14:22:05Z", seconds=(0,))
+    item = make_item(tmp_path, interaction)
+    shot = interaction.shots[0].model_copy(update={"file": "shot.webp"})
+    (item.folder / "shot.webp").write_bytes(b"x")
+    odd = interaction.model_copy(update={"shots": [shot]})
     with pytest.raises(ValueError, match=re.escape("screenshot file shot.webp does not start with digits")):
-        build_params(interaction, ObserverConfig(), odd)
+        build_params(item, odd, ObserverConfig())
 
 
-def test_read_captured_rejects_missing_and_invalid(tmp_path: Path):
-    captured = make_captured("2026-11-03T14:22:05Z")
-    interaction = make_interaction(tmp_path, captured)
-    assert read_captured(interaction) == captured
+def test_read_interaction_rejects_missing_and_invalid(tmp_path: Path):
+    interaction = make_interaction("2026-11-03T14:22:05Z")
+    item = make_item(tmp_path, interaction)
+    assert read_interaction(item) == interaction
 
-    (interaction.folder / "interaction.json").write_text("{not json", encoding="utf-8")
+    (item.folder / "interaction.json").write_text("{not json", encoding="utf-8")
     with pytest.raises(ValueError, match="interaction.json"):
-        read_captured(interaction)
+        read_interaction(item)
 
-    (interaction.folder / "interaction.json").unlink()
+    (item.folder / "interaction.json").unlink()
     with pytest.raises(ValueError, match="interaction.json"):
-        read_captured(interaction)
+        read_interaction(item)
 
 
 GOOD = {"transcript": "Terminal open.", "operations": [{"text": "Had a terminal open", "confidence": 8}]}

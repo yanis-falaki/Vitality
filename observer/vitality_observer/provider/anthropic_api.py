@@ -51,7 +51,7 @@ from vitality_protocol.messages import Interaction
 
 from vitality_observer.config import ObserverConfig
 from vitality_observer.provider.interface import Observer, Outcome
-from vitality_observer.request import PROMPT_VERSION, build_params, parse_reply, read_captured
+from vitality_observer.request import PROMPT_VERSION, build_params, parse_reply, read_interaction
 from vitality_observer.work import WorkItem
 from vitality_observer.writer import write_evidence
 
@@ -108,37 +108,37 @@ class AnthropicObserver(Observer):
             return await self._observe_batch(batch)
         settled = await asyncio.gather(*(self._observe_direct(i) for i in batch), return_exceptions=True)
         outcomes: list[Outcome] = []
-        for interaction, outcome in zip(batch, settled):
+        for item, outcome in zip(batch, settled):
             if isinstance(outcome, Outcome):
                 outcomes.append(outcome)
             elif isinstance(outcome, Exception):    # a bug; the outcome is still owed
-                outcomes.append(self._finish(interaction, None, _unexpected(outcome, interaction.name),
+                outcomes.append(self._finish(item, None, _unexpected(outcome, item.name),
                                              None, self._clock(), 0, None))
             else:
                 raise outcome                       # cancelled, or another BaseException
         return outcomes
 
-    async def _observe_direct(self, interaction: WorkItem) -> Outcome:
+    async def _observe_direct(self, item: WorkItem) -> Outcome:
         config = self._config
         started = self._clock()
-        captured, prepared = _prepare(interaction, config)
+        interaction, prepared = _prepare(item, config)
         message: BetaMessage | None = None
         if isinstance(prepared, _Verdict):
             verdict = prepared
         else:
-            assert captured is not None
+            assert interaction is not None
             try:
                 message = cast(BetaMessage, await self._client.beta.messages.create(  # not streamed
                     **prepared, betas=[FALLBACK_BETA], fallbacks="default", timeout=config.call_timeout_seconds))
             except Exception as e:
-                verdict = _from_error(e, interaction.name, config.call_timeout_seconds)
+                verdict = _from_error(e, item.name, config.call_timeout_seconds)
             else:
-                verdict = _settle(interaction, captured, message)
+                verdict = _settle(item, interaction, message)
         duration_ms = round((self._clock() - started) * 1000)
-        return self._finish(interaction, captured, verdict, message, started, duration_ms, None)
+        return self._finish(item, interaction, verdict, message, started, duration_ms, None)
 
     async def _observe_batch(self, batch: Sequence[WorkItem]) -> list[Outcome]:
-        prepared = [_prepare(interaction, self._config) for interaction in batch]
+        prepared = [_prepare(item, self._config) for item in batch]
         requests = [
             {"custom_id": f"i{index}", "params": params}
             for index, (_, params) in enumerate(prepared) if not isinstance(params, _Verdict)
@@ -163,16 +163,16 @@ class AnthropicObserver(Observer):
         duration_ms = round((self._clock() - started) * 1000)
 
         outcomes: list[Outcome] = []
-        for index, (interaction, (captured, params)) in enumerate(zip(batch, prepared)):
+        for index, (item, (interaction, params)) in enumerate(zip(batch, prepared)):
             if isinstance(params, _Verdict):    # never submitted
-                outcomes.append(self._finish(interaction, captured, params, None, started, 0, None))
+                outcomes.append(self._finish(item, interaction, params, None, started, 0, None))
                 continue
-            assert captured is not None
+            assert interaction is not None
             try:
-                verdict, message = _judge_result(interaction, captured, results.get(f"i{index}"), failure)
+                verdict, message = _judge_result(item, interaction, results.get(f"i{index}"), failure)
             except Exception as e:      # a bug; the other results must not be lost
-                verdict, message = _unexpected(e, interaction.name), None
-            outcomes.append(self._finish(interaction, captured, verdict, message, started, duration_ms, batch_id))
+                verdict, message = _unexpected(e, item.name), None
+            outcomes.append(self._finish(item, interaction, verdict, message, started, duration_ms, batch_id))
         return outcomes
 
     async def _wait_for_end(self, batch_id: str, status: str, submitted: float) -> bool:
@@ -196,7 +196,7 @@ class AnthropicObserver(Observer):
                 failing = False
         return True
 
-    def _finish(self, interaction: WorkItem, captured: Interaction | None, verdict: _Verdict,
+    def _finish(self, item: WorkItem, interaction: Interaction | None, verdict: _Verdict,
                 message: Message | BetaMessage | None, started: float, duration_ms: int,
                 batch_id: str | None) -> Outcome:
         """The outcome for `interaction`, after appending its line to calls.jsonl."""
@@ -205,13 +205,13 @@ class AnthropicObserver(Observer):
         cached = usage.cache_read_input_tokens if usage is not None else None
         record = {
             "time": datetime.fromtimestamp(started, UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
-            "interaction": interaction.name,
+            "interaction": item.name,
             "ok": verdict.ok,
             "detail": verdict.detail,
             "model": model,
             "prompt": PROMPT_VERSION,
             "batch": batch_id,
-            "screenshots": len(captured.shots) if captured is not None else None,
+            "screenshots": len(interaction.shots) if interaction is not None else None,
             "operations": verdict.operations,
             "duration_ms": duration_ms,
             "input_tokens": usage.input_tokens if usage is not None else None,
@@ -221,7 +221,7 @@ class AnthropicObserver(Observer):
                 model, usage.input_tokens, usage.output_tokens, cached or 0, halved=self._config.mode == "batch"),
         }
         self._log_call(self._config.state_dir / "calls.jsonl", record)
-        return Outcome(interaction.name, verdict.ok, verdict.reached_model, verdict.detail,
+        return Outcome(item.name, verdict.ok, verdict.reached_model, verdict.detail,
                        verdict.wait_seconds, record)
 
     def _log_call(self, path: Path, record: dict) -> None:
@@ -232,21 +232,21 @@ class AnthropicObserver(Observer):
         self._calls_log_broken = error is not None
 
 
-def _prepare(interaction: WorkItem, config: ObserverConfig) -> tuple[Interaction | None, dict | _Verdict]:
+def _prepare(item: WorkItem, config: ObserverConfig) -> tuple[Interaction | None, dict | _Verdict]:
     """The interaction's `interaction.json` (if readable) and its request parameters, or why it is bad."""
-    captured: Interaction | None = None
+    interaction: Interaction | None = None
     try:
-        captured = read_captured(interaction)
-        return captured, build_params(interaction, config, captured)
+        interaction = read_interaction(item)
+        return interaction, build_params(item, interaction, config)
     except ValueError as e:
-        return captured, _Verdict(False, True, _short(str(e)))
+        return interaction, _Verdict(False, True, _short(str(e)))
     except ZoneInfoNotFoundError as e:
-        return captured, _Verdict(False, True, _short(f"unknown time zone: {e.args[0] if e.args else e}"))
+        return interaction, _Verdict(False, True, _short(f"unknown time zone: {e.args[0] if e.args else e}"))
     except Exception as e:
-        return captured, _unexpected(e, interaction.name)
+        return interaction, _unexpected(e, item.name)
 
 
-def _judge_result(interaction: WorkItem, captured: Interaction, result: MessageBatchResult | None,
+def _judge_result(item: WorkItem, interaction: Interaction, result: MessageBatchResult | None,
                   failure: _Verdict) -> tuple[_Verdict, Message | None]:
     """The verdict for a submitted interaction from its batch result, and the message if it succeeded.
 
@@ -255,13 +255,13 @@ def _judge_result(interaction: WorkItem, captured: Interaction, result: MessageB
     if result is None:
         return failure, None
     if result.type == "succeeded":
-        return _settle(interaction, captured, result.message), result.message
+        return _settle(item, interaction, result.message), result.message
     if result.type == "errored":
         return _from_batch_error(result.error.error.type, result.error.error.message), None
     return _Verdict(False, False, f"request {result.type}"), None
 
 
-def _settle(interaction: WorkItem, captured: Interaction, message: Message | BetaMessage) -> _Verdict:
+def _settle(item: WorkItem, interaction: Interaction, message: Message | BetaMessage) -> _Verdict:
     """Write the evidence files from the model's answer, or say why not."""
     if message.stop_reason == "refusal":
         category = message.stop_details.category if message.stop_details is not None else None
@@ -276,9 +276,9 @@ def _settle(interaction: WorkItem, captured: Interaction, message: Message | Bet
     except ValueError as e:
         return _Verdict(False, True, _short(str(e)))
     try:
-        count = write_evidence(interaction, captured, reply)
+        count = write_evidence(item, interaction, reply)
     except Exception as e:
-        return _unexpected(e, interaction.name)
+        return _unexpected(e, item.name)
     return _Verdict(True, True, "", operations=count)
 
 
