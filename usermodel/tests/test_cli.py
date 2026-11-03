@@ -38,3 +38,10 @@ def test_cli_next_id(model: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["next-id", "activity", "--model-dir", str(model)]) == 0
     assert main(["next-id", "striving", "--model-dir", str(model)]) == 0
     assert capsys.readouterr().out == "act-0002\nstr-0002\n"
+
+
+def test_cli_broken_repository(model: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with (model / ".git/config").open("a") as f:
+        f.write("[core\n")
+    assert main(["check", "--model-dir", str(model)]) == 1
+    assert capsys.readouterr().err.startswith("vitality-usermodel: git rev-parse: fatal: bad config")

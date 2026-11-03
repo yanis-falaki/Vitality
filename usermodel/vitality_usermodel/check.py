@@ -50,7 +50,8 @@ def check(model_dir: Path, since: str | None = None) -> list[Problem]:
     repository, the index is empty. With `since` (a git revision), also checks what changed in the
     working tree since then (rules 2 and 6), untracked files included.
     Raises ValueError if `since` is given and `model_dir` is not a git repository or `since` is not
-    a commit, or OSError if `model_dir` is not a folder or git cannot be run.
+    a commit, or if git fails on `model_dir` for another reason than "not a git repository" (a
+    broken repository), or OSError if `model_dir` is not a folder or git cannot be run.
     """
     if not model_dir.is_dir():
         raise NotADirectoryError(f"not a folder: {model_dir}")
@@ -340,8 +341,13 @@ def _changes(model_dir: Path, since: str) -> list[tuple[str, str]]:
 
 def _is_repo(model_dir: Path) -> bool:
     # Whether `model_dir` is the top of a git working tree (a folder inside another repo is not).
+    # Raises ValueError if git fails for any reason other than "not a git repository".
     result = _git(model_dir, "rev-parse", "--show-toplevel")
-    return result.returncode == 0 and Path(result.stdout.strip()).resolve() == model_dir.resolve()
+    if result.returncode != 0:
+        if result.returncode == 128 and "not a git repository" in result.stderr:
+            return False
+        raise ValueError(f"git rev-parse: {result.stderr.strip()}")
+    return Path(result.stdout.strip()).resolve() == model_dir.resolve()
 
 
 def _git_paths(model_dir: Path, *args: str) -> list[str]:

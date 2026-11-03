@@ -39,6 +39,14 @@ def test_valid_model_outside_git_passes(model: Path) -> None:
         check(model, since="HEAD")
 
 
+def test_broken_repository_raises(model: Path) -> None:
+    # A corrupted .git/HEAD reads as "not a git repository" to git, so a bad config line is used.
+    with (model / ".git/config").open("a") as f:
+        f.write("[core\n")
+    with pytest.raises(ValueError, match="git rev-parse: fatal: bad config"):
+        check(model)
+
+
 def test_unknown_since(model: Path) -> None:
     with pytest.raises(ValueError, match="nope"):
         check(model, since="nope")

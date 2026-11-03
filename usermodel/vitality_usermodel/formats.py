@@ -200,12 +200,17 @@ def write_file(path: Path, meta: BaseModel, body: str = "") -> None:
 def write_text_atomic(path: Path, text: str) -> None:
     """Write `text` to `path`, creating parent directories.
 
-    The write is atomic: the text goes to `<name>.tmp-<pid>` beside the file, which then replaces it.
+    The write is atomic: the text goes to `<name>.tmp-<pid>` beside the file, which then replaces it;
+    if that fails, the temporary file is removed.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class _Dumper(yaml.SafeDumper):

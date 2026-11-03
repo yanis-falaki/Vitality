@@ -13,6 +13,7 @@ from vitality_usermodel.formats import (
     read_file,
     render,
     write_file,
+    write_text_atomic,
 )
 
 EST = timezone(timedelta(hours=-5))
@@ -113,3 +114,17 @@ def test_read_file_names_the_path(tmp_path: Path):
     path.write_text("hello")
     with pytest.raises(FormatError, match="bad.md: missing frontmatter"):
         read_file(path, "action")
+
+
+def test_write_text_atomic_removes_temp_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    def fail(src: object, dst: object) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", fail)
+    with pytest.raises(OSError, match="replace failed"):
+        write_text_atomic(tmp_path / "a.md", "text")
+    assert list(tmp_path.iterdir()) == []
