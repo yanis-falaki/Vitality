@@ -370,6 +370,7 @@ every problem, when:
 | `OBSERVER_MODEL` | `claude-sonnet-5-5` | |
 | `OBSERVER_MODE` | `direct` | `direct` or `batch` |
 | `OBSERVER_PARALLEL` | `4` | direct mode only |
+| `OBSERVER_EFFORT` | `low` | thinking effort for observation calls; transcription needs perception more than reasoning |
 | `MODELER_MODEL` | (empty: Claude Code's default) | |
 | `MODELER_BATCH_OPERATIONS` | `20` | waiting operations that start a run |
 | `MODELER_IDLE_MINUTES` | `5` | quiet time after which anything waiting starts a run |
