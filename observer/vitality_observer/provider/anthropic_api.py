@@ -20,11 +20,13 @@ How each interaction's outcome is decided, most specific first:
 
 A batch result that errored maps by its error type the same way: `billing_error` (or "credit
 balance is too low") waits CREDIT_WAIT, `rate_limit_error` is "rate limited", and only an
-`invalid_request_error` is `reached_model`; a canceled or expired result never is. A batch that
-cannot be submitted, or whose results cannot be read, fails each of its interactions by the table
-above (results already read are still used). A failing status check while polling is logged once
-per streak and polling goes on; a batch not ended BATCH_DEADLINE after submission fails each
-interaction with "batch did not finish" (not `reached_model`).
+`invalid_request_error` is `reached_model`; a canceled or expired result never is.
+A failure of the batch as a whole is never its interactions' fault (never `reached_model`). A batch
+that cannot be submitted, or whose results cannot be read, takes `wait_seconds` and `detail` from
+the table for each interaction without a result (results already read are still used). A failing
+status check while polling is logged once per streak and polling goes on; a batch not ended
+BATCH_DEADLINE after submission fails each interaction with "batch did not finish". An interaction
+that failed before submission is logged with `batch` null and `duration_ms` 0.
 """
 
 # == Contract ==
@@ -35,7 +37,7 @@ import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -104,7 +106,17 @@ class AnthropicObserver(Observer):
     async def observe(self, batch: Sequence[Interaction]) -> list[Outcome]:
         if self._config.mode == "batch":
             return await self._observe_batch(batch)
-        return list(await asyncio.gather(*(self._observe_direct(i) for i in batch)))
+        settled = await asyncio.gather(*(self._observe_direct(i) for i in batch), return_exceptions=True)
+        outcomes: list[Outcome] = []
+        for interaction, outcome in zip(batch, settled):
+            if isinstance(outcome, Outcome):
+                outcomes.append(outcome)
+            elif isinstance(outcome, Exception):    # a bug; the outcome is still owed
+                outcomes.append(self._finish(interaction, None, _unexpected(outcome, interaction.name),
+                                             None, self._clock(), 0, None))
+            else:
+                raise outcome                       # cancelled, or another BaseException
+        return outcomes
 
     async def _observe_direct(self, interaction: Interaction) -> Outcome:
         config = self._config
@@ -146,25 +158,20 @@ class AnthropicObserver(Observer):
                 else:
                     failure = _Verdict(False, False, "batch did not finish")
             except Exception as e:
-                failure = _from_error(e, f"batch {batch_id or '(not submitted)'}", None)
+                # The batch as a whole failed: never the interactions' fault, whatever the error.
+                failure = replace(_from_error(e, f"batch {batch_id or '(not submitted)'}", None), reached_model=False)
         duration_ms = round((self._clock() - started) * 1000)
 
         outcomes: list[Outcome] = []
         for index, (interaction, (captured, params)) in enumerate(zip(batch, prepared)):
-            result = results.get(f"i{index}")
-            message: Message | None = None
-            if isinstance(params, _Verdict):
-                verdict = params
-            elif result is None:
-                verdict = failure
-            elif result.type == "succeeded":
-                assert captured is not None
-                message = result.message
-                verdict = _settle(interaction, captured, message)
-            elif result.type == "errored":
-                verdict = _from_batch_error(result.error.error.type, result.error.error.message)
-            else:
-                verdict = _Verdict(False, False, f"request {result.type}")
+            if isinstance(params, _Verdict):    # never submitted
+                outcomes.append(self._finish(interaction, captured, params, None, started, 0, None))
+                continue
+            assert captured is not None
+            try:
+                verdict, message = _judge_result(interaction, captured, results.get(f"i{index}"), failure)
+            except Exception as e:      # a bug; the other results must not be lost
+                verdict, message = _unexpected(e, interaction.name), None
             outcomes.append(self._finish(interaction, captured, verdict, message, started, duration_ms, batch_id))
         return outcomes
 
@@ -237,6 +244,21 @@ def _prepare(interaction: Interaction, config: ObserverConfig) -> tuple[Captured
         return captured, _Verdict(False, True, _short(f"unknown time zone: {e.args[0] if e.args else e}"))
     except Exception as e:
         return captured, _unexpected(e, interaction.name)
+
+
+def _judge_result(interaction: Interaction, captured: Captured, result: MessageBatchResult | None,
+                  failure: _Verdict) -> tuple[_Verdict, Message | None]:
+    """The verdict for a submitted interaction from its batch result, and the message if it succeeded.
+
+    Without a result the verdict is `failure`, the batch's own.
+    """
+    if result is None:
+        return failure, None
+    if result.type == "succeeded":
+        return _settle(interaction, captured, result.message), result.message
+    if result.type == "errored":
+        return _from_batch_error(result.error.error.type, result.error.error.message), None
+    return _Verdict(False, False, f"request {result.type}"), None
 
 
 def _settle(interaction: Interaction, captured: Captured, message: Message | BetaMessage) -> _Verdict:

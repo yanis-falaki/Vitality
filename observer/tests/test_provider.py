@@ -69,7 +69,7 @@ class FakeMessages:
 class FakeBatches:
     """Ends after one poll; returns `results` (dicts) reversed, so out of order."""
 
-    def __init__(self, results: Callable[[list[dict]], list[dict]] | None = None, fail: Exception | None = None,
+    def __init__(self, results: Callable[[list[dict]], list[Any]] | None = None, fail: Exception | None = None,
                  retrieve_errors: int = 0, ends: bool = True):
         self.make_results = results or (lambda requests: [
             {"custom_id": r["custom_id"], "result": {"type": "succeeded", "message": message_dict()}}
@@ -99,7 +99,8 @@ class FakeBatches:
 
     async def results(self, batch_id: str) -> Any:
         assert batch_id == "msgbatch_1"
-        items = [MessageBatchIndividualResponse.model_validate(r) for r in self.make_results(self.requests)]
+        items = [MessageBatchIndividualResponse.model_validate(r) if isinstance(r, dict) else r  # others as they are
+                 for r in self.make_results(self.requests)]
 
         async def iterate():
             for item in reversed(items):
@@ -163,6 +164,11 @@ def three(tmp_path: Path) -> list[Interaction]:
 async def observe_one(cfg: ObserverConfig, interaction: Interaction, client: FakeClient) -> Outcome:
     [outcome] = await make_observer(cfg, client).observe([interaction])
     return outcome
+
+
+def name_in(kwargs: dict) -> str:
+    """The interaction a request is about, from its header text."""
+    return kwargs["messages"][0]["content"][0]["text"].split()[1]
 
 
 def failing(error: Exception) -> Respond:
@@ -486,6 +492,8 @@ async def test_batch_bad_interaction_not_sent(tmp_path: Path, cfg: ObserverConfi
 
     assert [r["custom_id"] for r in batches.requests] == ["i1"]
     assert [(o.ok, o.reached_model) for o in outcomes] == [(False, True), (True, True)]
+    assert (outcomes[0].record["batch"], outcomes[0].record["duration_ms"]) == (None, 0)
+    assert outcomes[1].record["batch"] == "msgbatch_1"
 
 
 async def test_batch_level_failure(tmp_path: Path, cfg: ObserverConfig):
@@ -552,3 +560,77 @@ async def test_batch_gives_up_after_deadline(tmp_path: Path, cfg: ObserverConfig
     assert batches.created == 1
     assert batches.retrieved == BATCH_DEADLINE // 3600 - 1
     assert outcome.record["batch"] == "msgbatch_1"
+
+
+@pytest.mark.parametrize("cls, status", [(anthropic.BadRequestError, 400), (anthropic.APIStatusError, 413)])
+async def test_batch_level_client_error_not_a_strike(tmp_path: Path, cfg: ObserverConfig,
+                                                     cls: type[anthropic.APIStatusError], status: int):
+    error = status_error(cls, status, "invalid_request_error", "request too large")
+    batch = three(tmp_path)
+
+    outcomes = await make_observer(cfg, FakeClient(batches=FakeBatches(fail=error)), "batch").observe(batch)
+
+    assert all((o.ok, o.reached_model, o.wait_seconds) == (False, False, None) for o in outcomes)
+    assert all(o.detail == f"api {status}: request too large" for o in outcomes)
+
+
+async def test_batch_results_failure_not_a_strike(tmp_path: Path, cfg: ObserverConfig):
+    error = status_error(anthropic.BadRequestError, 400, "invalid_request_error", "bad id")
+
+    def results(requests: list[dict]) -> list[Any]:
+        raise error
+
+    [outcome] = await make_observer(cfg, FakeClient(batches=FakeBatches(results)), "batch").observe(
+        [interaction_at(tmp_path)])
+
+    assert (outcome.ok, outcome.reached_model, outcome.detail) == (False, False, "api 400: bad id")
+
+
+async def test_direct_mixed_round(tmp_path: Path, cfg: ObserverConfig):
+    batch = three(tmp_path)
+    refused = batch[1].name
+
+    def respond(kwargs: dict) -> BetaMessage:
+        return message("", stop_reason="refusal") if name_in(kwargs) == refused else message()
+
+    outcomes = await make_observer(cfg, FakeClient(respond)).observe(batch)
+
+    assert [(o.name, o.ok, o.reached_model) for o in outcomes] == [
+        (batch[0].name, True, True), (refused, False, True), (batch[2].name, True, True)]
+    assert batch[0].operations.exists() and batch[2].operations.exists()
+    assert not batch[1].observation.exists()
+
+
+@pytest.mark.parametrize("second", ["raises", "bogus reply"])
+async def test_direct_one_broken_call_keeps_the_others(tmp_path: Path, cfg: ObserverConfig,
+                                                       caplog: pytest.LogCaptureFixture, second: str):
+    batch = three(tmp_path)
+
+    def respond(kwargs: dict) -> Any:
+        if name_in(kwargs) != batch[1].name:
+            return message()
+        if second == "raises":
+            raise RuntimeError("boom")
+        return SimpleNamespace()    # no stop_reason or usage: reading it fails past the error table
+
+    with caplog.at_level(logging.WARNING, logger="vitality_observer"):
+        outcomes = await make_observer(cfg, FakeClient(respond)).observe(batch)
+
+    assert [o.name for o in outcomes] == [i.name for i in batch]
+    assert [(o.ok, o.reached_model) for o in outcomes] == [(True, True), (False, False), (True, True)]
+    assert outcomes[1].detail and batch[1].name in caplog.text
+    assert len(records(cfg)) == 3
+
+
+async def test_batch_one_broken_result_keeps_the_others(tmp_path: Path, cfg: ObserverConfig):
+    batch = three(tmp_path)
+
+    def results(requests: list[dict]) -> list[Any]:
+        good = [{"custom_id": r["custom_id"], "result": {"type": "succeeded", "message": message_dict()}}
+                for r in requests if r["custom_id"] != "i1"]
+        return [*good, SimpleNamespace(custom_id="i1", result=SimpleNamespace(type="succeeded", message=None))]
+
+    outcomes = await make_observer(cfg, FakeClient(batches=FakeBatches(results)), "batch").observe(batch)
+
+    assert [(o.ok, o.reached_model) for o in outcomes] == [(True, True), (False, False), (True, True)]
+    assert len(records(cfg)) == 3
