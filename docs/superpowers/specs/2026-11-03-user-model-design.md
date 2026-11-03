@@ -351,7 +351,8 @@ every problem, when:
 5. An action's `start`/`end` lie outside the times of its operations' interactions.
 6. With `--since`: a locked file changed or was deleted; a tracked observation or operations file
    changed or was deleted; `user-context.md` changed; or a file outside `actions/`, `activities/`,
-   `strivings/`, `modeler-notes.md`, `.next-ids` changed.
+   `strivings/`, `modeler-notes.md`, `.next-ids` changed, other than observation and operations
+   files added since `--since`.
 
 ## 10. Runtime
 
@@ -383,7 +384,7 @@ every problem, when:
   and `modeler-notes.md`, and the `modeler/` state folder; it stops if `ANTHROPIC_API_KEY` is unset.
 - `./vitality status` adds:
   ```
-  observer: 1060 / 1103 observed · 3 skipped · batch 41 pending · last ok 09:31:12 EST
+  observer: 1060 / 1103 observed · 3 skipped · last call 09:31:12 EST ok (8 s)
   modeler:  run 2026-11-03T14-30-00Z committed (6 actions, 1 activity revised) · 12 operations waiting
   ```
 - `./vitality logs modeler`.
@@ -401,12 +402,12 @@ The owner fills it in when they like; the modeler works without it and never edi
 
 ```json
 {"time": "2026-11-03T14:23:10Z", "interaction": "laptop/2026-11-03/14-22-05",
- "ok": true, "detail": "", "model": "claude-sonnet-5-5", "prompt": "a1b2c3d",
+ "ok": true, "detail": "", "model": "claude-sonnet-5-5", "prompt": "5c2e8a91b7d0",
  "batch": "msgbatch_…", "screenshots": 3, "operations": 2, "duration_ms": 8400,
  "input_tokens": 5120, "output_tokens": 1430, "cache_read_input_tokens": 1200, "cost": 0.0125}
 ```
 
-`prompt` is the Vitality commit the prompt came from; `batch` is null for direct calls; `cost` is
+`prompt` is the first 12 hex digits of the SHA-256 of `prompt.md` (the container has no git); `batch` is null for direct calls; `cost` is
 computed from the published prices. Inputs are not stored: they are the capture folder and the
 prompt at that commit.
 
@@ -415,7 +416,7 @@ prompt at that commit.
 ```json
 {"run": "2026-11-03T14-30-00Z", "started": "…", "ended": "…", "trigger": "20 operations",
  "operations": {"count": 23, "from": "laptop/2026-11-03/13-58-10", "to": "laptop/2026-11-03/14-29-41"},
- "model": "claude-opus-5-5", "playbook": "a1b2c3d", "outcome": "committed", "attempts": 1,
+ "model": "claude-opus-5-5", "playbook": "3f9a0c1d2e4b", "outcome": "committed", "attempts": 1,
  "check_errors": [], "commit": "9f8e7d6",
  "changes": {"actions": 6, "activities_created": 1, "activities_revised": 2, "activities_merged": 0,
              "strivings_created": 0, "strivings_revised": 1},
