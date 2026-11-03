@@ -11,6 +11,7 @@ import pytest
 from vitality_observer import main as observer_main
 from vitality_observer.config import ObserverConfig
 from vitality_observer.main import main, serve, watch_captures
+from vitality_observer.provider.anthropic_api import AnthropicObserver
 
 from test_loop import FakeObserver, capture
 
@@ -28,6 +29,8 @@ def set_environment(monkeypatch, cfg: ObserverConfig) -> None:
     monkeypatch.setenv("OBSERVER_CAPTURES_DIR", str(cfg.captures_dir))
     monkeypatch.setenv("OBSERVER_MODEL_DIR", str(cfg.model_dir))
     monkeypatch.setenv("OBSERVER_STATE_DIR", str(cfg.state_dir))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")     # never the real API
 
 
 async def until(condition, seconds: float = 5) -> None:
@@ -75,11 +78,11 @@ def test_no_command_or_an_unknown_one_exits_2(cfg, monkeypatch):
 
 
 def test_bad_setting_exits_1_naming_the_variable(monkeypatch, capsys):
-    monkeypatch.setenv("OBSERVER_BATCH_SIZE", "many")
+    monkeypatch.setenv("OBSERVER_PARALLEL", "many")
     monkeypatch.setattr(observer_main.asyncio, "run", lambda *a, **k: pytest.fail("must not run"))
     assert main(["run"]) == 1
     err = capsys.readouterr().err
-    assert err.startswith("vitality-observer: ") and "OBSERVER_BATCH_SIZE" in err
+    assert err.startswith("vitality-observer: ") and "OBSERVER_PARALLEL" in err
 
 
 def test_refuses_to_run_as_root(cfg, capsys, monkeypatch):
@@ -92,6 +95,19 @@ def test_refuses_to_run_as_root(cfg, capsys, monkeypatch):
     assert not cfg.state_dir.exists()
 
 
+@pytest.mark.parametrize("key", [None, "", "  "])
+def test_missing_api_key(cfg, capsys, monkeypatch, key):
+    set_environment(monkeypatch, cfg)
+    if key is None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY")
+    else:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", key)
+    monkeypatch.setattr(observer_main.asyncio, "run", lambda *a, **k: pytest.fail("must not run"))
+    assert main(["run"]) == 1
+    assert capsys.readouterr().err == "vitality-observer: ANTHROPIC_API_KEY is not set\n"
+    assert not cfg.state_dir.exists()
+
+
 def test_unusable_state_dir_returns_1(tmp_path, cfg, capsys, monkeypatch):
     (tmp_path / "afile").write_text("")
     set_environment(monkeypatch, cfg)
@@ -100,7 +116,7 @@ def test_unusable_state_dir_returns_1(tmp_path, cfg, capsys, monkeypatch):
     assert capsys.readouterr().err.startswith("vitality-observer: ")
 
 
-def test_run_creates_state_dir_and_serves_with_claude_code(cfg, monkeypatch):
+def test_run_creates_state_dir_and_serves_with_the_anthropic_api(cfg, monkeypatch):
     served = {}
 
     async def fake_serve(config, observer):
@@ -111,7 +127,7 @@ def test_run_creates_state_dir_and_serves_with_claude_code(cfg, monkeypatch):
     assert main(["run"]) == 0
     assert cfg.state_dir.is_dir()
     assert served["config"] == cfg
-    assert isinstance(served["observer"], observer_main.ClaudeCode)
+    assert isinstance(served["observer"], AnthropicObserver)
 
 
 def test_keyboard_interrupt_is_a_normal_stop(cfg, monkeypatch):
@@ -133,7 +149,9 @@ def test_sigterm_stops_the_service_with_exit_code_0(cfg):
         env={**os.environ,
              "OBSERVER_CAPTURES_DIR": str(cfg.captures_dir),
              "OBSERVER_MODEL_DIR": str(cfg.model_dir),
-             "OBSERVER_STATE_DIR": str(cfg.state_dir)},
+             "OBSERVER_STATE_DIR": str(cfg.state_dir),
+             "ANTHROPIC_API_KEY": "test-key",
+             "ANTHROPIC_BASE_URL": "http://127.0.0.1:9"},     # never the real API; nothing to observe anyway
         stderr=subprocess.PIPE, text=True)
     assert process.stderr is not None
     try:

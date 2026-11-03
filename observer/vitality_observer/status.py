@@ -14,12 +14,12 @@ TAIL_BYTES = 64 * 1024  # how much of the end of `calls.jsonl` is read to find i
 
 def status(config: ObserverConfig) -> int:
     """Print one line saying how many interactions are observed, how many were skipped, and
-    how the last Claude call went; return the exit code.
+    how the last API call went; return the exit code.
 
         observer: 560 / 595 observed · 2 skipped · last call 21:28:26 EDT ok (40 s)
 
-    `observed` is the interactions with a non-empty observation, out of all in the captures;
-    `skipped` is the entries in `skipped.txt`. The last call is the last line of `calls.jsonl`,
+    `observed` is the interactions whose observation and operations files are both non-empty,
+    out of all in the captures; `skipped` is the entries in `skipped.txt`. The last call is the last line of `calls.jsonl`,
     shown in local time, as `HH:MM:SS EDT` if today, else `YYYY-MM-DD HH:MM EDT`, then `ok` or
     `failed: <detail>` (the detail cut to 60 characters), then its duration in whole seconds.
     With no call logged it says `no calls yet`; with a last line that cannot be understood,

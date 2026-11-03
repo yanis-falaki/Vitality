@@ -16,9 +16,10 @@ from pathlib import Path
 
 from watchfiles import Change, awatch
 
-from vitality_observer.claude import ClaudeCode, Observer
 from vitality_observer.config import ObserverConfig, load_observer_config
 from vitality_observer.loop import ObserveLoop
+from vitality_observer.provider.anthropic_api import AnthropicObserver
+from vitality_observer.provider.interface import Observer
 from vitality_observer.status import status
 
 log = logging.getLogger("vitality_observer")
@@ -58,18 +59,22 @@ def run(config: ObserverConfig) -> int:
 
         1. Set up logging to stderr (the container's log adds the time).
         2. Refuse to run as root: the observer must run as the owner's user (`VITALITY_UID`),
-           so that the captures stay read-only to it and to the Claude Code it starts.
-        3. Create `state_dir` if it is missing.
-        4. Run `serve` with the real Claude Code until SIGTERM or Ctrl-C.
+           so that the captures stay read-only to it.
+        3. Refuse to run without an API key: `ANTHROPIC_API_KEY` unset, empty or only spaces.
+        4. Create `state_dir` if it is missing.
+        5. Run `serve` with the Anthropic API (`AnthropicObserver`) until SIGTERM or Ctrl-C.
 
-    Exit codes: 0 after running and stopping; 1 for running as root or a `state_dir` that
-    cannot be created (the reason goes to stderr).
+    Exit codes: 0 after running and stopping; 1 for running as root, a missing API key or a
+    `state_dir` that cannot be created (the reason goes to stderr).
     """
     logging.basicConfig(level=logging.INFO, stream=sys.stderr,
                         format="%(levelname)s %(name)s: %(message)s")
     if os.geteuid() == 0:
         print("vitality-observer: refusing to run as root; set VITALITY_UID to your own user",
               file=sys.stderr)
+        return 1
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        print("vitality-observer: ANTHROPIC_API_KEY is not set", file=sys.stderr)
         return 1
     try:
         config.state_dir.mkdir(parents=True, exist_ok=True)
@@ -78,7 +83,7 @@ def run(config: ObserverConfig) -> int:
         return 1
 
     try:
-        asyncio.run(_serve_until_stopped(config, ClaudeCode(config)))
+        asyncio.run(_serve_until_stopped(config, AnthropicObserver(config)))
     except KeyboardInterrupt:
         pass
     return 0
@@ -117,7 +122,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="vitality-observer")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="observe every interaction, until stopped")
-    sub.add_parser("status", help="show how many interactions are observed, and the last Claude call")
+    sub.add_parser("status", help="show how many interactions are observed, and the last API call")
     return parser
 
 

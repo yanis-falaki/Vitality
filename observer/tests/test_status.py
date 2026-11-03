@@ -60,6 +60,14 @@ def test_an_empty_observation_does_not_count_as_observed(cfg, capsys):
     assert capsys.readouterr().out.startswith("observer: 0 / 3 observed · 0 skipped")
 
 
+def test_a_half_written_interaction_does_not_count_as_observed(cfg, capsys):
+    observe(cfg, "laptop/2026-10-29/10-00-00")
+    observe(cfg, "laptop/2026-10-29/10-05-00")
+    (cfg.model_dir / "operations" / "laptop/2026-10-29/10-05-00.md").unlink()   # the observation alone
+    status(cfg)
+    assert capsys.readouterr().out.startswith("observer: 1 / 3 observed · 0 skipped")
+
+
 def test_failed_last_call_shows_the_detail(cfg, capsys):
     log_calls(cfg, call(ok=False, detail="timed out after 600 s", duration_ms=600_400))
     assert status(cfg) == 0

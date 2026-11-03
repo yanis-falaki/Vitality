@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from vitality_observer.claude import CallResult
-from vitality_observer.config import ObserverConfig
 from vitality_observer import loop as loop_module
-from vitality_observer.loop import ObserveLoop
+from vitality_observer.config import ObserverConfig
+from vitality_observer.loop import BATCH_LIMIT, ObserveLoop
+from vitality_observer.provider.interface import Outcome
 from vitality_observer.work import Interaction, add_skipped, read_skipped, unobserved
 
 
@@ -29,83 +29,88 @@ def capture(cfg: ObserverConfig, name: str) -> None:
     (folder / "interaction.json").write_text("{}")
 
 
-def observe(cfg: ObserverConfig, name: str, text: str = "seen") -> None:
-    path = cfg.model_dir / "observations" / f"{name}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+def evidence(cfg: ObserverConfig, kind: str, name: str) -> Path:
+    """The `observations` or `operations` file of `name`."""
+    return cfg.model_dir / kind / f"{name}.md"
+
+
+def write(cfg: ObserverConfig, name: str, text: str = "seen", kinds: Sequence[str] = ("observations", "operations")) -> None:
+    for kind in kinds:
+        path = evidence(cfg, kind, name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
 
 
 def captures(cfg: ObserverConfig, count: int, device: str = "laptop") -> list[str]:
-    names = [f"{device}/2026-10-25/10-00-{n:02d}" for n in range(count)]
+    names = [f"{device}/2026-10-25/10-{n // 60:02d}-{n % 60:02d}" for n in range(count)]
     for name in names:
         capture(cfg, name)
     return names
 
 
-def result(ok: bool, detail: str = "", limited: bool = False, reset: float | None = None,
-           reached: bool = True) -> CallResult:
-    return CallResult(ok=ok, usage_limit_reset=reset, usage_limited=limited, reached_model=reached,
-                      detail=detail, record={})
+Behaviour = str | tuple[str, float]
 
 
 class FakeObserver:
-    """An Observer that plays back `outcomes`, then succeeds; remembers every call.
+    """An Observer whose outcome is chosen per interaction; remembers every call.
 
-    An outcome is "ok" (writes every file), "fail" (reaches Claude, fails with detail "boom"),
-    "fail:<detail>" (the same with that detail), "unreached" (fails without reaching Claude),
-    "oserror" (raises), "limit", ("limit", reset_epoch), a number (succeeds but writes only
-    that many files, oldest first), or ("fail", number) (fails with "boom" after writing that
-    many files, oldest first).
+    A behaviour is "ok" (writes both files, with the text `call <n>`), "fail" (reached the model,
+    failed with detail "boom", writes nothing), "fail:<detail>" (the same with that detail),
+    "unreached" (failed without reaching the model, detail "no api"), "half" (writes only the
+    observation file, fails without reaching the model), "lie" (ok, but writes nothing),
+    "fail+files" (reached the model and failed with "boom", yet writes both files), or
+    ("wait", seconds) (out of credits: that `wait_seconds`, not reached, writes nothing).
 
-    Once the outcomes run out, a call whose batch holds an interaction in `poison` fails like
-    "fail", and the files of interactions in `unwritten` are never written.
+    Each call takes the next of `rounds`: a behaviour for the whole batch, or a dict of
+    behaviours by name (the rest "ok"). Once they run out, interactions in `poison` "fail"
+    and the others are "ok".
     """
 
-    def __init__(self, cfg: ObserverConfig, *outcomes: str | int | tuple[str, float],
-                 on_call: Callable[[], None] | None = None,
-                 poison: Collection[str] = (), unwritten: Collection[str] = ()):
+    def __init__(self, cfg: ObserverConfig, *rounds: Behaviour | dict[str, Behaviour],
+                 poison: Collection[str] = (), on_call: Callable[[], None] | None = None):
         self.cfg = cfg
-        self.on_call = on_call
-        self.outcomes = list(outcomes)
+        self.rounds = list(rounds)
         self.poison = poison
-        self.unwritten = unwritten
+        self.on_call = on_call
         self.batches: list[list[str]] = []
-        self.contexts: list[list[tuple[str, str]]] = []
         self.called = asyncio.Event()
 
-    async def observe(self, batch: Sequence[Interaction], context: Sequence[tuple[str, str]]) -> CallResult:
-        names = [i.name for i in batch]
-        self.batches.append(names)
-        self.contexts.append(list(context))
+    async def observe(self, batch: Sequence[Interaction]) -> list[Outcome]:
+        self.batches.append([i.name for i in batch])
         self.called.set()
         if self.on_call:
             self.on_call()
-        if self.outcomes:
-            outcome = self.outcomes.pop(0)
-        else:
-            outcome = "fail" if any(name in self.poison for name in names) else "ok"
-        failure = ""
-        match outcome:
+        plan = self.rounds.pop(0) if self.rounds else {name: "fail" for name in self.poison}
+        return [self._one(i.name, plan.get(i.name, "ok") if isinstance(plan, dict) else plan) for i in batch]
+
+    def _one(self, name: str, behaviour: Behaviour) -> Outcome:
+        text = f"call {len(self.batches)}"
+        match behaviour:
+            case "ok":
+                write(self.cfg, name, text)
+                return outcome(name, ok=True)
             case "fail":
-                return result(False, "boom")
-            case str(text) if text.startswith("fail:"):
-                return result(False, text.removeprefix("fail:"))
+                return outcome(name, detail="boom")
+            case str(failure) if failure.startswith("fail:"):
+                return outcome(name, detail=failure.removeprefix("fail:"))
             case "unreached":
-                return result(False, "no claude", reached=False)
-            case "oserror":
-                raise OSError("disk trouble")
-            case "limit":
-                return result(False, "usage limit", limited=True)
-            case ("limit", reset):
-                return result(False, "usage limit", limited=True, reset=reset)
-            case ("fail", int(count)):
-                names, failure = names[:count], "boom"
-            case int(count):
-                names = names[:count]
-        for name in names:
-            if name not in self.unwritten:
-                observe(self.cfg, name)
-        return result(not failure, failure)
+                return outcome(name, reached=False, detail="no api")
+            case "half":
+                write(self.cfg, name, text, kinds=["observations"])
+                return outcome(name, reached=False, detail="half written")
+            case "lie":
+                return outcome(name, ok=True)
+            case "fail+files":
+                write(self.cfg, name, text)
+                return outcome(name, detail="boom")
+            case ("wait", float(seconds) | int(seconds)):
+                return outcome(name, reached=False, detail="out of API credits", wait=seconds)
+        raise AssertionError(f"unknown behaviour {behaviour!r}")
+
+
+def outcome(name: str, ok: bool = False, reached: bool = True, detail: str = "",
+            wait: float | None = None) -> Outcome:
+    return Outcome(name=name, ok=ok, reached_model=reached, detail=detail, wait_seconds=wait, record={})
 
 
 async def cancel(task: asyncio.Task) -> None:
@@ -171,13 +176,13 @@ def skipped(cfg: ObserverConfig) -> dict[str, str]:
 
 
 def is_observed(cfg: ObserverConfig, name: str) -> bool:
-    return (cfg.model_dir / "observations" / f"{name}.md").is_file()
+    return all(evidence(cfg, kind, name).is_file() for kind in ("observations", "operations"))
 
 
-# -- batches ------------------------------------------------------------------------------------
+# -- rule 1: round ------------------------------------------------------------------------------
 
 
-async def test_idle_single_interaction_called_alone(cfg):
+async def test_idle_then_a_single_interaction(cfg):
     observer = FakeObserver(cfg)
     loop = ObserveLoop(cfg, observer)
     assert await loop.step() == "idle"
@@ -189,76 +194,133 @@ async def test_idle_single_interaction_called_alone(cfg):
     assert await loop.step() == "idle"
 
 
-async def test_batch_capped_at_batch_size(cfg):
-    names = captures(cfg, 13)
-    observer = FakeObserver(cfg)
-    loop = ObserveLoop(cfg, observer)
-    assert await loop.step() == "observed"
-    assert await loop.step() == "observed"
-    assert observer.batches == [names[:10], names[10:]]
-
-
-async def test_batch_is_the_oldest_device_skipping_other_devices(cfg):
-    for name in ("laptop/2026-10-25/10-00-00", "desktop/2026-10-25/10-00-01",
-                 "laptop/2026-10-25/10-00-02", "laptop/2026-10-25/10-00-03"):
+async def test_round_takes_oldest_across_devices(cfg):
+    names = ["laptop/2026-10-25/10-00-00", "desktop/2026-10-25/10-00-01", "phone/2026-10-25/10-00-02",
+             "laptop/2026-10-25/10-00-03", "desktop/2026-10-25/10-00-04", "laptop/2026-10-25/10-00-05"]
+    for name in reversed(names):
         capture(cfg, name)
     observer = FakeObserver(cfg)
-    loop = ObserveLoop(cfg, observer)
+    loop = ObserveLoop(cfg, observer)       # direct mode, parallel 4
     assert [await loop.step() for _ in range(3)] == ["observed", "observed", "idle"]
-    assert observer.batches == [
-        ["laptop/2026-10-25/10-00-00", "laptop/2026-10-25/10-00-02", "laptop/2026-10-25/10-00-03"],
-        ["desktop/2026-10-25/10-00-01"],
-    ]
+    assert observer.batches == [names[:4], names[4:]]
 
 
-async def test_context_passed_is_before_first_of_batch(cfg):
-    observe(cfg, "laptop/2026-10-25/09-00-00", "earlier")
-    observe(cfg, "desktop/2026-10-25/09-30-00", "other device")
-    first, second = captures(cfg, 2)
+async def test_direct_round_size_is_parallel(cfg):
+    names = captures(cfg, 5)
     observer = FakeObserver(cfg)
-    await ObserveLoop(cfg, observer).step()
-    assert observer.batches == [[first, second]]
-    assert observer.contexts == [[("laptop/2026-10-25/09-00-00", "earlier")]]
+    loop = ObserveLoop(replace(cfg, parallel=2), observer)
+    for _ in range(3):
+        await loop.step()
+    assert observer.batches == [names[:2], names[2:4], names[4:]]
 
 
-async def test_missing_files_are_taken_by_the_next_call(cfg):
-    names = captures(cfg, 3)
-    observer = FakeObserver(cfg, 2)
+async def test_batch_round_size(cfg):
+    assert BATCH_LIMIT == 100
+    names = captures(cfg, 105)
+    observer = FakeObserver(cfg)
+    loop = ObserveLoop(replace(cfg, mode="batch", parallel=4), observer)
+    assert [await loop.step() for _ in range(3)] == ["observed", "observed", "idle"]
+    assert observer.batches == [names[:100], names[100:]]
+
+
+async def test_skipped_interactions_are_not_offered_again(cfg):
+    a, b = captures(cfg, 2)
+    add_skipped(cfg.state_dir / "skipped.txt", a, "boom")
+    observer = FakeObserver(cfg)
     loop = ObserveLoop(cfg, observer)
     assert await loop.step() == "observed"
+    assert await loop.step() == "idle"
+    assert observer.batches == [[b]]
+
+
+# -- rule 2: judge by the disk ------------------------------------------------------------------
+
+
+async def test_some_written_is_observed(cfg):
+    a, b = captures(cfg, 2)
+    observer = FakeObserver(cfg, {a: "unreached"})
+    loop = ObserveLoop(cfg, observer)
     assert await loop.step() == "observed"
-    assert observer.batches == [names, [names[2]]]
+    assert is_observed(cfg, b) and not is_observed(cfg, a)
+    assert await loop.step() == "observed"
+    assert observer.batches == [[a, b], [a]]
+
+
+async def test_an_ok_outcome_without_files_is_a_failure_and_no_strike(cfg):
+    (name,) = captures(cfg, 1)
+    loop = ObserveLoop(cfg, FakeObserver(cfg, "lie", "lie", "lie"), max_attempts=1)
+    assert [await loop.step() for _ in range(3)] == ["failed"] * 3
+    assert skipped(cfg) == {}
+
+
+async def test_half_written_is_redone(cfg):
+    (name,) = captures(cfg, 1)
+    observer = FakeObserver(cfg, "half", "ok")
+    loop = ObserveLoop(cfg, observer)
+    assert await loop.step() == "failed"
+    assert evidence(cfg, "observations", name).read_text() == "call 1"
+    assert not evidence(cfg, "operations", name).exists()
+
+    assert await loop.step() == "observed"
+    assert observer.batches == [[name], [name]]
+    assert evidence(cfg, "observations", name).read_text() == "call 2"
+    assert evidence(cfg, "operations", name).read_text() == "call 2"
     assert await loop.step() == "idle"
 
 
-# -- rule 1: back off ---------------------------------------------------------------------------
+# -- rule 3: wait -------------------------------------------------------------------------------
 
 
-async def test_backoff_doubles_up_to_the_maximum(cfg):
-    captures(cfg, 1)
-    sleeps = Sleeps(9)
-    await run_to_stop(ObserveLoop(cfg, FakeObserver(cfg, *["unreached"] * 9), sleep=sleeps))
-    assert sleeps.seconds == [5, 10, 20, 40, 80, 160, 300, 300, 300]
-
-
-async def test_a_call_that_writes_nothing_backs_off_whatever_ok_says(cfg):
-    captures(cfg, 3)
-    sleeps = Sleeps(8)
-    await run_to_stop(ObserveLoop(cfg, FakeObserver(cfg, *[0] * 8), sleep=sleeps))
-    assert sleeps.seconds == [5, 10, 20, 40, 80, 160, 300, 300]
-
-
-async def test_backoff_resets_after_an_observed_round(cfg):
-    captures(cfg, 2)
+async def test_wait_on_credits(cfg):
+    names = captures(cfg, 3)
     sleeps = Sleeps(3)
-    observer = FakeObserver(cfg, "unreached", "unreached", "ok", "unreached")
-    await run_to_stop(ObserveLoop(replace(cfg, batch_size=1), observer, sleep=sleeps))
-    assert sleeps.seconds == [5, 10, 5]
+    observer = FakeObserver(cfg, *[("wait", 21600)] * 3)
+    await run_to_stop(ObserveLoop(cfg, observer, sleep=sleeps, max_attempts=1))
+    assert sleeps.seconds == [21600] * 3
+    assert skipped(cfg) == {}
+    assert observer.batches == [names] * 3
+
+
+async def test_wait_takes_the_largest(cfg):
+    a, b, c = captures(cfg, 3)
+    sleeps = Sleeps(1)
+    observer = FakeObserver(cfg, {a: ("wait", 30), b: ("wait", 21600), c: "fail"})
+    await run_to_stop(ObserveLoop(cfg, observer, sleep=sleeps))
+    assert sleeps.seconds == [21600]
+
+
+async def test_a_wait_leaves_the_backoff_alone(cfg):
+    captures(cfg, 1)
+    sleeps = Sleeps(4)
+    observer = FakeObserver(cfg, "unreached", ("wait", 21600), "unreached", "unreached")
+    await run_to_stop(ObserveLoop(cfg, observer, sleep=sleeps))
+    assert sleeps.seconds == [5, 21600, 10, 20]
+
+
+async def test_a_wait_with_some_written_is_observed_without_sleeping(cfg):
+    a, b = captures(cfg, 2)
+    sleeps = Sleeps(100)
+    observer = FakeObserver(cfg, {a: ("wait", 21600)}, "ok")
+    loop = ObserveLoop(cfg, observer, sleep=sleeps, rescan_seconds=0.01)
+    await run_until(loop, settled(cfg))
+    assert sleeps.seconds == []
+    assert observer.batches == [[a, b], [a]]
+
+
+# -- rule 4: back off ---------------------------------------------------------------------------
+
+
+async def test_backoff_doubles_and_resets(cfg):
+    captures(cfg, 2)
+    sleeps = Sleeps(9)
+    observer = FakeObserver(cfg, *["unreached"] * 8, "ok", "unreached")
+    await run_to_stop(ObserveLoop(replace(cfg, parallel=1), observer, sleep=sleeps))
+    assert sleeps.seconds == [5, 10, 20, 40, 80, 160, 300, 300, 5]
 
 
 async def test_backoff_resets_after_an_idle_round(cfg):
     a, = captures(cfg, 1)
-    sleeps = Sleeps(3, on_sleep=lambda n: observe(cfg, a) if n == 1 else None)     # done by hand meanwhile
+    sleeps = Sleeps(3, on_sleep=lambda n: write(cfg, a) if n == 1 else None)     # done by hand meanwhile
     observer = FakeObserver(cfg, "unreached", "unreached", "unreached")
     loop = ObserveLoop(cfg, observer, sleep=sleeps, rescan_seconds=0.01)
     task = asyncio.create_task(loop.run())
@@ -268,24 +330,6 @@ async def test_backoff_resets_after_an_idle_round(cfg):
     with pytest.raises(StopRun):
         await asyncio.wait_for(task, 5)
     assert sleeps.seconds == [5, 5, 10]
-
-
-@pytest.mark.parametrize("reset,expected", [(900.0, 60), (1010.0, 60), (1120.0, 120), (None, 1800)])
-async def test_usage_limit_wait(cfg, reset, expected):
-    captures(cfg, 1)
-    sleeps = Sleeps(1)
-    outcome = "limit" if reset is None else ("limit", reset)
-    loop = ObserveLoop(cfg, FakeObserver(cfg, outcome), sleep=sleeps, clock=lambda: 1000.0)
-    await run_to_stop(loop)
-    assert sleeps.seconds == [expected]
-
-
-async def test_usage_limit_leaves_the_backoff_alone(cfg):
-    captures(cfg, 1)
-    sleeps = Sleeps(5)
-    observer = FakeObserver(cfg, "unreached", "limit", "limit", "unreached", "unreached")
-    await run_to_stop(ObserveLoop(cfg, observer, sleep=sleeps))
-    assert sleeps.seconds == [5, 1800, 1800, 10, 20]
 
 
 async def test_wake_does_not_cut_a_backoff_short(cfg):
@@ -309,127 +353,74 @@ async def test_wake_does_not_cut_a_backoff_short(cfg):
         await cancel(task)
 
 
-# -- rule 2: isolate ----------------------------------------------------------------------------
+async def test_an_error_in_a_round_is_a_failed_round(cfg, caplog):
+    captures(cfg, 1)
+    (cfg.state_dir / "skipped.txt").mkdir(parents=True)     # unreadable as a file
+    sleeps = Sleeps(3)
+    observer = FakeObserver(cfg)
+    loop = ObserveLoop(cfg, observer, sleep=sleeps)
+    with caplog.at_level(logging.INFO, logger="vitality_observer"):
+        await run_to_stop(loop)
+    assert sleeps.seconds == [5, 10, 20]
+    assert len([r for r in caplog.records if r.exc_info]) == 1      # the same error is logged once
+    assert observer.batches == []
 
 
-async def test_a_failed_batch_is_followed_by_the_oldest_alone_then_full_batches(cfg):
-    names = captures(cfg, 13)
-    observer = FakeObserver(cfg, "fail", "ok")
+# -- rule 5: strike -----------------------------------------------------------------------------
+
+
+async def test_strike_in_mixed_round(cfg):
+    bad, *good = captures(cfg, 11)
+    observer = FakeObserver(cfg, poison={bad})
     loop = ObserveLoop(cfg, observer)
-    assert await loop.step() == "failed"
     assert await loop.step() == "observed"
+    assert observer.batches == [[bad, *good[:3]]]
+    assert skipped(cfg) == {}               # one strike
+    assert [await loop.step() for _ in range(2)] == ["observed", "observed"]
+    assert observer.batches[1:] == [[bad, *good[3:6]], [bad, *good[6:9]]]
+    assert skipped(cfg) == {bad: "boom"}    # the third strike
     assert await loop.step() == "observed"
-    assert observer.batches == [names[:10], names[:1], names[1:11]]
+    assert observer.batches[3] == [good[9]]
 
 
-async def test_isolation_lasts_until_a_round_is_observed(cfg):
-    names = captures(cfg, 4)
-    observer = FakeObserver(cfg, "unreached", "unreached", "unreached", "ok", "ok")
-    loop = ObserveLoop(cfg, observer)
-    for _ in range(5):
-        await loop.step()
-    assert observer.batches == [names, names[:1], names[:1], names[:1], names[1:]]
-
-
-async def test_a_call_that_wrote_some_resumes_full_batches(cfg):
-    names = captures(cfg, 5)
-    observer = FakeObserver(cfg, "unreached", ("fail", 1), "ok")
-    loop = ObserveLoop(cfg, observer)
-    assert [await loop.step() for _ in range(3)] == ["failed", "observed", "observed"]
-    assert observer.batches == [names, names[:1], names[1:]]
-
-
-async def test_isolated_batches_stay_on_one_device(cfg):
-    for name in ("laptop/2026-10-25/10-00-00", "desktop/2026-10-25/10-00-01",
-                 "desktop/2026-10-25/10-00-02"):
-        capture(cfg, name)
-    observer = FakeObserver(cfg, "fail", "ok", "ok")
-    loop = ObserveLoop(cfg, observer)
-    for _ in range(3):
-        await loop.step()
-    assert observer.batches == [
-        ["laptop/2026-10-25/10-00-00"], ["laptop/2026-10-25/10-00-00"],
-        ["desktop/2026-10-25/10-00-01", "desktop/2026-10-25/10-00-02"],
-    ]
-
-
-async def test_a_usage_limit_does_not_isolate(cfg):
-    names = captures(cfg, 3)
-    observer = FakeObserver(cfg, "limit", "ok")
-    loop = ObserveLoop(cfg, observer)
-    assert await loop.step() == "failed"
-    assert await loop.step() == "observed"
-    assert observer.batches == [names, names]
-
-
-# -- rule 3: strike -----------------------------------------------------------------------------
-
-
-async def test_a_lone_interaction_that_fails_three_times_after_reaching_claude_is_skipped(cfg):
+async def test_a_lone_failure_three_times_is_skipped(cfg):
     bad, *good = captures(cfg, 4)
     observer = FakeObserver(cfg, poison={bad})
-    loop = ObserveLoop(replace(cfg, batch_size=1), observer, sleep=Sleeps(100), rescan_seconds=0.01)
+    loop = ObserveLoop(replace(cfg, parallel=1), observer, sleep=Sleeps(100), rescan_seconds=0.01)
     await run_until(loop, settled(cfg))
     assert skipped(cfg) == {bad: "boom"}
     assert observer.batches == [[bad]] * 3 + [[name] for name in good]
     assert all(is_observed(cfg, name) for name in good)
 
 
-async def test_a_lone_call_that_never_reaches_claude_is_never_struck(cfg):
+async def test_two_bad_interactions_are_both_skipped(cfg):
+    bad1, bad2, *good = captures(cfg, 8)
+    observer = FakeObserver(cfg, poison={bad1, bad2})
+    loop = ObserveLoop(cfg, observer, sleep=Sleeps(200), rescan_seconds=0.01)
+    await run_until(loop, settled(cfg))
+    assert skipped(cfg) == {bad1: "boom", bad2: "boom"}
+    assert all(is_observed(cfg, name) for name in good)
+
+
+async def test_a_failure_that_did_not_reach_the_model_is_never_struck(cfg):
     names = captures(cfg, 2)
-    observer = FakeObserver(cfg, *["unreached"] * 12)
-    loop = ObserveLoop(cfg, observer, max_attempts=1)
-    for _ in range(12):
-        assert await loop.step() == "failed"
-    assert skipped(cfg) == {}
-    assert observer.batches == [names] + [names[:1]] * 11
-
-
-async def test_a_failed_batch_of_several_strikes_no_one(cfg):
-    names = captures(cfg, 3)
-    observer = FakeObserver(cfg, "fail", "fail")
-    loop = ObserveLoop(replace(cfg, batch_size=2), observer, max_attempts=1)
-    assert await loop.step() == "failed"        # [a, b]
-    assert skipped(cfg) == {}
-    assert await loop.step() == "failed"        # a alone: this one strikes, and max_attempts is 1
-    assert skipped(cfg) == {names[0]: "boom"}
-    assert observer.batches == [names[:2], names[:1]]
-
-
-async def test_a_usage_limit_strikes_no_one(cfg):
-    captures(cfg, 1)
-    loop = ObserveLoop(cfg, FakeObserver(cfg, *["limit"] * 4), max_attempts=1)
-    for _ in range(4):
+    loop = ObserveLoop(cfg, FakeObserver(cfg, *["unreached"] * 6), max_attempts=1)
+    for _ in range(6):
         assert await loop.step() == "failed"
     assert skipped(cfg) == {}
 
 
-async def test_an_error_in_a_round_strikes_no_one(cfg, caplog):
+async def test_half_written_is_not_struck(cfg):
     captures(cfg, 1)
-    sleeps = Sleeps(3)
-    observer = FakeObserver(cfg, "oserror", "oserror", "oserror")
-    loop = ObserveLoop(cfg, observer, sleep=sleeps, max_attempts=1)
-    with caplog.at_level(logging.INFO, logger="vitality_observer"):
-        await run_to_stop(loop)
-    assert sleeps.seconds == [5, 10, 20]
-    assert len([r for r in caplog.records if r.exc_info]) == 1      # the same error is logged once
+    loop = ObserveLoop(cfg, FakeObserver(cfg, "half", "half"), max_attempts=1)
+    assert [await loop.step() for _ in range(2)] == ["failed", "failed"]
     assert skipped(cfg) == {}
-    assert len({tuple(batch) for batch in observer.batches}) == 1   # and the batch is not narrowed
 
 
-async def test_a_lone_ok_call_that_writes_nothing_strikes(cfg):
+async def test_a_failure_whose_files_are_on_disk_is_not_struck(cfg):
     (name,) = captures(cfg, 1)
-    observer = FakeObserver(cfg, 0, 0, 0)
-    loop = ObserveLoop(cfg, observer)
-    assert [await loop.step() for _ in range(3)] == ["failed"] * 3
-    assert skipped(cfg) == {name: "no observation written"}
-    assert await loop.step() == "idle"
-
-
-async def test_files_missing_after_an_observed_call_strike_no_one(cfg):
-    a, b = captures(cfg, 2)
-    loop = ObserveLoop(cfg, FakeObserver(cfg, unwritten={a}), max_attempts=1)
-    assert await loop.step() == "observed"      # b written, a not
+    loop = ObserveLoop(cfg, FakeObserver(cfg, "fail+files"), max_attempts=1)
+    assert await loop.step() == "observed"
     assert skipped(cfg) == {}
 
 
@@ -439,7 +430,7 @@ async def test_an_observed_interaction_loses_its_strikes(cfg):
     loop = ObserveLoop(cfg, observer)
     for _ in range(3):
         await loop.step()
-    (cfg.model_dir / "observations" / f"{name}.md").unlink()       # to be observed again
+    evidence(cfg, "observations", name).unlink()       # to be observed again
     for _ in range(2):
         assert await loop.step() == "failed"
     assert skipped(cfg) == {}       # two strikes, not four
@@ -462,54 +453,6 @@ async def test_a_failed_skip_write_keeps_the_strikes(cfg, monkeypatch):
         await loop.step()           # second strike: skipping it fails
     assert await loop.step() == "failed"        # a third strike, not a first: skipped now
     assert skipped(cfg) == {name: "boom"}
-
-
-async def test_skipped_interactions_are_not_offered_again(cfg):
-    a, b = captures(cfg, 2)
-    add_skipped(cfg.state_dir / "skipped.txt", a, "boom")
-    observer = FakeObserver(cfg)
-    loop = ObserveLoop(cfg, observer)
-    assert await loop.step() == "observed"
-    assert await loop.step() == "idle"
-    assert observer.batches == [[b]]
-
-
-# -- regression scenarios -----------------------------------------------------------------------
-
-
-async def test_bad_head_after_many_non_model_failures_is_skipped(cfg):
-    """Scenario A: the backoff is at its maximum when a bad interaction reaches the head."""
-    bad, *good = captures(cfg, 4)
-    observer = FakeObserver(cfg, *["unreached"] * 8, poison={bad})
-    sleeps = Sleeps(100)
-    loop = ObserveLoop(cfg, observer, sleep=sleeps, rescan_seconds=0.01)
-    await run_until(loop, settled(cfg))
-    assert 300 in sleeps.seconds
-    assert skipped(cfg) == {bad: "boom"}
-    assert observer.batches[8:] == [[bad]] * 3 + [good[:1], good[1:]]
-    assert all(is_observed(cfg, name) for name in good)
-
-
-async def test_two_bad_interactions_in_a_row_are_both_skipped(cfg):
-    """Scenario B: the second bad interaction must not stall the loop behind the first."""
-    bad1, bad2, *good = captures(cfg, 8)
-    observer = FakeObserver(cfg, poison={bad1, bad2})
-    loop = ObserveLoop(cfg, observer, sleep=Sleeps(200), rescan_seconds=0.01)
-    await run_until(loop, settled(cfg))
-    assert skipped(cfg) == {bad1: "boom", bad2: "boom"}
-    assert all(is_observed(cfg, name) for name in good)
-
-
-async def test_partial_timeouts_skip_no_one(cfg):
-    """Scenario C: every call writes its 3 oldest, then times out after reaching Claude."""
-    names = captures(cfg, 30)
-    sleeps = Sleeps(100)
-    observer = FakeObserver(cfg, *[("fail", 3)] * 40)
-    loop = ObserveLoop(cfg, observer, sleep=sleeps, rescan_seconds=0.01)
-    await run_until(loop, settled(cfg))
-    assert skipped(cfg) == {}
-    assert all(is_observed(cfg, name) for name in names)
-    assert sleeps.seconds == []         # every round was observed: no backoff
 
 
 # -- wake, rescan, cancel -----------------------------------------------------------------------
@@ -567,31 +510,12 @@ async def test_interaction_arriving_during_a_call_is_picked_up_promptly(cfg):
         await cancel(task)
 
 
-async def test_usage_limit_after_some_files_is_observed_and_the_next_call_waits(cfg):
-    a, b = captures(cfg, 2)
-    calls = []
-
-    class LimitAfterOne:
-        async def observe(self, batch, context):
-            calls.append([i.name for i in batch])
-            if len(calls) == 1:
-                observe(cfg, batch[0].name)
-            return result(False, "usage limit", limited=True, reset=1120.0)
-
-    sleeps = Sleeps(1)
-    loop = ObserveLoop(cfg, LimitAfterOne(), sleep=sleeps, clock=lambda: 1000.0, max_attempts=1)
-    await run_to_stop(loop)
-    assert calls == [[a, b], [b]]       # observed first, no sleep; the second call waits
-    assert sleeps.seconds == [120]
-    assert skipped(cfg) == {}
-
-
 # -- logging ------------------------------------------------------------------------------------
 
 
 async def test_idle_resets_backoff_and_failure_logging(cfg, caplog):
     a, = captures(cfg, 1)
-    sleeps = Sleeps(3, on_sleep=lambda n: observe(cfg, a) if n == 1 else None)
+    sleeps = Sleeps(3, on_sleep=lambda n: write(cfg, a) if n == 1 else None)
     loop = ObserveLoop(cfg, FakeObserver(cfg, "fail", "fail", "fail"), sleep=sleeps, rescan_seconds=0.01)
     with caplog.at_level(logging.INFO, logger="vitality_observer"):
         task = asyncio.create_task(loop.run())
@@ -605,23 +529,23 @@ async def test_idle_resets_backoff_and_failure_logging(cfg, caplog):
 
 async def test_failure_is_logged_again_when_its_detail_changes(cfg, caplog):
     captures(cfg, 2)
-    observer = FakeObserver(cfg, "fail:x", "fail:x", "fail:y", "ok")
+    observer = FakeObserver(cfg, "unreached", "unreached", "fail:y", "ok")
     loop = ObserveLoop(cfg, observer)
     with caplog.at_level(logging.INFO, logger="vitality_observer"):
         for _ in range(4):
             await loop.step()
     messages = [r.getMessage() for r in caplog.records]
     assert [m for m in messages if "failed, retrying" in m] == [
-        "observing failed, retrying with backoff: x", "observing failed, retrying with backoff: y"]
+        "observing failed, retrying with backoff: no api", "observing failed, retrying with backoff: y"]
     assert len([m for m in messages if "works again" in m]) == 1
 
 
-async def test_recovery_and_each_observed_batch_are_logged(cfg, caplog):
+async def test_recovery_and_each_observed_round_are_logged(cfg, caplog):
     names = captures(cfg, 3)
-    observer = FakeObserver(cfg, "fail", 0, "ok", "ok")
-    loop = ObserveLoop(cfg, observer, max_attempts=100)
+    observer = FakeObserver(cfg, "unreached", {names[1]: "unreached", names[2]: "unreached"}, "ok")
+    loop = ObserveLoop(cfg, observer)
     with caplog.at_level(logging.INFO, logger="vitality_observer"):
-        for _ in range(4):
+        for _ in range(3):
             await loop.step()
     messages = [r.getMessage() for r in caplog.records]
     assert len([m for m in messages if "works again" in m]) == 1
@@ -639,13 +563,13 @@ async def test_a_skip_is_logged(cfg, caplog):
     assert len(skips) == 1 and name in skips[0] and "boom" in skips[0]
 
 
-async def test_a_usage_limit_wait_is_logged_once_with_its_end(cfg, caplog):
+async def test_a_wait_is_logged_once_with_its_end(cfg, caplog):
     captures(cfg, 1)
-    observer = FakeObserver(cfg, ("limit", 1120.0), ("limit", 1120.0), "ok")
+    observer = FakeObserver(cfg, ("wait", 21600), ("wait", 21600), "ok")
     loop = ObserveLoop(cfg, observer, clock=lambda: 1000.0)
     with caplog.at_level(logging.INFO, logger="vitality_observer"):
         for _ in range(3):
             await loop.step()
-    waits = [r.getMessage() for r in caplog.records if "usage limit" in r.getMessage()]
-    assert waits == ["usage limit reached, waiting until 1970-01-01T00:18:40+00:00"]
+    waits = [r.getMessage() for r in caplog.records if "waiting" in r.getMessage()]
+    assert waits == ["out of API credits, waiting until 1970-01-01T06:16:40+00:00"]
     assert len([r for r in caplog.records if "works again" in r.getMessage()]) == 1
