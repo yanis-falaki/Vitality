@@ -91,15 +91,17 @@ def local_span(captured: Captured) -> tuple[datetime, datetime]:
     return captured.start.astimezone(zone), captured.end.astimezone(zone)
 
 
-def build_params(interaction: Interaction, config: ObserverConfig) -> dict:
+def build_params(interaction: Interaction, config: ObserverConfig, captured: Captured | None = None) -> dict:
     """The keyword arguments of `messages.create` (and the `params` of a batch request) for `interaction`.
 
     The user message is a text header with the local times, then for each screenshot, in order,
     a line saying which one it is and the image. Excludes `betas`, `fallbacks` and `timeout`.
+    `captured` is the interaction's `interaction.json` if already read; otherwise it is read here.
     Raises ValueError, naming the file, if `interaction.json` or a listed screenshot is
-    missing or unreadable.
+    missing or unreadable, or a screenshot's name does not start with digits.
     """
-    captured = read_captured(interaction)
+    if captured is None:
+        captured = read_captured(interaction)
     start, end = local_span(captured)
     content: list[dict] = [{
         "type": "text",
@@ -134,7 +136,8 @@ def parse_reply(text: str) -> Reply:
 def _seconds_in(file: str) -> int:
     # `0007.webp` and `0007-2.webp` were both captured 7 s after the first input.
     match = re.match(r"\d+", file)
-    assert match, file  # the protocol guarantees shot files start with digits
+    if match is None:   # the protocol guarantees shot files start with digits
+        raise ValueError(f"screenshot file {file} does not start with digits")
     return int(match.group())
 
 

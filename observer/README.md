@@ -93,7 +93,8 @@ round takes the oldest unobserved interactions across all devices:
 - **Batch mode:** up to 100 interactions go out as one Message Batch, and the observer polls
   until it ends (results come in minutes to an hour, at most 24 hours). Batches do not fall
   back to another model. A batch that has not ended 25 hours after it was submitted is given up
-  on.
+  on. Restarting the observer while a batch is in flight submits that batch again, so it is paid
+  for twice.
 
 Failures follow three rules.
 
@@ -110,7 +111,9 @@ Failures follow three rules.
    missing or invalid. Three strikes and it is **skipped**: added to `skipped.txt` with the last
    reason and never offered again. Nothing else counts: not a network failure, a timeout, a rate
    limit, an out-of-credit error, a failure of a whole batch, or files that could not be
-   written.
+   written. Nor a round of two or more where every request was rejected with the same 400 or 413
+   error: that points at the request, not the interactions, so the round just backs off and logs
+   one warning naming the error.
 
 A skip is cheap to undo: the captures are kept, and deleting the interaction's line from
 `skipped.txt` offers it again (see below). Strikes are kept in memory only, so a restart clears

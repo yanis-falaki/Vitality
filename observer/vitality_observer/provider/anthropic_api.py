@@ -237,7 +237,7 @@ def _prepare(interaction: Interaction, config: ObserverConfig) -> tuple[Captured
     captured: Captured | None = None
     try:
         captured = read_captured(interaction)
-        return captured, build_params(interaction, config)
+        return captured, build_params(interaction, config, captured)
     except ValueError as e:
         return captured, _Verdict(False, True, _short(str(e)))
     except ZoneInfoNotFoundError as e:

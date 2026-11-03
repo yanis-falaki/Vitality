@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Turns each captured Vitality interaction into a Markdown observation via the Anthropic API"
 requires-python = ">=3.12"
 dependencies = [
-    "anthropic",
+    "anthropic>=2.4",
     "vitality-protocol",
     "vitality-usermodel",
     "watchfiles",

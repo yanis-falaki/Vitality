@@ -89,6 +89,24 @@ def test_missing_screenshot(tmp_path: Path):
         build_params(interaction, ObserverConfig())
 
 
+def test_build_params_uses_a_captured_already_read(tmp_path: Path):
+    captured = make_captured("2026-11-03T14:22:05Z")
+    interaction = make_interaction(tmp_path, captured)
+    (interaction.folder / "interaction.json").unlink()      # not read again
+    assert build_params(interaction, ObserverConfig(), captured) == build_params(
+        make_interaction(tmp_path / "other", captured), ObserverConfig())
+
+
+def test_screenshot_name_without_digits(tmp_path: Path):
+    captured = make_captured("2026-11-03T14:22:05Z", seconds=(0,))
+    interaction = make_interaction(tmp_path, captured)
+    shot = captured.shots[0].model_copy(update={"file": "shot.webp"})
+    (interaction.folder / "shot.webp").write_bytes(b"x")
+    odd = captured.model_copy(update={"shots": [shot]})
+    with pytest.raises(ValueError, match=re.escape("screenshot file shot.webp does not start with digits")):
+        build_params(interaction, ObserverConfig(), odd)
+
+
 def test_read_captured_rejects_missing_and_invalid(tmp_path: Path):
     captured = make_captured("2026-11-03T14:22:05Z")
     interaction = make_interaction(tmp_path, captured)

@@ -538,7 +538,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic" },
+    { name = "anthropic", specifier = ">=2.4" },
     { name = "vitality-protocol", editable = "../protocol" },
     { name = "vitality-usermodel", editable = "../usermodel" },
     { name = "watchfiles" },
