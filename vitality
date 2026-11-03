@@ -2,7 +2,7 @@
 # The owner's helper for running Vitality with Docker Compose. Run it from anywhere; it works in
 # the folder it lives in.
 #
-#   ./vitality setup            create .env and the data folders, check the Claude login
+#   ./vitality setup            create .env, the data folders and the model repo; check the logins
 #   ./vitality status           containers, then the server's and the observer's status
 #   ./vitality logs [service]   follow the logs (service: server or observer; default: both)
 #   ./vitality upgrade          fast-forward to the newest main, then rebuild and restart
@@ -54,7 +54,32 @@ data_dir() {
 
 # == Commands ==
 
-# Create .env and the data folders, and check that the owner's Claude Code is logged in. Safe to rerun.
+# Make the model folder a git repo, once, holding the two starting files. The files already
+# there are never overwritten. The repo is the modeler's history; the observer only fills in
+# observations/ and operations/, which the modeler's commits will pick up.
+setup_model_repo() {
+    local model="$1" template
+    [[ -e $model/.git ]] && return 0
+    run git -C "$model" init -q
+    for template in user-context.md modeler-notes.md; do
+        if [[ -e $model/$template ]]; then
+            echo "$template already exists in the model folder; leaving it alone."
+        else
+            run cp "usermodel/templates/$template" "$model/$template"
+        fi
+    done
+    run git -C "$model" add user-context.md modeler-notes.md
+    # Only when git has no identity of its own (a fresh VM): a commit needs one.
+    local identity=()
+    show git -C "$model" config user.email
+    if [[ -z "$(git -C "$model" config user.email || true)" ]]; then
+        identity=(-c user.name=Vitality -c user.email=vitality@localhost)
+    fi
+    run git -C "$model" ${identity[@]+"${identity[@]}"} commit -q -m "model: start"
+    echo "The model folder is a git repo now (commit 'model: start')."
+}
+
+# Create .env, the data folders and the model repo, and check the logins. Safe to rerun.
 cmd_setup() {
     if [[ -f .env ]]; then
         echo ".env already exists; leaving it alone."
@@ -62,16 +87,19 @@ cmd_setup() {
         cp .env.example .env
         echo "Created .env from .env.example."
     fi
+    chmod 600 .env   # it holds the API key: only the owner may read it
 
     local data
     data="$(data_dir)"
     mkdir -p "$data/server/captures" "$data/model" "$data/observer"
+    mkdir -p "$data/model/observations" "$data/model/operations" "$data/modeler"
     chmod 700 "$data"   # it holds screenshots: only the owner may look inside
     echo "Data folders are in place under $data (only you can read them)"
 
-    # The login is the file ~/.claude/.credentials.json, which the observer reads through the
-    # ~/.claude mount. (compose.yaml makes a missing ~/.claude an error, so Docker cannot create it
-    # owned by root.)
+    setup_model_repo "$data/model"
+
+    # The login is the file ~/.claude/.credentials.json. The observer no longer uses it (it calls the
+    # API with a key); the modeler of a later phase will, through a ~/.claude mount.
     # On a desktop with a keyring (gnome-keyring, KWallet) Claude Code keeps the login there instead,
     # and the container cannot use it: run the VM side on a server.
     if [[ ! -f $HOME/.claude/.credentials.json ]]; then
@@ -79,6 +107,12 @@ cmd_setup() {
 (~/.claude/.credentials.json is missing). Run 'claude', then '/login' inside it, and run
 ./vitality setup again. On a desktop with a keyring the login is not stored in that file, so
 run the VM side on a server."
+    fi
+
+    if [[ -z "$(env_file_value ANTHROPIC_API_KEY)" ]]; then
+        die "ANTHROPIC_API_KEY is empty in .env. The observer needs an API key from your Claude
+Console organization (a workspace API key): put it on its own line as ANTHROPIC_API_KEY=sk-ant-...
+and run ./vitality setup again."
     fi
 
     local allowed
@@ -138,7 +172,7 @@ usage() {
     cat <<'EOF'
 usage: ./vitality <command>
 
-  setup             create .env and the data folders, check the Claude login
+  setup             create .env, the data folders and the model repo; check the logins
   status            containers, then the server's and the observer's status
   logs [service]    follow the logs (service: server or observer; default: both)
   upgrade           fast-forward to the newest main, then rebuild and restart

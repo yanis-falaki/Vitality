@@ -67,7 +67,8 @@ services:
       retries: 3
       start_period: 30s
 
-  # Reads new captures and has Claude Code write an observation of each into /model.
+  # Reads new captures and has Claude (through the Anthropic API) write an observation and the
+  # operations of each interaction into /model.
   observer:
     <<: *common
     image: vitality-observer
@@ -75,18 +76,16 @@ services:
       context: .
       dockerfile: observer/Dockerfile
     command: ["vitality-observer", "run"]
-    # A small init as process 1, which reaps processes that `claude` runs leave orphaned.
+    # A small init as process 1, to reap any process that is left orphaned.
     init: true
     environment:
-      OBSERVER_BATCH_SIZE: ${OBSERVER_BATCH_SIZE:-10}
-      OBSERVER_CONTEXT_SIZE: ${OBSERVER_CONTEXT_SIZE:-15}
+      # An empty key makes the observer refuse to start (other `docker compose` commands still work).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OBSERVER_MODE: ${OBSERVER_MODE:-direct}
+      OBSERVER_PARALLEL: ${OBSERVER_PARALLEL:-4}
+      OBSERVER_MODEL: ${OBSERVER_MODEL:-claude-sonnet-5-5}
+      OBSERVER_EFFORT: ${OBSERVER_EFFORT:-low}
       OBSERVER_CALL_TIMEOUT_SECONDS: ${OBSERVER_CALL_TIMEOUT_SECONDS:-600}
-      OBSERVER_MODEL: ${OBSERVER_MODEL:-}
-    # /home/observer is Claude Code's home: private and in memory, so it can write its caches without
-    # touching the host. (/tmp is listed again because this replaces the shared tmpfs list.)
-    tmpfs:
-      - /tmp
-      - /home/observer:mode=0700,uid=${VITALITY_UID:-1000},gid=${VITALITY_GID:-1000}
     # As for the server: a missing source folder is an error, never created by Docker.
     volumes:
       # What the server captured: read-only, the observer never changes it.
@@ -95,23 +94,20 @@ services:
         target: /captures
         read_only: true
         bind: {create_host_path: false}
-      # The observations Claude writes (and the folder it works in).
+      # The observations and operations the observer writes: only these two folders of the model
+      # (a git repo that the modeler will own), never the rest of it.
       - type: bind
-        source: ${VITALITY_DATA:-${HOME}/vitality-data}/model
-        target: /model
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/model/observations
+        target: /model/observations
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/model/operations
+        target: /model/operations
         bind: {create_host_path: false}
       # The observer's own record: calls.jsonl and skipped.txt.
       - type: bind
         source: ${VITALITY_DATA:-${HOME}/vitality-data}/observer
         target: /state
-        bind: {create_host_path: false}
-      # The owner's Claude Code login (.credentials.json) and settings, shared with the observer,
-      # read-write (see "The shared ~/.claude" in README.md). Only the folder: Claude Code saves
-      # ~/.claude.json by renaming a new file over it, which a single-file mount breaks. The
-      # observer keeps its own .claude.json in its tmpfs home.
-      - type: bind
-        source: ${HOME}/.claude
-        target: /home/observer/.claude
         bind: {create_host_path: false}
       # Timestamps in the host's time zone.
       - /etc/localtime:/etc/localtime:ro
