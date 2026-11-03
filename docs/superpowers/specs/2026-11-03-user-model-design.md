@@ -50,7 +50,7 @@ the VM.
 |---|---|
 | Hierarchy | Tempo's four levels: operations → actions → activities → strivings, with observations as the evidence beneath operations |
 | Atomic unit | One observation per interaction (median 8 s, 2 screenshots; none over 3 min in the first 1,103) |
-| Storage | Markdown + git as the single source of truth; no database, no persisted index. Tools build the graph in memory when needed |
+| Storage | Markdown + git as the single source of truth; no database, no persisted index. A later UI can build a graph in memory from the frontmatter |
 | Evidence in git | Tracked. Observations and operations are committed by the modeler together with each run |
 | Observations and operations | Separate files, one of each per interaction, made by one call |
 | Observation call | Direct Claude API call (not an agent), all screenshots, no user context, no earlier observations, JSON out, code writes files |
@@ -210,8 +210,7 @@ locked: false
 ### Rules across kinds
 
 - **Links point up.** An operation never names its action; an action names its activities; an
-  activity names its strivings. Questions in the other direction are answered by searching or by the
-  in-memory graph.
+  activity names its strivings. Questions in the other direction are answered by searching for the ID.
 - **Every operation belongs to exactly one action** (Tempo's segmentation: contiguous, non-overlapping,
   covering all operations). A trivial operation forms a small action of its own.
 - **IDs never change and are never reused.** Actions take the start time of their first operation,
@@ -425,7 +424,6 @@ Contract first, as the rest of Vitality: components have a Protocol (`interface.
 ```
 model/vitality_model/          shared library and the vitality-model command
   formats.py                   the frontmatter of each kind as Pydantic models; read/write a file
-  graph.py                     load the folder into an in-memory graph (nodes, up-links, derived down-links)
   ids.py                       ID formats, next-id from .next-ids
   check.py                     the rules of §9
   cli.py                       vitality-model check | next-id
@@ -464,7 +462,7 @@ Each phase gets its own implementation plan.
 ## 15. Testing
 
 - **`vitality_model`:** fixture model folders, valid and broken, one per check rule; format round
-  trips; next-id; graph loading with derived down-links.
+  trips; next-id.
 - **Observer:** a fake provider for the loop; reply parsing and file writing (including bad JSON and
   schema violations); batch submit and poll against a fake batch API; the credit-exhausted pause.
 - **Modeler:** the harness with a scripted fake agent that edits files: a passing run commits the
