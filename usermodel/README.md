@@ -8,5 +8,7 @@ Modules:
 
 - `formats.py` - one pydantic model per level's frontmatter, and `parse`, `render`, `read_file`
   and `write_file` for the files themselves.
+- `ids.py` - ID patterns, `expected_path` (where a file of a kind and ID must live), and
+  `next_id`, which issues `act-NNNN` / `str-NNNN` from the `.next-ids` counters.
 
 Develop with `uv run pytest -q` and `uv run pyright`.

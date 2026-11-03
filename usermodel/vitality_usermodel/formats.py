@@ -194,9 +194,17 @@ def write_file(path: Path, meta: BaseModel, body: str = "") -> None:
 
     The write is atomic: the text goes to `<name>.tmp-<pid>` beside the file, which then replaces it.
     """
+    write_text_atomic(path, render(meta, body))
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Write `text` to `path`, creating parent directories.
+
+    The write is atomic: the text goes to `<name>.tmp-<pid>` beside the file, which then replaces it.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    tmp.write_text(render(meta, body), encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
