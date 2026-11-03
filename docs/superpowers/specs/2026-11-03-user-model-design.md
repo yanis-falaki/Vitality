@@ -54,7 +54,7 @@ the VM.
 | Evidence in git | Tracked. Observations and operations are committed by the modeler together with each run |
 | Observations and operations | Separate files, one of each per interaction, made by one call |
 | Observation call | Direct Claude API call (not an agent), all screenshots, no user context, no earlier observations, JSON out, code writes files |
-| Observer billing | An API key from the owner's personal Console organization, funded by the Max plan's $100/month credits; Sonnet with the Batch API fits within it |
+| Observer billing | An API key from the owner's personal Console organization, funded by the Max plan's $100/month credits; direct calls on Sonnet to start, with the Batch API (half price) as a switch |
 | Levels above operations | One ephemeral Claude Code agent run (the modeler), not one call per level; it edits files directly |
 | Modeler billing | Claude Code with the login in the owner's `~/.claude` (currently the Team seat) |
 | Continuity between runs | Files only: the model itself plus `modeler-notes.md`; no long-lived session |
@@ -258,11 +258,14 @@ One request per interaction to the Claude Messages API:
 
 ### Modes
 
-- **Batch (default):** pending interactions (up to 100) are submitted as one Message Batch every
-  10 minutes or once 100 are pending; the observer polls until the batch ends and writes each result.
-  Half price; results usually arrive within minutes to hours.
-- **Direct:** one request per interaction, up to `OBSERVER_PARALLEL` at a time. For testing and
-  for catching up quickly.
+- **Direct (default for now):** one request per interaction, up to `OBSERVER_PARALLEL` at a time;
+  each observation is written seconds after the interaction arrives. Full price.
+- **Batch:** whenever anything is waiting and no batch is in flight, the waiting interactions (up to
+  100) are submitted as one Message Batch, and the observer polls until it ends. Same requests and
+  models at half price; results usually within minutes to an hour, at most 24 hours.
+
+Spend is reviewed from `calls.jsonl` after the first week; batch mode is the switch if direct runs
+past the monthly credits.
 
 The model provider sits behind the existing `Observer` interface, so an OpenAI-compatible endpoint
 (a self-hosted model on Fir) can be added as a second implementation later.
@@ -364,7 +367,7 @@ every problem, when:
 |---|---|---|
 | `ANTHROPIC_API_KEY` | (required for the observer) | from the owner's personal Console organization |
 | `OBSERVER_MODEL` | `claude-sonnet-5-5` | |
-| `OBSERVER_MODE` | `batch` | `batch` or `direct` |
+| `OBSERVER_MODE` | `direct` | `direct` or `batch` |
 | `OBSERVER_PARALLEL` | `4` | direct mode only |
 | `MODELER_MODEL` | (empty: Claude Code's default) | |
 | `MODELER_BATCH_OPERATIONS` | `20` | waiting operations that start a run |
@@ -468,8 +471,8 @@ VM. It must never be made public.
 2. Stop the observer. Move `~/vitality-data/model/observations` to
    `~/vitality-archive/observations-v1`.
 3. Upgrade, then `./vitality setup` to create the model repo, `user-context.md` and state folders.
-4. Start the observer in batch mode on the backlog (1,103 interactions, roughly $12 on Sonnet with
-   batching); the owner reads a sample.
+4. Start the observer on the backlog (1,103 interactions, roughly $25 on Sonnet direct, $12 in batch
+   mode); the owner reads a sample.
 5. Phase 2: start the modeler; it works through the backlog in runs of up to 50 operations.
 
 ## 15. Testing
@@ -488,7 +491,7 @@ VM. It must never be made public.
 ## 16. Done when
 
 - The observer turns each interaction into an observation and an operations file in the new format,
-  using the API key, in batch mode, and logs each call.
+  using the API key, and logs each call.
 - The modeler maintains actions, activities and strivings in the model repo through scheduled runs,
   each checked and committed or reverted, with `runs.jsonl` and transcripts kept.
 - `vitality-usermodel check` passes on the model after every committed run.
