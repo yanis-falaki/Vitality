@@ -9,6 +9,9 @@ status.py   `status`: observed / total, skipped, and the last Claude call, in on
 loop.py     the loop: finds unobserved interactions, makes one Claude call at a time,
             retries failures, waits out usage limits, skips interactions that keep failing
 claude.py   one `claude -p` call for a batch, and the line it adds to `calls.jsonl`
+request.py  the API request for one interaction (prompt, reply schema, images) and parsing
+            the reply
+writer.py   writes the observation and operations files for a reply
 work.py     which interactions are unobserved (oldest first), the context for a call, the
             skipped list
 config.py   the settings, read from `OBSERVER_*` environment variables
@@ -16,5 +19,5 @@ prompt.md   the instructions given to Claude with every call
 
 Dependencies point down this list: `main` uses `loop`, `status`, and `claude` for the real Claude Code
 (`ClaudeCode`); `loop` uses `claude` and `work`; `claude` uses `work`; `status` uses `work`;
-all use `config`.
+`writer` uses `request`; `request` uses `work`; all use `config`.
 """
