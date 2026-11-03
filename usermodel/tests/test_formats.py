@@ -68,6 +68,14 @@ def test_body_round_trip():
     assert render(meta, body) == text
 
 
+def test_operations_render_block_style():
+    lines = render(_operations_meta()).splitlines()
+    assert "- id: op1" in lines
+    assert any(line.startswith("  text: ") for line in lines)
+    assert "  confidence: 8" in lines
+    assert not any("{" in line for line in lines)
+
+
 def test_unknown_field_rejected():
     text = render(_action_meta()).replace("confidence: 7\n", "confidence: 7\nmood: good\n")
     with pytest.raises(FormatError, match="mood"):

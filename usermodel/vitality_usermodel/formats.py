@@ -167,10 +167,12 @@ def parse(text: str, kind: Kind) -> tuple[BaseModel, str]:
 def render(meta: BaseModel, body: str = "") -> str:
     """The file text for `meta` and `body`: frontmatter, then a blank line and the body if any.
 
-    Lists of plain values are written inline (`part_of: [act-0042]`) and times keep their offset.
+    Lists of plain values are written inline (`part_of: [act-0042]`), mappings and lists of
+    mappings in block style, and times keep their offset.
     """
-    front = yaml.safe_dump(
+    front = yaml.dump(
         meta.model_dump(mode="json"),
+        Dumper=_Dumper,
         sort_keys=False,
         allow_unicode=True,
         default_flow_style=None,
@@ -196,3 +198,22 @@ def write_file(path: Path, meta: BaseModel, body: str = "") -> None:
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
     tmp.write_text(render(meta, body), encoding="utf-8")
     os.replace(tmp, path)
+
+
+class _Dumper(yaml.SafeDumper):
+    # YAML writer for the frontmatter: mappings always in block style; a list is written inline
+    # only if it holds plain values (ids, tags), not mappings or lists.
+    pass
+
+
+def _represent_dict(dumper: yaml.SafeDumper, data: dict[object, object]) -> yaml.MappingNode:
+    return dumper.represent_mapping("tag:yaml.org,2002:map", data, flow_style=False)
+
+
+def _represent_list(dumper: yaml.SafeDumper, data: list[object]) -> yaml.SequenceNode:
+    plain = not any(isinstance(item, (dict, list)) for item in data)
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=plain)
+
+
+_Dumper.add_representer(dict, _represent_dict)
+_Dumper.add_representer(list, _represent_list)
