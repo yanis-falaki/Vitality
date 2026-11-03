@@ -310,7 +310,7 @@ The model provider sits behind the existing `Observer` interface, so an OpenAI-c
 The agent reads further on its own: older actions, observations, screenshots under the captures
 folder (read-only), anything in the model. It may delegate heavy evidence reading to sub-agents.
 
-### The playbook (`modeler/vitality_usermodeler/playbook.md`)
+### The playbook (`modeler/vitality_modeler/playbook.md`)
 
 Tempo's method written as ordered steps:
 
@@ -439,11 +439,11 @@ observer/vitality_observer/
   loop.py, status.py, work.py  kept, adjusted to interactions-per-call and the new "observed" test
   provider/                    interface.py (Observer), anthropic_api.py (direct and batch)
   prompt.md, writer.py         the prompt; turning a reply into the two files
-modeler/vitality_usermodeler/
+modeler/vitality_modeler/
   scheduler.py                 when a run is due; the lock
   run.py                       one Claude Code session; resume once with check errors
   repo.py                      clean-tree test, commit, revert, change counts
-  status.py, main.py           vitality-usermodeler run | status
+  status.py, main.py           vitality-modeler run | status
   playbook.md
 ```
 
