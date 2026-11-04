@@ -30,7 +30,7 @@ die() { echo "vitality: $*" >&2; exit 1; }
 env_file_value() {
     [[ -f .env ]] || return 0
     local line value=""
-    while IFS= read -r line; do
+    while IFS= read -r line || [[ -n $line ]]; do   # also a last line without a newline
         if [[ $line =~ ^[[:space:]]*"$1"[[:space:]]*=(.*)$ ]]; then
             value="${BASH_REMATCH[1]}"
         fi
