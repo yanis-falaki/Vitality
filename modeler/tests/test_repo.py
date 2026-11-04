@@ -61,6 +61,10 @@ def test_revert_restores_offered_and_removes_created(model: Path):
     (model / "actions/2026-11-03/10-00-00.md").write_text("a\n")
     (model / ".next-ids").write_text("act-0002\n")
     (model / "modeler-notes.md").write_text("changed\n")
+    (model / "scratch.md").write_text("s\n")
+    (model / "notes").mkdir()
+    (model / "notes/x.md").write_text("x\n")
+    add_evidence(model, "a/2026-11-03/12-00-00", "2026-11-03T12:00:00+00:00", 1)  # arrived meanwhile
 
     repo.revert(model, start, offered)
 
@@ -69,8 +73,11 @@ def test_revert_restores_offered_and_removes_created(model: Path):
     assert not (model / ".next-ids").exists()
     assert (model / "modeler-notes.md").read_text() == "notes\n"
     assert repo.head(model) == start
+    assert not (model / "scratch.md").exists()
+    assert not (model / "notes").exists()
     assert repo.foreign_changes(model) == []
-    assert git(model, "ls-files", "--others", "--exclude-standard", "--", "operations").split() == offered.operations
+    assert git(model, "ls-files", "--others", "--exclude-standard", "--", "operations").split() == [
+        *offered.operations, "operations/a/2026-11-03/12-00-00.md"]
 
 
 def test_commit_and_counts(model: Path):
@@ -87,3 +94,24 @@ def test_commit_and_counts(model: Path):
     commit = repo.commit_all(model, "model: batch")
     assert commit == repo.head(model) != start
     assert git(model, "log", "-1", "--format=%s") == "model: batch\n"
+
+
+def test_commit_leaves_unoffered_evidence_untracked(model: Path):
+    add_evidence(model, "a/2026-11-03/09-00-00", "2026-11-03T09:00:00+00:00", 1)
+    offered = repo.choose_batch(model, 10)
+    assert offered is not None
+    repo.stage(model, offered)
+    start = repo.head(model)
+    add_evidence(model, "a/2026-11-03/12-00-00", "2026-11-03T12:00:00+00:00", 1)
+    (model / "actions/2026-11-03").mkdir(parents=True)
+    (model / "actions/2026-11-03/10-00-00.md").write_text("a\n")
+    (model / "modeler-notes.md").write_text("more\n")
+
+    assert repo.change_counts(model, start)["actions"] == 1
+    commit = repo.commit_all(model, "model: batch")
+
+    committed = git(model, "show", "--name-only", "--format=", commit).split()
+    assert committed == sorted([
+        "actions/2026-11-03/10-00-00.md", "modeler-notes.md", *offered.operations, *offered.observations])
+    assert git(model, "ls-files", "--others", "--exclude-standard").split() == [
+        "observations/a/2026-11-03/12-00-00.md", "operations/a/2026-11-03/12-00-00.md"]

@@ -15,7 +15,7 @@ COMMITTER: tuple[str, ...] = ("-c", "user.name=Vitality modeler", "-c", "user.em
 """Git options making the modeler the author of its commits."""
 
 _EVIDENCE = ("observations/", "operations/")
-_MODELER_PATHS = ("actions", "activities", "strivings", ".next-ids")
+_MODELER_PATHS = ("actions", "activities", "strivings", "modeler-notes.md", ".next-ids")
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,9 @@ def init_model(model: Path, user_context: str, modeler_notes: str) -> str:
     _git(model, "init", "-q")
     (model / "user-context.md").write_text(user_context, encoding="utf-8")
     (model / "modeler-notes.md").write_text(modeler_notes, encoding="utf-8")
-    return commit_all(model, "model: start")
+    _git(model, "add", "-A")
+    _git(model, *COMMITTER, "commit", "-q", "-m", "model: start")
+    return head(model)
 
 
 def foreign_changes(model: Path) -> list[str]:
@@ -90,8 +92,8 @@ def head(model: Path) -> str:
 
 
 def commit_all(model: Path, message: str) -> str:
-    """Stage everything, commit it as the modeler, and return the commit."""
-    _git(model, "add", "-A")
+    """Stage tracked changes and the modeler's own files (not other untracked evidence), commit as the modeler, and return the commit."""
+    _stage_session_changes(model)
     _git(model, *COMMITTER, "commit", "-q", "-m", message)
     return head(model)
 
@@ -106,12 +108,12 @@ def revert(model: Path, start: str, offered: Offered) -> None:
     _git(model, "checkout", "--", *paths)  # the index still holds them as staged
     _git(model, "reset", "-q", start)
     _git(model, "checkout", start, "--", ".")
-    _git(model, "clean", "-fdq", "--", *_MODELER_PATHS)
+    _git(model, "clean", "-fdq", "--", ".", ":!observations", ":!operations")
 
 
 def change_counts(model: Path, start: str) -> dict[str, int]:
     """What a run changed since `start`: actions, and activities and strivings created, revised or merged (deleted)."""
-    _git(model, "add", "-A")
+    _stage_session_changes(model)
     counts: dict[str, int] = dict.fromkeys(
         ("actions", "activities_created", "activities_revised", "activities_merged",
          "strivings_created", "strivings_revised"), 0)
@@ -124,6 +126,15 @@ def change_counts(model: Path, start: str) -> dict[str, int]:
         elif path.startswith("strivings/") and status != "D":
             counts["strivings_" + ("created" if status == "A" else "revised")] += 1
     return counts
+
+
+def _stage_session_changes(model: Path) -> None:
+    # Tracked changes plus what a session may create; other untracked files (evidence arriving
+    # meanwhile) stay out.
+    _git(model, "add", "-u")
+    created = [p for p in _MODELER_PATHS if (model / p).exists()]
+    if created:
+        _git(model, "add", "-A", "--", *created)
 
 
 def _git(model: Path, *args: str) -> str:
