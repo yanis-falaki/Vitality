@@ -94,7 +94,6 @@ the modeler README.
 **The run message** (built by the harness):
 - the offered operations files, each with its local start time;
 - every activity and striving, one line each: id, title, status, `part_of`;
-- when strivings were last revised (from the records);
 - that `user-context.md` and `modeler-notes.md` exist and must be read first;
 - where the captures are, if mounted (screenshots, read-only).
 
@@ -128,13 +127,23 @@ The main agent is an orchestrator. It:
 3. Delegates **activities** to a sub-agent: file each new action under existing activities or
    propose new ones (`tentative`), then reconcile the affected activities: match, revise, merge or
    create. Promote to `established` at 3+ actions over 2+ sessions with confidence 6+.
-4. Delegates **strivings** to a sub-agent, only if activities changed meaningfully or strivings were
-   last revised over 24 hours ago: synthesize, then critique each against the three tests (recurs
-   with no endpoint; shows in behaviour; abstracts over several activities); split, merge, retitle or
-   drop; keep conflicting strivings both, linked by `conflicts_with`.
+4. Delegates **strivings** to a sub-agent, only if activities changed meaningfully (for instance, a
+   clear, recurring pattern of distinct activities that may serve a striving): synthesize, then
+   critique each against the three tests (recurs with no endpoint; shows in behaviour; abstracts over
+   several activities); split, merge, retitle or drop; keep conflicting strivings both, linked by
+   `conflicts_with`.
 5. Reviews: changes only with evidence, reasons in file bodies, no locked file or evidence touched;
    updates `modeler-notes.md` (open questions, hunches, things to watch); runs
    `vitality-usermodel check` and fixes what it reports.
+
+**The agent's commands.** The session has two commands from phase 1 on its `PATH` (the harness puts
+the `vitality-usermodel` of this checkout there): `vitality-usermodel check`, which reports every
+file whose frontmatter does not parse or misses a field, every bad ID or broken link, and every
+offered operation in no action or in two (the rules of the user-model spec §9), and
+`vitality-usermodel next-id <kind>`, which hands out the next activity or striving number. The
+playbook tells the agent and each sub-agent to run `check` after writing files and to take IDs only
+from `next-id`. The harness runs the same check afterwards (§5.3), so a session cannot pass by not
+running it.
 
 The playbook is text in the repo, versioned by its hash in every record; iterating on it is what the
 lab is for.
