@@ -68,8 +68,7 @@ has no other way to learn them), plus the specific inputs named in the brief.
    clear, recurring pattern of distinct activities that may serve a striving, an activity newly
    established, activities merged, or an activity that now seems to work against a striving. Filing
    a few more actions under an activity that is already understood is not. If it is meaningful,
-   delegate to a strivings sub-agent with the activities that changed and why. Strivings change
-   slowly, so most sessions skip this step.
+   delegate to a strivings sub-agent with the activities that changed and why.
 
 5. **Review.** Read what the sub-agents wrote, and check:
    - every change rests on evidence you can point to, and its reasons are written in the file's
@@ -179,8 +178,12 @@ line of why.
 - **IDs never change and are never reused.** Activities (`act-NNNN`) and strivings (`str-NNNN`) take
   their ID only from `vitality-usermodel next-id activity` or `vitality-usermodel next-id striving`,
   which prints the next one and records it; never pick a number yourself or edit `.next-ids`. An
-  action's ID is the start time of its first operation: the `<YYYY-MM-DD>/<HH-MM-SS>` of that
-  operation's interaction name, with `-2`, `-3`... added when an action with that ID already exists.
+  action's ID is the start time of its first operation: the `<YYYY-MM-DD>/<HH-MM-SS>` part of that
+  operation's interaction name (for `laptop/2026-11-03/14-22-05#op1`, `2026-11-03/14-22-05`). When an
+  action with that ID already exists, use the time with the next free suffix: `-2`, then `-3`, and
+  so on. An ID has at most one suffix: if the interaction name already ends in one
+  (`laptop/2026-11-03/14-22-05-2`), count on from it (`2026-11-03/14-22-05-3`, then `-4`), never
+  `-2-2`.
   Renaming changes `title`, not the ID.
 - **Links point up.** An action names its activities (`part_of`); an activity names its strivings
   (`part_of`, `hinders`); a striving names other strivings (`relations`). Nothing names what is
@@ -198,9 +201,9 @@ line of why.
 
 ## File formats
 
-Each file is YAML frontmatter between `---` lines, then a Markdown body. Fields are exact: a missing
-or unknown field fails the check. `confidence` is an integer from 1 to 10. Lists are YAML lists;
-empty is `[]`.
+Each file is YAML frontmatter between `---` lines, then a Markdown body. Fields are exact.
+Unknown fields are rejected; write every field listed. `confidence` is an integer from 1 to 10.
+Lists are YAML lists; empty is `[]`.
 
 ### Operations (evidence; read only)
 

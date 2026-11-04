@@ -22,6 +22,15 @@ def test_playbook_mentions():
         assert word in PLAYBOOK, word
     assert "24 hours" not in PLAYBOOK
     assert "last revised" not in PLAYBOOK
+    flat = " ".join(PLAYBOOK.split())
+    # No prior on how often strivings are revisited: the meaningful-change test alone decides.
+    for biased in ("Strivings change slowly", "most sessions skip", "rarely revisit"):
+        assert biased not in flat, biased
+    # Fields: only unknown ones are rejected (several have defaults); write every field listed.
+    assert "a missing or unknown field fails the check" not in flat
+    assert "Unknown fields are rejected; write every field listed." in flat
+    # Action ID suffix: the next free number in the one `-N` suffix, never a second suffix.
+    assert "never `-2-2`" in flat
 
 
 def test_playbook_examples_parse():
