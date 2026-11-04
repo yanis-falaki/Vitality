@@ -86,6 +86,11 @@ def stage(model: Path, offered: Offered) -> None:
     _git(model, "add", "--", *offered.operations, *offered.observations)
 
 
+def tracked(model: Path, folder: str) -> list[str]:
+    """Repo-relative paths of the files under `folder` that are in the index (committed or staged)."""
+    return list(filter(None, _git(model, "ls-files", "-z", "--", folder).split("\0")))
+
+
 def head(model: Path) -> str:
     """The commit HEAD points to."""
     return _git(model, "rev-parse", "HEAD").strip()

@@ -115,3 +115,13 @@ def test_commit_leaves_unoffered_evidence_untracked(model: Path):
         "actions/2026-11-03/10-00-00.md", "modeler-notes.md", *offered.operations, *offered.observations])
     assert git(model, "ls-files", "--others", "--exclude-standard").split() == [
         "observations/a/2026-11-03/12-00-00.md", "operations/a/2026-11-03/12-00-00.md"]
+
+
+def test_tracked_lists_staged_and_committed(model: Path):
+    add_evidence(model, "laptop/2026-11-03/14-00-00", "2026-11-03T09:00:00-05:00", 1)
+    add_evidence(model, "laptop/2026-11-03/15-00-00", "2026-11-03T10:00:00-05:00", 1)
+    assert repo.tracked(model, "operations") == []
+    batch = repo.choose_batch(model, 1)
+    assert batch is not None
+    repo.stage(model, batch)
+    assert repo.tracked(model, "operations") == ["operations/laptop/2026-11-03/14-00-00.md"]
