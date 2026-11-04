@@ -46,7 +46,9 @@ class SessionRecord:
 
     Times are ISO 8601 UTC with `Z`. `check_errors` are the problems that led to the resume, or that
     remained when the session was reverted ("path: message"). `changes` are zeros unless committed.
-    Tokens and cost are summed over the attempts; None when no attempt reported them.
+    Tokens and cost are those of the last attempt that reported them: a resumed session's result already
+    carries the earlier attempt's totals (Claude Code 2.1.309; to be confirmed on the first real run), so
+    they are not summed. None when no attempt reported them.
     """
 
     run: str                        # "2026-11-04T12-00-00Z"
@@ -151,7 +153,8 @@ def _describe(error: BaseException) -> str:
 
 @dataclass
 class _Tally:
-    # What the attempts add up to.
+    # What the attempts come to. A resumed attempt's totals include the earlier attempt's, so each
+    # attempt that reports a total replaces the one before.
     attempts: int = 0
     check_errors: list[str] = field(default_factory=lambda: [])
     input_tokens: int | None = None
@@ -160,9 +163,9 @@ class _Tally:
 
     def add(self, result: StreamResult) -> None:
         self.attempts += 1
-        self.input_tokens = _plus(self.input_tokens, result.input_tokens)
-        self.output_tokens = _plus(self.output_tokens, result.output_tokens)
-        self.cost = _plus(self.cost, result.cost_usd)
+        self.input_tokens = _latest(self.input_tokens, result.input_tokens)
+        self.output_tokens = _latest(self.output_tokens, result.output_tokens)
+        self.cost = _latest(self.cost, result.cost_usd)
 
 
 @dataclass
@@ -269,7 +272,5 @@ def _iso(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _plus[N: (int, float)](total: N | None, more: N | None) -> N | None:
-    if more is None:
-        return total
-    return more if total is None else total + more
+def _latest[N: (int, float)](earlier: N | None, later: N | None) -> N | None:
+    return earlier if later is None else later

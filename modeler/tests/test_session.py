@@ -124,8 +124,17 @@ def test_fixed_on_resume(model: Path, records: Path):
     second = calls(records)[1]["argv"]
     assert second[second.index("--resume") + 1] == "fake-1"
     assert "Fix these, then run vitality-usermodel check." in second[second.index("-p") + 1]
-    assert record.cost == 1.0
+    # The resumed attempt's result already carries attempt 1's totals: recorded once, not summed.
+    assert (record.input_tokens, record.output_tokens, record.cost) == (200, 20, 1.0)
     assert len((records / record.transcript).read_text().splitlines()) == 4
+
+
+def test_resume_without_result_keeps_first_totals(model: Path, records: Path):
+    with_evidence(model)
+    record = run(model, records, [{"write": action(model, skip=1)}, {"no_result": True}])
+    assert record is not None
+    assert (record.outcome, record.attempts) == ("failed", 2)
+    assert (record.input_tokens, record.output_tokens, record.cost) == (100, 10, 0.5)
 
 
 def test_reverted_after_two_failures(model: Path, records: Path):
@@ -157,7 +166,8 @@ def test_limited(model: Path, records: Path):
     with_evidence(model)
     start = git(model, "rev-parse", "HEAD").strip()
     before = evidence_bytes(model)
-    record = run(model, records, [{"write": action(model), "result": "usage limit reached", "is_error": True}])
+    record = run(model, records, [{"write": action(model), "api_error": "rate_limit",
+                                   "result": "You've hit your session limit \u00b7 resets 3pm"}])
     assert record is not None
     assert record.outcome == "limited"
     assert_reverted(model, start, before)

@@ -30,11 +30,13 @@ A dataset is a folder with `operations/`, `observations/` (both `<device>/<date>
 `replay` creates `<run>/model` (a git repository with `user-context.md` and `modeler-notes.md`), then repeats until all operations are committed:
 
 1. Copy the oldest whole operations files (with their observations), up to `MODELER_MAX_OPERATIONS` operations, into the model, untracked.
-2. Run Claude Code in the model folder, with the playbook appended to its system prompt and only project settings. Its tools are the files, `vitality-usermodel check` and `next-id`, and git.
+2. Run Claude Code in the model folder, with the playbook appended to its system prompt and only project settings. Its tools are the files, `vitality-usermodel check` and `next-id`, and git. Sub-agents' text is forwarded into the stream (`--forward-subagent-text`), so the transcript holds it.
 3. Check the model. If there are problems, resume the same session once with them.
 4. Commit when the check passes and every offered operation is covered; otherwise revert the session's changes. The evidence stays in the model and is offered to the next session.
 
 The replay stops when everything is committed, after 3 sessions in a row without a commit, when the usage limit is reached, or on Ctrl-C or SIGTERM.
+
+A session is `limited` when its stream ends on Claude Code's typed API error (`"error": "rate_limit"` or `"billing_error"` on a synthetic assistant message, or a result with `terminal_reason: "api_error"` and `api_error_status: 429`), or, failing that, when the result text opens like Claude Code's own limit messages ("You've hit your …", "You've reached your …", "You're out of …").
 
 ## Settings
 
@@ -52,7 +54,7 @@ Environment variables; unset or empty keeps the default.
 In `<run>/`:
 
 - `model/`: the user model, one commit per successful session.
-- `sessions.jsonl`: one JSON line per session: outcome (`committed`, `reverted`, `failed`, `limited`), operations offered, model, playbook version, attempts, check errors, commit, changes, duration, tokens, cost.
+- `sessions.jsonl`: one JSON line per session: outcome (`committed`, `reverted`, `failed`, `limited`), operations offered, model, playbook version, attempts, check errors, commit, changes, duration, tokens, cost. Tokens and cost come from the last result's `modelUsage` (all models, sub-agents included; input tokens count cache reads and writes) and `total_cost_usd`. A resumed attempt's result is taken to carry the earlier attempt's totals already, as Claude Code 2.1.309 documents, so the last attempt's totals are recorded, not a sum: to be confirmed on the first real run.
 - `transcripts/<run>.jsonl`: the session's full stream.
 - `replay.json`: sessions per outcome, why the replay stopped (`null` if all was committed), and the interactions never committed.
 
@@ -82,7 +84,7 @@ What to look for in the answer:
 - Working directory `/run/model`, empty.
 - `/home/modeler/.claude` holds `.credentials.json` and nothing of the owner's (a session may create its own cache files there; that is fine).
 - `/etc/hostname` is the container's, and nothing under `/` looks like the owner's files.
-- The usage-limit text, if it knows it (the harness recognizes a limited session by it; see `claude.py`).
+- The usage-limit text, if it knows it (the harness recognizes a limited session by the stream's typed error, or else by this text; see `claude.py`).
 
 Result: not yet run
 

@@ -18,7 +18,7 @@ def test_command_exact():
     cfg = ModelerConfig(model="m1", effort="max")
     base = ["claude", "-p", "msg", "--append-system-prompt", "play", "--model", "m1", "--effort", "max",
             "--setting-sources", "project", "--strict-mcp-config", "--permission-mode", "bypassPermissions",
-            "--output-format", "stream-json", "--verbose"]
+            "--output-format", "stream-json", "--verbose", "--forward-subagent-text"]
     assert claude_command("msg", "play", cfg) == base
     assert claude_command("msg", "play", cfg, resume="s1", claude="/x/claude") == ["/x/claude", *base[1:], "--resume", "s1"]
 
@@ -65,11 +65,53 @@ def test_read_stream_success():
         ("s9", False, "done", 100, 10, 0.5, False)
 
 
-def test_read_stream_error_limit():
-    r = read_stream([_result(is_error=True, result="Claude AI usage limit reached")])
-    assert r.is_error and r.limited and r.input_tokens is None
-    assert not read_stream([_result(is_error=True, result="boom")]).limited
-    assert LIMIT_RE.search("Out of credits")
+def test_read_stream_limit_texts():
+    # The texts Claude Code 2.1.309 builds when the seat's usage runs out.
+    for text in ("You've hit your session limit \u00b7 resets 3pm", "You've reached your weekly limit",
+                 "You're out of extra usage \u00b7 resets Nov 7"):
+        r = read_stream([_result(is_error=True, result=text)])
+        assert r.is_error and r.limited and r.input_tokens is None, text
+        assert LIMIT_RE.search(text), text
+    assert not read_stream([_result(is_error=False, result="You've hit your session limit")]).limited
+    # Other limits of Claude Code are not the usage limit.
+    for text in ("Context limit reached", "Budget limit reached", "Subagent nesting limit reached", "boom"):
+        assert not read_stream([_result(is_error=True, result=text)]).limited, text
+
+
+def _api_error(kind: str) -> str:
+    return json.dumps({"type": "assistant", "session_id": "s", "parent_tool_use_id": None,
+                       "message": {"role": "assistant", "content": [{"type": "text", "text": "API Error"}]},
+                       "error": kind, "is_api_error_message": True})
+
+
+def test_read_stream_typed_limit():
+    for kind in ("rate_limit", "billing_error"):
+        r = read_stream([_api_error(kind), _result(is_error=True, result="API Error", terminal_reason="api_error")])
+        assert r.limited, kind
+    r = read_stream([_result(is_error=True, result="x", terminal_reason="api_error", api_error_status=429)])
+    assert r.limited
+    assert not read_stream([_api_error("overloaded"),
+                            _result(is_error=True, result="x", terminal_reason="api_error", api_error_status=529)]).limited
+    # A sub-agent's error (forwarded with its parent_tool_use_id) does not end the session.
+    sub = json.loads(_api_error("rate_limit")) | {"parent_tool_use_id": "toolu_1"}
+    assert not read_stream([json.dumps(sub), _result(is_error=True, result="boom")]).limited
+
+
+def test_read_stream_model_usage():
+    usage = {"a": {"inputTokens": 50, "outputTokens": 6, "cacheReadInputTokens": 30,
+                   "cacheCreationInputTokens": 10, "costUSD": 0.4},
+             "b": {"inputTokens": 10, "outputTokens": 4, "cacheReadInputTokens": 0,
+                   "cacheCreationInputTokens": 0, "costUSD": 0.1}}
+    r = read_stream([_result(is_error=False, result="ok", usage={"input_tokens": 5, "output_tokens": 1},
+                             modelUsage=usage, total_cost_usd=0.75)])
+    assert (r.input_tokens, r.output_tokens, r.cost_usd) == (100, 10, 0.75)
+    r = read_stream([_result(is_error=False, result="ok", modelUsage=usage)])
+    assert (r.input_tokens, r.output_tokens) == (100, 10)
+    assert r.cost_usd is not None and abs(r.cost_usd - 0.5) < 1e-9
+    # Without modelUsage, the main loop's usage, cache included.
+    r = read_stream([_result(is_error=False, result="ok", total_cost_usd=0.2, usage={
+        "input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 3, "cache_creation_input_tokens": 2})])
+    assert (r.input_tokens, r.output_tokens, r.cost_usd) == (10, 1, 0.2)
 
 
 def test_read_stream_no_result():
@@ -92,7 +134,8 @@ def test_fake_claude_runs(tmp_path: Path):
     assert p.returncode == 0
     assert (work / "activities/x.md").read_text() == "hi"
     r = read_stream(p.stdout.splitlines())
-    assert (r.session_id, r.text, r.is_error, r.cost_usd) == ("fake-1", "fine", False, 0.5)
+    assert (r.session_id, r.text, r.is_error, r.cost_usd, r.input_tokens, r.output_tokens) == \
+        ("fake-1", "fine", False, 0.5, 100, 10)
     calls = Path(f"{script}.calls").read_text().splitlines()
     assert json.loads(calls[0])["argv"] == ["-p", "hello"] and json.loads(calls[0])["api_key"] is True
 

@@ -119,7 +119,7 @@ def test_replay_retries_then_stops(dataset: Path, tmp_path: Path):
 def test_replay_limited_stops(dataset: Path, tmp_path: Path):
     run = tmp_path / "run"
     environ = script(tmp_path, [{"write": action(*FILES[:2])},
-                                {"is_error": True, "result": "Claude usage limit reached"}])
+                                {"is_error": True, "result": "You've hit your weekly limit \u00b7 resets Nov 7"}])
     summary = replay(dataset, run, CONFIG, claude=str(FAKE), environ=environ)
     assert summary.sessions == {"committed": 1, "limited": 1}
     assert summary.stopped == "usage limit reached"
