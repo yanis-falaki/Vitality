@@ -200,3 +200,50 @@ def test_list_shows_kinds(repo: Path, lab: Path, home: Path, capsys):
     assert "cap  1 interactions  captures" in out
     assert "ev  1 operations files  evidence" in out
     assert "modeler  datasets/ev  sessions 2/2" in out
+
+
+def test_default_runner_ignores_sigint_while_waiting(capsys):
+    import signal
+    import sys
+    import threading
+
+    from vitality_lab.modeler_run import run_command
+    seen: list[object] = []
+    def handler(signum, frame):
+        seen.append(signum)
+    before = signal.signal(signal.SIGINT, handler)
+    try:
+        timer = threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGINT))
+        timer.start()
+        code = run_command([sys.executable, "-c", "import time; time.sleep(1.5); raise SystemExit(3)"])
+        timer.join()
+        assert code == 3 and seen == []
+        assert signal.getsignal(signal.SIGINT) is handler
+    finally:
+        signal.signal(signal.SIGINT, before)
+
+
+def test_oserror_from_runner_finishes_record(repo: Path, lab: Path, home: Path):
+    def broken(command: list[str]) -> int:
+        raise FileNotFoundError("docker")
+    assert run(repo, lab, home, "ev", runner=broken) == 1  # type: ignore[arg-type]
+    record = read_run_yaml(runs(lab)[0] / "run.yaml")
+    assert record["stopped"].startswith("docker could not be run:") and record["finished"] is not None
+
+
+def test_relative_lab_dir_gives_absolute_mounts(repo: Path, lab: Path, home: Path, monkeypatch):
+    monkeypatch.chdir(lab.parent)
+    runner = Runner()
+    assert run(repo, Path("lab"), home, "ev", runner=runner) == 0
+    mounts = [a for a in runner.commands[1] if ":/" in a and a.startswith("/")]
+    assert len(mounts) == 3 and all(m.startswith("/") for m in mounts)
+
+
+def test_container_exit_recorded(repo: Path, lab: Path, home: Path):
+    class Failing(Runner):
+        def __call__(self, command: list[str]) -> int:
+            super().__call__(command)
+            return 137 if command[:2] == ["docker", "run"] else 0
+    assert run(repo, lab, home, "ev", runner=Failing()) == 1
+    record = read_run_yaml(runs(lab)[0] / "run.yaml")
+    assert record["container_exit"] == 137 and record["stopped"] == "container exited with 137"

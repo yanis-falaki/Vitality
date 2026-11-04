@@ -7,6 +7,7 @@ folder (`replay.json`, `sessions.jsonl`) is what `run.yaml` is finished from.
 
 import json
 import os
+import signal
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
@@ -73,7 +74,12 @@ def docker_run_command(dataset: Path, run: Path, credentials: Path, config: Mode
 def run_command(command: list[str]) -> int:
     """Print `command`, run it, return its exit code."""
     print("$", " ".join(command), flush=True)
-    return subprocess.run(command).returncode
+    # Ctrl-C reaches `docker run` too, which passes it to the container; we only wait for it to finish.
+    previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        return subprocess.Popen(command).wait()
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Sequence[str],
@@ -126,16 +132,29 @@ def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Seq
         "playbook_version": PLAYBOOK_VERSION,
         "result": None,
         "stopped": None,
+        "container_exit": None,
         "not_offered": [],
     }
     write_run_yaml(folder / "run.yaml", record)
 
-    if runner(docker_build_command(repo)) != 0:
-        record.update(finished=now().isoformat(timespec="seconds"), stopped="image build failed")
+    def give_up(reason: str) -> int:
+        record.update(finished=now().isoformat(timespec="seconds"), stopped=reason)
         write_run_yaml(folder / "run.yaml", record)
-        print(f"stopped early: {record['stopped']}\n{folder}")
+        print(f"stopped early: {reason}\n{folder}")
         return 1
-    runner(docker_run_command(folder_in_lab, folder, credentials, config, os.getuid(), os.getgid()))
+
+    try:
+        built = runner(docker_build_command(repo))
+    except OSError as e:
+        return give_up(f"docker could not be run: {e}")
+    if built != 0:
+        return give_up("image build failed")
+    try:
+        exit_code = runner(docker_run_command(folder_in_lab.resolve(), folder.resolve(), credentials, config,
+                                              os.getuid(), os.getgid()))
+    except OSError as e:
+        return give_up(f"docker could not be run: {e}")
+    record["container_exit"] = exit_code
 
     summary = _read_summary(folder)
     record["finished"] = now().isoformat(timespec="seconds")
@@ -145,6 +164,8 @@ def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Seq
         cost = _total_cost(folder / "sessions.jsonl")
         record.update(result={"sessions": summary["sessions"], "cost_usd": round(cost, 4)},
                       stopped=summary["stopped"], not_offered=summary["not_offered"])
+        if exit_code != 0 and record["stopped"] is None:
+            record["stopped"] = f"container exited with {exit_code}"
     write_run_yaml(folder / "run.yaml", record)
 
     if summary is not None:
