@@ -6,6 +6,7 @@
 #   ./vitality status           containers, then the server's and the observer's status
 #   ./vitality logs [service]   follow the logs (service: server or observer; default: both)
 #   ./vitality upgrade          fast-forward to the newest main, then rebuild and restart
+#   ./vitality lab <args>       run vitality-lab (lab/README.md) with the settings from .env
 #
 # Every docker and git command is printed (after a "$ ") before it runs, so nothing is hidden.
 
@@ -167,6 +168,21 @@ cmd_upgrade() {
     run docker compose up -d --build
 }
 
+# Run vitality-lab with the API key, the observer settings and LAB_DIR from .env (a variable already
+# set in the environment wins, as with compose). Values are passed in the environment, never printed.
+cmd_lab() {
+    local name value
+    for name in ANTHROPIC_API_KEY OBSERVER_MODEL OBSERVER_EFFORT OBSERVER_PARALLEL \
+                OBSERVER_CALL_TIMEOUT_SECONDS LAB_DIR; do
+        if [[ -z "${!name+set}" ]]; then
+            value="$(env_file_value "$name")"
+            [[ -n $value ]] && export "$name=$value"
+        fi
+    done
+    show uv run --project lab vitality-lab "$@"
+    exec uv run --project lab vitality-lab "$@"
+}
+
 # Say what the commands are.
 usage() {
     cat <<'EOF'
@@ -176,6 +192,7 @@ usage: ./vitality <command>
   status            containers, then the server's and the observer's status
   logs [service]    follow the logs (service: server or observer; default: both)
   upgrade           fast-forward to the newest main, then rebuild and restart
+  lab <args>        run vitality-lab with the settings from .env (see lab/README.md)
 EOF
 }
 
@@ -186,5 +203,6 @@ case "${1:-}" in
     status)  cmd_status ;;
     logs)    shift; cmd_logs "$@" ;;
     upgrade) cmd_upgrade ;;
+    lab)     shift; cmd_lab "$@" ;;
     *)       usage >&2; exit 2 ;;
 esac

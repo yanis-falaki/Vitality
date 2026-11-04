@@ -62,6 +62,7 @@ Each one prints the `docker compose` or `git` commands it runs.
 | `./vitality status` | `docker compose ps`, then the server's and the observer's status, then the data folder |
 | `./vitality logs [service]` | follows the logs; `service` is `server` or `observer` (default: both) |
 | `./vitality upgrade` | fast-forwards to the newest `main` (only from a clean `main`), then `docker compose up -d --build` |
+| `./vitality lab <args>` | runs `vitality-lab` (a stage on a fixed dataset, outside `vitality-data`) with the key and settings from `.env`; see [`lab/README.md`](lab/README.md) |
 
 `status` looks like this:
 
