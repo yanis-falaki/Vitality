@@ -20,8 +20,9 @@ This spec amends the user-model spec where they differ (§3); everything else th
 - The session harness: prepare, run Claude Code isolated, check, resume once, commit or revert,
   record.
 - The first playbook: an orchestrator with three staged sub-agents.
+- The modeler's Docker image, which every session runs in.
 - Evidence datasets in the lab, and `vitality-lab run modeler <dataset>`, which replays the
-  scheduler over a dataset batch by batch.
+  scheduler over a dataset batch by batch, in one container per lab run.
 
 **Later (milestone 2, own plan):** the scheduler (triggers, lock, pausing after three failed runs,
 waiting out the seat's usage limits), the modeler as a service on the VM, `./vitality status` and
@@ -39,6 +40,7 @@ waiting out the seat's usage limits), the modeler as a service on the VM, `./vit
 | — | `MODELER_EFFORT` (default `high`) | Effort is a deliberate setting, as for the observer. |
 | `MODELER_RUN_TIMEOUT_SECONDS=1800` | `3600` | Batches of up to 500 operations with sub-agents. |
 | Claude Code started with defaults | Started isolated from the user's Claude Code configuration (§5.2) | A session's behaviour must depend only on the playbook, the run message and the model folder. |
+| The containerized modeler with the scheduler | The image in milestone 1; lab runs use it too (§7) | A session runs with no permission checks, so it must only reach the files it is given; and the lab must run what production will run. |
 
 ## 4. Evidence datasets
 
@@ -82,14 +84,18 @@ claude -p <run message> --append-system-prompt <playbook.md>
 
 Working directory: the model folder. Timeout: `MODELER_RUN_TIMEOUT_SECONDS`. Sub-agents allowed.
 Authentication is the owner's Claude Code login on the VM (the Team seat), never an API key:
-`ANTHROPIC_API_KEY` is removed from the session's environment so the seat is what is used.
+`ANTHROPIC_API_KEY` is never passed into the container, and the harness also removes it from the
+session's environment, so the seat is what is used.
 
-**Isolation probe** (once, by hand, before the first lab run, and after Claude Code upgrades): a
-session with these flags is asked to report its loaded memory files, plugins, skills and MCP
-servers; it must report none of the user's. If `--setting-sources project` does not keep the user's
-`CLAUDE.md` out, the harness runs Claude Code with `HOME` pointed at a minimal folder holding only
-the login (`.claude/.credentials.json`, linked); the probe decides which, and its result is noted in
-the modeler README.
+**Isolation** comes from the container (§7, §8): it holds the installed code, Claude Code and git,
+and sees only what is mounted, which is the model folder (or a lab run's folder), the captures
+read-only when given, and the login file (`~/.claude/.credentials.json`, read-write so a refreshed
+token is saved). No user `CLAUDE.md`, settings, plugins, MCP servers, `.env`, repo or other data are
+inside. **Isolation probe** (once, by hand, before the first lab run, and after Claude Code upgrades):
+a session in the container is asked to report its loaded memory files, plugins, skills and MCP
+servers and to list what it can read outside its working folder; it must report none of the user's.
+The probe also confirms the login works in the container and that the owner's Claude Code on the VM
+still works afterwards (the two share the login file).
 
 **The run message** (built by the harness):
 - the offered operations files, each with its local start time;
@@ -136,8 +142,8 @@ The main agent is an orchestrator. It:
    updates `modeler-notes.md` (open questions, hunches, things to watch); runs
    `vitality-usermodel check` and fixes what it reports.
 
-**The agent's commands.** The session has two commands from phase 1 on its `PATH` (the harness puts
-the `vitality-usermodel` of this checkout there): `vitality-usermodel check`, which reports every
+**The agent's commands.** The session has two commands from phase 1 on its `PATH` (installed in the
+image, from the same commit as the rest of the code): `vitality-usermodel check`, which reports every
 file whose frontmatter does not parse or misses a field, every bad ID or broken link, and every
 offered operation in no action or in two (the rules of the user-model spec §9), and
 `vitality-usermodel next-id <kind>`, which hands out the next activity or striving number. The
@@ -150,7 +156,16 @@ lab is for.
 
 ## 7. `vitality-lab run modeler <dataset> [--label …] [--set …]`
 
-As the lab spec's observer stage (refusals, run folder name, `changes.diff`, `run.yaml`), with:
+As the lab spec's observer stage (refusals, run folder name, `changes.diff`, `run.yaml`), but the
+run itself happens in **one container**:
+
+- **On the host** (`vitality-lab`): check git and the dataset, create the run folder, write
+  `run.yaml` and `changes.diff`, build the modeler image from the current code (cached when nothing
+  changed), then start one container:
+  `docker compose run --rm modeler vitality-modeler replay /dataset /run`, mounting the dataset
+  read-only at `/dataset`, the run folder at `/run` and the login file. When it exits, fill in
+  `run.yaml`'s result from `sessions.jsonl` and the replay's summary.
+- **In the container** (`vitality-modeler replay`), steps 1–3 below, then exit.
 
 1. **Setup:** the run folder gets `model/`, a fresh git repo with the templates and the dataset's
    `user-context.md`, committed; `playbook.md` is copied beside `run.yaml`.
@@ -171,20 +186,25 @@ Reading a run: its `model/` folder, and `git -C model log --stat` for how it gre
 
 ```
 modeler/
-  pyproject.toml           depends on vitality-usermodel
+  pyproject.toml           depends on vitality-usermodel; command vitality-modeler
+  Dockerfile               as the observer's: code installed into /opt/venv (not editable, no repo
+                           in the final image), plus Claude Code (a pinned version) and git
   vitality_modeler/
     session.py             §5: prepare, run, check/resume, commit/revert, record (Contract first)
     claude.py              building the claude command and run message; reading the stream
     repo.py                clean test, staging, commit, revert, change counts (git)
-    playbook.md
+    replay.py              §7 steps 1–3: setup, batch after batch, stopping early, summary
+    main.py                vitality-modeler replay <dataset> <run>  (milestone 2 adds `run`, `status`)
+    playbook.md            shipped inside the package, read with importlib.resources
   tests/                   with a fake `claude` executable
 lab/vitality_lab/
-  modeler_run.py           §7: setup, replay, settings
+  modeler_run.py           §7 host side: checks, run folder, image build, the container, result
   cli.py                   gains `run modeler`; dataset kind check
 ```
 
-`./vitality lab` also passes the `MODELER_*` settings. The lab runs `claude` on the VM host (it is
-installed and logged in there); the containerized modeler is milestone 2.
+`compose.yaml` gains a `modeler` service under a `lab` profile (so `docker compose up` never starts
+it; milestone 2 changes that), running as `VITALITY_UID`/`VITALITY_GID`. `./vitality lab` also
+passes the `MODELER_*` settings.
 
 ## 9. Testing
 
@@ -198,6 +218,10 @@ sessions:
   the session created removed, evidence back to untracked;
 - timeout and crash → failed and reverted; usage limit → `limited`;
 - the record line and transcript; `ANTHROPIC_API_KEY` absent from the session's environment;
+- the lab's host side with a fake container command: the run folder, `run.yaml` before and after,
+  the arguments and mounts it would start the container with, no `ANTHROPIC_API_KEY` among them;
+- the image builds, and `vitality-modeler replay` runs in it against the fake `claude` (a smoke
+  test run by hand on the VM, not in the unit tests);
 - the lab replay: several batches → several sessions and commits; stops after 3 sessions without a
   commit, on `limited`, on Ctrl-C; a captures dataset refused for the modeler stage and vice versa.
 
