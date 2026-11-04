@@ -1,0 +1,35 @@
+[project]
+name = "vitality-modeler"
+version = "0.1.0"
+description = "Turns the observer's evidence into the user model: actions, activities and strivings, written by a Claude Code agent"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml",
+    "vitality-usermodel",
+]
+
+[tool.uv.sources]
+vitality-usermodel = { path = "../usermodel", editable = true }
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest",
+    "types-PyYAML",
+]
+
+[project.scripts]
+vitality-modeler = "vitality_modeler.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vitality_modeler"]
+
+[tool.pyright]
+include = ["vitality_modeler", "tests"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
