@@ -9,7 +9,8 @@ from vitality_observer.work import WorkItem
 
 from vitality_lab.observer_run import observer_settings, run_observer
 
-Step = tuple[bool, str, float | None] | type[asyncio.CancelledError]  # (ok, detail, wait_seconds), or raise
+Step = tuple[bool, str, float | None] | tuple[bool, str, float | None, bool] | type[asyncio.CancelledError]
+# (ok, detail, wait_seconds[, reached_model]), or raise; reached_model defaults to True
 
 
 class FakeObserver:
@@ -28,8 +29,9 @@ class FakeObserver:
             if step is asyncio.CancelledError:
                 raise asyncio.CancelledError
             assert isinstance(step, tuple)
-            ok, detail, wait = step
-            outcomes.append(Outcome(item.name, ok, False, detail, wait, {"cost": 0.02 if ok else None}))
+            ok, detail, wait = step[:3]
+            reached = step[3] if len(step) > 3 else True
+            outcomes.append(Outcome(item.name, ok, reached, detail, wait, {"cost": 0.02 if ok else None}))
         return outcomes
 
 
@@ -74,6 +76,15 @@ async def test_short_wait_retried(tmp_path: Path):
     result = await run(config, FakeObserver({names[2]: [(False, "rate limited", 30), (True, "", None)]}), 2, sleeps)
     assert sleeps == [30]
     assert result.ok == 5
+
+
+async def test_account_failure_without_wait_retried(tmp_path: Path):
+    config, names = dataset(tmp_path, 3)
+    sleeps: list[float] = []
+    observer = FakeObserver({names[1]: [(False, "api 529: Overloaded", None, False), (True, "", None)]})
+    result = await run(config, observer, 1, sleeps)
+    assert sleeps == [30]
+    assert result.ok == 3 and result.failures == {}
 
 
 async def test_endless_wait_becomes_failure(tmp_path: Path):

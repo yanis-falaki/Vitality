@@ -79,10 +79,12 @@ settings and `LAB_DIR` from `.env`, then runs `uv run --project lab vitality-lab
 4. **Observe** every interaction in the dataset, oldest first, `parallel` at a time, through
    `AnthropicObserver` with `captures_dir` = the dataset's `captures/`, `model_dir` and `state_dir`
    = the run folder. Progress is printed per interaction.
-   - A failure is recorded and the run goes on.
-   - When an outcome asks to wait (`wait_seconds`: rate limit, overload) for at most 5 minutes,
-     the run waits that long and tries that interaction again; the account, not the interaction,
-     was the problem.
+   - A failure of the interaction's own (`reached_model`: a bad reply, a refusal, a bad
+     interaction) is recorded and the run goes on.
+   - Otherwise the account, not the interaction, was the problem (rate limit, overload, a server or
+     connection error, a timeout): the run waits what the outcome asks (`wait_seconds`), or 30 s
+     when it names no wait, if that is at most 5 minutes, and tries that interaction again; after
+     5 waits it counts as failed.
    - A longer wait stops the run (running out of credits asks for 6 hours): that interaction and
      the remaining ones are recorded as not run, with the reason.
    - Ctrl-C stops it the same way.

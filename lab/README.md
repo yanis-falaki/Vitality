@@ -45,9 +45,11 @@ A run refuses to start if untracked files exist under `observer/`, `usermodel/`,
 run is marked dirty and keeps the diff. So to try a prompt, edit
 `observer/vitality_observer/prompt.md` and run.
 
-Each interaction is tried once, 4 at a time by default. A failure is recorded and the run goes on.
-A short wait asked by the API (rate limit, overload) is waited; a long one (out of credits)
-stops the run, as does Ctrl-C, and `run.yaml` lists what was not run. The exit code is 0 for a
+Each interaction is tried once, 4 at a time by default. A failure of the interaction's own (a bad
+reply, a refusal) is recorded and the run goes on. When the API is the problem (rate limit,
+overload, a server or connection error, a timeout), the run waits (what the API asks, else 30 s)
+and tries again, up to 5 times; a long wait (out of credits) stops the run, as does Ctrl-C, and
+`run.yaml` lists what was not run. The exit code is 0 for a
 run that went through, 1 for one that was refused or stopped early.
 
 ## Making a dataset

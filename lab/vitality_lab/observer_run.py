@@ -19,6 +19,10 @@ SETTINGS = ("model", "effort", "parallel", "call_timeout_seconds")
 MAX_WAIT_SECONDS = 300
 """A wait the account asks for (rate limit, overload) up to this long is waited; a longer one stops the run."""
 
+RETRY_SECONDS = 30
+"""The wait before trying again after a failure that is not the interaction's own (overload, a server
+or connection error, a timeout) and for which the API named no wait."""
+
 MAX_WAITS = 5
 """Waits one interaction may cause before it counts as failed."""
 
@@ -60,9 +64,11 @@ async def run_observer(config: ObserverConfig, observer: Observer, *,
                        echo: Callable[[str], None] = print) -> RunResult:
     """Observe every interaction under `config.captures_dir` into `config.model_dir`, oldest first.
 
-    `config.parallel` at a time. A failure is recorded and the run goes on. An outcome asking to
-    wait at most `MAX_WAIT_SECONDS` is waited and that interaction tried again (after `MAX_WAITS`
-    waits it fails); a longer wait stops the run, as does cancellation (Ctrl-C): whatever was not
+    `config.parallel` at a time. A failure of the interaction's own (`reached_model`) is recorded and
+    the run goes on. Otherwise the account is the problem: an outcome asking to wait at most
+    `MAX_WAIT_SECONDS`, or naming no wait (then `RETRY_SECONDS`), is waited and that interaction
+    tried again (after `MAX_WAITS` waits it fails); a longer wait stops the run, as does
+    cancellation (Ctrl-C): whatever was not
     observed is in `not_run`, and the result is returned either way. One line per outcome goes
     to `echo`.
     """
@@ -81,18 +87,21 @@ async def run_observer(config: ObserverConfig, observer: Observer, *,
         stop_reason = None
         for item, outcome in zip(chunk, outcomes):
             result.cost_usd += outcome.record.get("cost") or 0
+            wait = outcome.wait_seconds
+            if wait is None and not outcome.reached_model:
+                wait = RETRY_SECONDS
             if outcome.ok:
                 result.ok += 1
                 echo(f"ok   {item.name}")
-            elif outcome.wait_seconds is not None and outcome.wait_seconds <= MAX_WAIT_SECONDS:
+            elif wait is not None and wait <= MAX_WAIT_SECONDS:
                 waits[item.name] = waits.get(item.name, 0) + 1
                 if waits[item.name] > MAX_WAITS:
                     _fail(result, item, f"kept being asked to wait: {outcome.detail}", echo)
                 else:
-                    echo(f"wait {item.name}: {outcome.detail} ({outcome.wait_seconds:g} s)")
+                    echo(f"wait {item.name}: {outcome.detail} ({wait:g} s)")
                     retry.append(item)
-                    longest = max(longest, outcome.wait_seconds)
-            elif outcome.wait_seconds is not None:
+                    longest = max(longest, wait)
+            elif wait is not None:
                 stopping.append(item)
                 stop_reason = outcome.detail
             else:
