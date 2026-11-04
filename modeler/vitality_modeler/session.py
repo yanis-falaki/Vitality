@@ -80,9 +80,10 @@ def run_session(model: Path, records: Path, config: ModelerConfig, playbook: str
 
     Raises RuntimeError, listing them, when the model folder has changes other than untracked evidence.
     A run that is limited, fails, times out (`config.run_timeout_seconds`, over both attempts) or still
-    has check problems after one resume is reverted. On KeyboardInterrupt, or any other exception while
-    the session runs or is checked, the session is killed and reverted, its record is appended (outcome `failed`, detail
-    `interrupted` or the error), and the exception is raised again.
+    has check problems after one resume is reverted. On KeyboardInterrupt, or any other exception from
+    staging to the commit, the session is killed and reverted, its record is appended (outcome `failed`,
+    detail `interrupted` or the error), and the exception is raised again. If a revert itself fails, the
+    record is still appended (outcome `failed`, detail naming both errors) and the revert's error is raised.
     """
     foreign = repo.foreign_changes(model)
     if foreign:
@@ -99,36 +100,53 @@ def run_session(model: Path, records: Path, config: ModelerConfig, playbook: str
         metas.append(meta)
     transcript = f"transcripts/{run_id}.jsonl"
     (records / "transcripts").mkdir(parents=True, exist_ok=True)
-    repo.stage(model, offered)
-    start = repo.head(model)
+    start = repo.head(model)  # staging does not move HEAD
 
     tally = _Tally()
-    work = _Work(model, records / transcript, config, playbook, claude, session_environment(environ),
-                 time.monotonic() + config.run_timeout_seconds, tally)
-    try:
-        outcome, detail = work.run(start, run_message(
-            [(p, m.start) for p, m in zip(offered.operations, metas)], *model_index(model), captures))
-    except BaseException as error:
-        repo.revert(model, start, offered)
-        detail = "interrupted" if isinstance(error, KeyboardInterrupt) else f"{type(error).__name__}: {error}"
-        _append(records, _record(run_id, started, clock(), trigger, offered, metas, config, playbook_version,
-                                 "failed", tally, None, dict.fromkeys(_CHANGES, 0), transcript, detail))
-        raise
+
+    def give_up(outcome: Outcome, detail: str) -> SessionRecord:
+        # Revert and record; if the revert fails, record that too and raise its error.
+        try:
+            repo.revert(model, start, offered)
+        except BaseException as error:
+            _append(records, _record(run_id, started, clock(), trigger, offered, metas, config,
+                                     playbook_version, "failed", tally, None, dict.fromkeys(_CHANGES, 0),
+                                     transcript, f"{detail}; revert failed: {_describe(error)}"))
+            raise
+        record = _record(run_id, started, clock(), trigger, offered, metas, config, playbook_version,
+                         outcome, tally, None, dict.fromkeys(_CHANGES, 0), transcript, detail)
+        _append(records, record)
+        return record
 
     commit: str | None = None
     changes = dict.fromkeys(_CHANGES, 0)
-    if outcome == "committed":
-        changes = repo.change_counts(model, start)
-        activities = changes["activities_created"] + changes["activities_revised"] + changes["activities_merged"]
-        strivings = changes["strivings_created"] + changes["strivings_revised"]
-        commit = repo.commit_all(model, f"modeler run {run_id}: {changes['actions']} actions, "
-                                        f"{activities} activities, {strivings} strivings")
-    else:
-        repo.revert(model, start, offered)
+    try:
+        repo.stage(model, offered)
+        work = _Work(model, records / transcript, config, playbook, claude, session_environment(environ),
+                     time.monotonic() + config.run_timeout_seconds, tally)
+        outcome, detail = work.run(start, run_message(
+            [(p, m.start) for p, m in zip(offered.operations, metas)], *model_index(model), captures))
+        if outcome == "committed":
+            counted = repo.change_counts(model, start)
+            activities = (counted["activities_created"] + counted["activities_revised"]
+                          + counted["activities_merged"])
+            strivings = counted["strivings_created"] + counted["strivings_revised"]
+            commit = repo.commit_all(model, f"modeler run {run_id}: {counted['actions']} actions, "
+                                            f"{activities} activities, {strivings} strivings")
+            changes = counted
+    except BaseException as error:
+        give_up("failed", _describe(error))
+        raise
+    if commit is None:
+        return give_up(outcome, detail)
     record = _record(run_id, started, clock(), trigger, offered, metas, config, playbook_version,
                      outcome, tally, commit, changes, transcript, detail)
     _append(records, record)
     return record
+
+
+def _describe(error: BaseException) -> str:
+    return "interrupted" if isinstance(error, KeyboardInterrupt) else f"{type(error).__name__}: {error}"
 
 
 @dataclass

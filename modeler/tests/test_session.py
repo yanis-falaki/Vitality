@@ -210,3 +210,67 @@ def test_interrupt(model: Path, records: Path, monkeypatch: pytest.MonkeyPatch):
     assert_reverted(model, start, before)
     [line] = lines(records)
     assert (line["outcome"], line["detail"]) == ("failed", "interrupted")
+
+
+def test_commit_failure_reverted(model: Path, records: Path, monkeypatch: pytest.MonkeyPatch):
+    with_evidence(model)
+    start = git(model, "rev-parse", "HEAD").strip()
+    before = evidence_bytes(model)
+
+    def commit_all(model: Path, message: str) -> str:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(session.repo, "commit_all", commit_all)
+    with pytest.raises(RuntimeError, match="boom"):
+        run(model, records, [{"write": action(model)}])
+    assert_reverted(model, start, before)
+    [line] = lines(records)
+    assert (line["outcome"], line["detail"], line["commit"]) == ("failed", "RuntimeError: boom", None)
+    assert set(line["changes"].values()) == {0}
+
+
+def test_interrupt_after_staging(model: Path, records: Path, monkeypatch: pytest.MonkeyPatch):
+    with_evidence(model)
+    start = git(model, "rev-parse", "HEAD").strip()
+    before = evidence_bytes(model)
+    real_stage = session.repo.stage
+
+    def stage(model: Path, offered: session.repo.Offered) -> None:
+        real_stage(model, offered)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(session.repo, "stage", stage)
+    with pytest.raises(KeyboardInterrupt):
+        run(model, records, [{"write": action(model)}])
+    assert_reverted(model, start, before)
+    [line] = lines(records)
+    assert (line["outcome"], line["detail"], line["attempts"]) == ("failed", "interrupted", 0)
+
+
+def broken_revert(model: Path, start: str, offered: session.repo.Offered) -> None:
+    raise RuntimeError("revert broke")
+
+
+def test_revert_failure_in_handler_recorded(model: Path, records: Path, monkeypatch: pytest.MonkeyPatch):
+    with_evidence(model)
+
+    def commit_all(model: Path, message: str) -> str:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(session.repo, "commit_all", commit_all)
+    monkeypatch.setattr(session.repo, "revert", broken_revert)
+    with pytest.raises(RuntimeError, match="revert broke"):
+        run(model, records, [{"write": action(model)}])
+    [line] = lines(records)
+    assert line["outcome"] == "failed"
+    assert "RuntimeError: boom" in line["detail"] and "revert broke" in line["detail"]
+
+
+def test_revert_failure_after_failed_run_recorded(model: Path, records: Path, monkeypatch: pytest.MonkeyPatch):
+    with_evidence(model)
+    monkeypatch.setattr(session.repo, "revert", broken_revert)
+    with pytest.raises(RuntimeError, match="revert broke"):
+        run(model, records, [{"exit": 1, "is_error": True, "result": "crashed"}])
+    [line] = lines(records)
+    assert line["outcome"] == "failed"
+    assert "crashed" in line["detail"] and "revert broke" in line["detail"]
