@@ -96,6 +96,23 @@ def test_replay_two_batches(dataset: Path, tmp_path: Path):
         {"sessions": {"committed": 2}, "stopped": None, "not_offered": []}
 
 
+def test_replay_progress_lines(dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    run = tmp_path / "run"
+    environ = script(tmp_path, [FAILING, {"write": action(*FILES[:2])}, {"write": action(*FILES[2:])}])
+    replay(dataset, run, CONFIG, claude=str(FAKE), environ=environ)
+    err = capsys.readouterr().err.splitlines()
+    records = [json.loads(line) for line in (run / "sessions.jsonl").read_text().splitlines()]
+    assert len(err) == 2 + len(records) == 5
+    assert err[0] == "vitality-modeler: 4 operations files to offer, batches of up to 6 operations"
+    for line, record in zip(err[1:-1], records):
+        assert line.startswith(f"vitality-modeler: session {record['run']}: ")
+        assert f"{record['operations']['count']} operations ({record['operations']['from']} .. " \
+               f"{record['operations']['to']})" in line
+        assert record["outcome"] in line and f"{record['duration_ms'] / 1000:.0f}s" in line
+    assert "failed" in err[1] and "committed" in err[2] and "$0.50" in err[2]
+    assert err[-1] == "vitality-modeler: done: committed 2, failed 1"
+
+
 def test_replay_retries_then_commits(dataset: Path, tmp_path: Path):
     run = tmp_path / "run"
     environ = script(tmp_path, [FAILING, {"write": action(*FILES[:2])}, FAILING, FAILING,
@@ -204,6 +221,18 @@ def test_main_usage_and_exit_codes(dataset: Path, tmp_path: Path, monkeypatch: p
     (tmp_path / "script.json").write_text(json.dumps([FAILING]))
     (tmp_path / "script.json.state").unlink()
     assert main(["replay", str(dataset), str(tmp_path / "stopped")]) == 1
+
+
+def test_main_prints_traceback(dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                               capsys: pytest.CaptureFixture[str]):
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("vitality_modeler.main.replay", broken)
+    assert main(["replay", str(dataset), str(tmp_path / "x")]) == 1
+    err = capsys.readouterr().err
+    assert "vitality-modeler: RuntimeError: boom" in err
+    assert "Traceback (most recent call last)" in err and "in broken" in err
 
 
 def test_sigterm_stops_replay(dataset: Path, tmp_path: Path):

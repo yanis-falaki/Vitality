@@ -34,7 +34,7 @@ A dataset is a folder with `operations/`, `observations/` (both `<device>/<date>
 3. Check the model. If there are problems, resume the same session once with them.
 4. Commit when the check passes and every offered operation is covered; otherwise revert the session's changes. The evidence stays in the model and is offered to the next session.
 
-The replay stops when everything is committed, after 3 sessions in a row without a commit, when the usage limit is reached, or on Ctrl-C or SIGTERM.
+The replay stops when everything is committed, after 3 sessions in a row without a commit, when the usage limit is reached, or on Ctrl-C or SIGTERM. It prints a line to stderr at the start, one as each session ends (run id, operations offered, outcome, duration, cost), and one at the end.
 
 A session is `limited` when its stream ends on Claude Code's typed API error (`"error": "rate_limit"` or `"billing_error"` on a synthetic assistant message, or a result with `terminal_reason: "api_error"` and `api_error_status: 429`), or, failing that, when the result text opens like Claude Code's own limit messages ("You've hit your …", "You've reached your …", "You're out of …").
 

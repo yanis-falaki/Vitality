@@ -5,7 +5,8 @@
 Replays a dataset's evidence into `<run>/model`, one session per batch, with the settings of
 `config.py` from the environment. Exits 0 when all the evidence was committed, 1 when the replay
 stopped early (see `<run>/replay.json`) or failed, and 2 on a usage error: bad arguments or
-settings, a dataset without `user-context.md`, or a run folder that already has a model. SIGTERM
+settings, a dataset without `user-context.md`, or a run folder that already has a model; an
+unexpected error is printed with its traceback. SIGTERM
 (as from `docker stop`) stops the replay as Ctrl-C does.
 """
 
@@ -13,6 +14,7 @@ import argparse
 import os
 import signal
 import sys
+import traceback
 from collections.abc import Sequence
 from pathlib import Path
 from types import FrameType
@@ -41,6 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"vitality-modeler: {error}", file=sys.stderr)
             return 2
         except Exception as error:
+            traceback.print_exc()
             print(f"vitality-modeler: {type(error).__name__}: {error}", file=sys.stderr)
             return 1
     finally:

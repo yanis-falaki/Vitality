@@ -5,12 +5,14 @@ batch and runs one session on each, as the scheduler will on live evidence. A ba
 committed stays in the model, untracked, and is offered again to the next session. The replay stops
 when every operations file is committed, after `MAX_FAILED_IN_A_ROW` sessions in a row without a
 commit, when the usage limit is reached, or on KeyboardInterrupt. Its summary is `<run>/replay.json`;
-the sessions' records are `<run>/sessions.jsonl` and `<run>/transcripts/`.
+the sessions' records are `<run>/sessions.jsonl` and `<run>/transcripts/`. Progress goes to stderr: a line
+at the start, one as each session ends, and one at the end.
 """
 
 import json
 import os
 import shutil
+import sys
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -19,7 +21,7 @@ from typing import Any
 from vitality_modeler import repo
 from vitality_modeler.config import ModelerConfig
 from vitality_modeler.playbook import PLAYBOOK, PLAYBOOK_VERSION
-from vitality_modeler.session import run_session
+from vitality_modeler.session import SessionRecord, run_session
 from vitality_usermodel.formats import OperationsMeta, read_file
 
 MODELER_NOTES_TEMPLATE = (
@@ -72,6 +74,7 @@ def replay(dataset: Path, run: Path, config: ModelerConfig, *, claude: str = "cl
     earlier = _read_outcomes(records)  # a run folder is fresh, but count only this replay's sessions
     stopped: str | None = None
     without_commit = 0
+    _progress(f"{len(pending)} operations files to offer, batches of up to {config.max_operations} operations")
     try:
         while True:
             if repo.choose_batch(model, config.max_operations) is None:
@@ -82,6 +85,7 @@ def replay(dataset: Path, run: Path, config: ModelerConfig, *, claude: str = "cl
                                  claude=claude, environ=environ)
             if record is None:
                 break
+            _progress(_session_line(record))
             if record.outcome == "limited":
                 stopped = "usage limit reached"
                 break
@@ -95,6 +99,18 @@ def replay(dataset: Path, run: Path, config: ModelerConfig, *, claude: str = "cl
         _finish(run, model, dataset, earlier, f"{type(error).__name__}: {error}")
         raise
     return _finish(run, model, dataset, earlier, stopped)
+
+
+def _progress(line: str) -> None:
+    print(f"vitality-modeler: {line}", file=sys.stderr, flush=True)
+
+
+def _session_line(record: SessionRecord) -> str:
+    # "session <run>: <n> operations (<first> .. <last>), <outcome>, <seconds>s, $<cost>"
+    ops = record.operations
+    cost = "cost unknown" if record.cost is None else f"${record.cost:.2f}"
+    return (f"session {record.run}: {ops['count']} operations ({ops['from']} .. {ops['to']}), "
+            f"{record.outcome}, {record.duration_ms / 1000:.0f}s, {cost}")
 
 
 def _operations_files(dataset: Path) -> list[_Evidence]:
@@ -139,4 +155,5 @@ def _finish(run: Path, model: Path, dataset: Path, earlier: list[str], stopped: 
                             [e.interaction for e in _operations_files(dataset) if e.path not in committed])
     run.mkdir(parents=True, exist_ok=True)
     (run / "replay.json").write_text(json.dumps(summary.to_json(), indent=2) + "\n", encoding="utf-8")
+    _progress("done: " + (", ".join(f"{k} {n}" for k, n in sorted(sessions.items())) or "no sessions"))
     return summary
