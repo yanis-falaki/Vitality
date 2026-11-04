@@ -14,6 +14,14 @@ LABEL_RE = re.compile(r"[a-z0-9][a-z0-9._-]*")
 """What a run's label may look like: it becomes the end of a folder name."""
 
 
+WATCHED = ("observer", "modeler", "usermodel", "protocol", "lab")
+"""Folders whose untracked files would run without being recorded, so a run refuses them."""
+
+
+class Refused(Exception):
+    """A run cannot start; the message says why. Nothing has been written."""
+
+
 @dataclass(frozen=True)
 class GitState:
     """The code a run executes, as git sees it."""

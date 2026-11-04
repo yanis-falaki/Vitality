@@ -20,23 +20,17 @@ from vitality_observer.provider.interface import Observer
 from vitality_observer.request import PROMPT, PROMPT_VERSION
 from vitality_observer.work import interactions
 
+from vitality_lab.modeler_run import dataset_kind, run_command, run_modeler_stage
 from vitality_lab.observer_run import observer_settings, run_observer, settings_record
-from vitality_lab.record import git_state, read_run_yaml, run_folder_name, write_run_yaml
+from vitality_lab.record import WATCHED, Refused, git_state, read_run_yaml, run_folder_name, write_run_yaml
 
 REPO = Path(__file__).resolve().parents[2]
 """The Vitality checkout this code runs from: its git state is what a run records."""
 
-WATCHED = ("observer", "usermodel", "protocol", "lab")
-"""Folders whose untracked files would run without being recorded, so a run refuses them."""
-
-
-class Refused(Exception):
-    """A run cannot start; the message says why. Nothing has been written."""
-
-
 def main(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] = os.environ, repo: Path = REPO,
          make_observer: Callable[[ObserverConfig], Observer] = AnthropicObserver,
-         now: Callable[[], datetime] = lambda: datetime.now().astimezone()) -> int:
+         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+         runner: Callable[[list[str]], int] = run_command, home: Path = Path.home()) -> int:
     """Run one `vitality-lab` command; return the exit code (0 done, 1 refused or stopped early, 2 usage)."""
     parser = argparse.ArgumentParser(prog="vitality-lab", description="Run a Vitality stage on a fixed dataset.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -47,6 +41,11 @@ def main(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] = os.e
     observer.add_argument("--label", help="a nickname appended to the run's folder name")
     observer.add_argument("--set", dest="overrides", action="append", default=[], metavar="NAME=VALUE",
                           help="override a setting for this run: model, effort, parallel, call_timeout_seconds")
+    modeler = stages.add_parser("modeler", help="replay an evidence dataset through the modeler, in its container")
+    modeler.add_argument("dataset", help="a folder name under $LAB_DIR/datasets")
+    modeler.add_argument("--label", help="a nickname appended to the run's folder name")
+    modeler.add_argument("--set", dest="overrides", action="append", default=[], metavar="NAME=VALUE",
+                         help="override a setting for this run: model, effort, max_operations, run_timeout_seconds")
     commands.add_parser("list", help="list datasets and runs")
     args = parser.parse_args(argv)
 
@@ -55,6 +54,9 @@ def main(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] = os.e
         print(listing(lab), end="")
         return 0
     try:
+        if args.stage == "modeler":
+            return run_modeler_stage(lab, args.dataset, args.label, args.overrides, environ, repo,
+                                     runner=runner, now=now, home=home)
         return run_observer_stage(lab, args.dataset, args.label, args.overrides, environ, repo, make_observer, now)
     except Refused as e:
         print(f"vitality-lab: {e}", file=sys.stderr)
@@ -65,6 +67,8 @@ def run_observer_stage(lab: Path, dataset: str, label: str | None, overrides: Se
                        environ: Mapping[str, str], repo: Path,
                        make_observer: Callable[[ObserverConfig], Observer], now: Callable[[], datetime]) -> int:
     """Check, create the run folder, observe the dataset into it, record the result. Raises Refused before writing."""
+    if dataset_kind(lab / "datasets" / dataset) == "evidence":
+        raise Refused(f"{dataset} is an evidence dataset; use run modeler")
     captures = lab / "datasets" / dataset / "captures"
     try:
         config = observer_settings(environ, overrides)
@@ -133,8 +137,13 @@ def listing(lab: Path) -> str:
     """The datasets (name, interaction count) and runs (folder, stage, input, result), oldest first."""
     lines = ["datasets:"]
     for folder in _folders(lab / "datasets"):
-        count = len(list((folder / "captures").glob("*/*/*/interaction.json")))
-        lines.append(f"  {folder.name}  {count} interactions")
+        kind = dataset_kind(folder)
+        if kind == "evidence":
+            count = sum(1 for p in (folder / "operations").rglob("*") if p.is_file())
+            lines.append(f"  {folder.name}  {count} operations files  evidence")
+        else:
+            count = len(list((folder / "captures").glob("*/*/*/interaction.json")))
+            lines.append(f"  {folder.name}  {count} interactions" + ("  captures" if kind else ""))
     lines.append("runs:")
     for folder in _folders(lab / "runs"):
         try:
@@ -142,8 +151,12 @@ def listing(lab: Path) -> str:
         except Exception:   # unreadable or not YAML: still listed
             record = {}
         result = record.get("result")
-        summary = (f"ok {result['ok']} failed {result['failed']}  ${result['cost_usd']:.2f}"
-                   if isinstance(result, dict) else "running or crashed")
+        if isinstance(result, dict) and "sessions" in result:
+            sessions = result["sessions"]
+            summary = f"sessions {sessions.get('committed', 0)}/{sum(sessions.values())}  ${result['cost_usd']:.2f}"
+        else:
+            summary = (f"ok {result['ok']} failed {result['failed']}  ${result['cost_usd']:.2f}"
+                       if isinstance(result, dict) else "running or crashed")
         lines.append(f"  {folder.name}  {record.get('stage', '?')}  {record.get('input', '?')}  {summary}")
     return "\n".join(lines) + "\n"
 

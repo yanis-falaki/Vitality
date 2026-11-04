@@ -2,7 +2,7 @@
 
 Runs a stage of Vitality on a small, fixed set of interactions and keeps a record of exactly what
 produced the result, so outputs can be read and compared before a change goes to the real data.
-For now the stage is the observer; the modeler joins in phase 2. The design is in
+The stages are the observer and the modeler. The design is in
 [`docs/superpowers/specs/2026-11-04-lab-design.md`](../docs/superpowers/specs/2026-11-04-lab-design.md).
 
 It drives the observer's own code (`AnthropicObserver`: the same prompt, request, parsing, files
@@ -20,7 +20,8 @@ datasets/<name>/
 runs/<YYYY-MM-DDTHH-MM-SS>-<commit>[-dirty][-<label>]/
   run.yaml                        what produced it and how it went
   changes.diff                    uncommitted changes the run included (when dirty)
-  prompt.md                       the observer prompt it used
+  prompt.md                       the observer prompt it used (observer runs)
+  playbook.md                     the modeler playbook it used (modeler runs)
   observations/  operations/      what the observer wrote
   calls.jsonl                     one line per API call, as in production
   notes.md                        your notes, if you write any
@@ -52,11 +53,34 @@ and tries again, up to 5 times; a long wait (out of credits) stops the run, as d
 `run.yaml` lists what was not run. The exit code is 0 for a
 run that went through, 1 for one that was refused or stopped early.
 
+## Modeler runs
+
+```sh
+./vitality lab run modeler <evidence-dataset> [--label x] [--set effort=medium]   # also max_operations,
+                                                                                  #   model, run_timeout_seconds
+```
+
+Runs on the VM, with the Claude login in `~/.claude/.credentials.json` (not the API key). The lab
+records the run (`run.yaml` with `stage: modeler`, `playbook.md`, `changes.diff`), builds the image
+(`docker build`), prints the `docker run` command and runs ONE container: the dataset read-only at
+`/dataset`, the run folder at `/run`, the login file, the `MODELER_*` settings. The container writes
+`model/`, `sessions.jsonl`, `transcripts/` and `replay.json` into the run folder; the lab then
+finishes `run.yaml` (`result.sessions`, `cost_usd`, `stopped`, `not_offered`). Exit 0 if not stopped.
+It refuses a captures dataset, a dataset without `user-context.md`, a missing login file and
+untracked files under `modeler/` (among the watched folders). `observer` in turn refuses an
+evidence dataset. `list` shows each dataset's kind, and `sessions <committed>/<total>` for modeler runs.
+
 ## Making a dataset
 
 By hand: copy interaction folders, keeping their `<device>/<day>/<time>` path, from
 `~/vitality-data/server/captures` into `datasets/<name>/captures/`, and write a `README.md` saying
 how they were picked. Never change a dataset afterwards; make a new one instead.
+
+### Making an evidence dataset
+
+An evidence dataset is `datasets/<name>/observations/<device>/<day>/<time>.md` and
+`operations/<device>/<day>/<time>.md` (copies of the server's files, same layout), a `user-context.md` (what the modeler is told about the user) and a `README.md`
+saying how it was picked. Like a captures dataset, never change it afterwards.
 
 ## Reading and comparing runs
 

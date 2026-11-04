@@ -5,11 +5,13 @@ description = "Runs a Vitality stage on a fixed dataset and keeps a self-describ
 requires-python = ">=3.12"
 dependencies = [
     "pyyaml",
+    "vitality-modeler",
     "vitality-observer",
     "vitality-usermodel",
 ]
 
 [tool.uv.sources]
+vitality-modeler = { path = "../modeler", editable = true }
 vitality-observer = { path = "../observer", editable = true }
 vitality-protocol = { path = "../protocol", editable = true }
 vitality-usermodel = { path = "../usermodel", editable = true }

@@ -173,7 +173,8 @@ cmd_upgrade() {
 cmd_lab() {
     local name value
     for name in ANTHROPIC_API_KEY OBSERVER_MODEL OBSERVER_EFFORT OBSERVER_PARALLEL \
-                OBSERVER_CALL_TIMEOUT_SECONDS LAB_DIR; do
+                OBSERVER_CALL_TIMEOUT_SECONDS MODELER_MODEL MODELER_EFFORT \
+                MODELER_MAX_OPERATIONS MODELER_RUN_TIMEOUT_SECONDS LAB_DIR; do
         if [[ -z "${!name+set}" ]]; then
             value="$(env_file_value "$name")"
             [[ -n $value ]] && export "$name=$value"

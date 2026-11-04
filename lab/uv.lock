@@ -533,6 +533,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },
+    { name = "vitality-modeler" },
     { name = "vitality-observer" },
     { name = "vitality-usermodel" },
 ]
@@ -548,6 +549,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pyyaml" },
+    { name = "vitality-modeler", editable = "../modeler" },
     { name = "vitality-observer", editable = "../observer" },
     { name = "vitality-usermodel", editable = "../usermodel" },
 ]
@@ -557,6 +559,28 @@ dev = [
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "types-pyyaml" },
+]
+
+[[package]]
+name = "vitality-modeler"
+version = "0.1.0"
+source = { editable = "../modeler" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "vitality-usermodel" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pyyaml" },
+    { name = "vitality-usermodel", editable = "../usermodel" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.414" },
+    { name = "pytest" },
     { name = "types-pyyaml" },
 ]
 
