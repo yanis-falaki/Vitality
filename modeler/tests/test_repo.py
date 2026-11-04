@@ -80,6 +80,25 @@ def test_revert_restores_offered_and_removes_created(model: Path):
         *offered.operations, "operations/a/2026-11-03/12-00-00.md"]
 
 
+def test_revert_removes_nested_repos_and_worktrees(model: Path):
+    add_evidence(model, "a/2026-11-03/09-00-00", "2026-11-03T09:00:00+00:00", 1)
+    offered = repo.choose_batch(model, 10)
+    assert offered is not None
+    repo.stage(model, offered)
+    start = repo.head(model)
+    git(model, "worktree", "add", "-q", ".claude/worktrees/agent-1")  # as a sub-agent's worktree isolation
+    (model / "activities/inner").mkdir(parents=True)
+    git(model / "activities/inner", "init", "-q")
+
+    repo.revert(model, start, offered)
+
+    assert not (model / ".claude").exists()
+    assert not (model / "activities").exists()
+    assert repo.foreign_changes(model) == []
+    assert [line for line in git(model, "worktree", "list", "--porcelain").splitlines()
+            if line.startswith("worktree ")] == [f"worktree {model}"]  # only the model itself
+
+
 def test_commit_and_counts(model: Path):
     start = repo.head(model)
     (model / "actions/2026-11-03").mkdir(parents=True)

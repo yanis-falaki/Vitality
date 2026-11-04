@@ -79,11 +79,14 @@ claude -p <run message> --append-system-prompt <playbook.md>
   --model <MODELER_MODEL> --effort <MODELER_EFFORT>
   --setting-sources project --strict-mcp-config
   --permission-mode bypassPermissions --output-format stream-json --verbose
-  --forward-subagent-text
+  --forward-subagent-text --disallowedTools EnterWorktree ExitWorktree
   [--add-dir <captures folder>]
 ```
 
 `--forward-subagent-text` puts the sub-agents' text into the stream, so the transcript holds it.
+The worktree tools are disallowed and the playbook forbids worktree isolation: work outside the model
+folder would never be checked or committed. A revert removes nested repositories and prunes worktrees.
+
 Working directory: the model folder. Timeout: `MODELER_RUN_TIMEOUT_SECONDS`. Sub-agents allowed.
 Authentication is the owner's Claude Code login on the VM (the Team seat), never an API key:
 `ANTHROPIC_API_KEY` is never passed into the container, and the harness also removes it from the

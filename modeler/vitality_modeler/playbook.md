@@ -169,7 +169,8 @@ line of why.
   happened; the model must bend to them, never the reverse. Nor is `user-context.md`, which belongs
   to the owner. Write only under `actions/`, `activities/`, `strivings/` and `modeler-notes.md`;
   any other file you create or change makes the session fail. Keep scratch notes outside the model
-  folder (for example in `/tmp`).
+  folder (for example in `/tmp`). The orchestrator and every sub-agent write only in this folder,
+  in place: never use worktree isolation (no worktree, no sub-agent started with `isolation: "worktree"`).
 - **Locked files are the owner's.** A file with `locked: true` is not edited, merged, deleted or
   relinked. Other files may link to it.
 - **Change only with evidence**, and write the reason in the file's body. A belief with thin evidence

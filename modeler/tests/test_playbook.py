@@ -31,6 +31,8 @@ def test_playbook_mentions():
     assert "Unknown fields are rejected; write every field listed." in flat
     # Action ID suffix: the next free number in the one `-N` suffix, never a second suffix.
     assert "never `-2-2`" in flat
+    # Work happens in the model folder itself; a worktree's changes would never be checked or committed.
+    assert "never use worktree isolation" in flat
 
 
 def test_playbook_examples_parse():

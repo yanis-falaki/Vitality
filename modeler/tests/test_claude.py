@@ -18,7 +18,8 @@ def test_command_exact():
     cfg = ModelerConfig(model="m1", effort="max")
     base = ["claude", "-p", "msg", "--append-system-prompt", "play", "--model", "m1", "--effort", "max",
             "--setting-sources", "project", "--strict-mcp-config", "--permission-mode", "bypassPermissions",
-            "--output-format", "stream-json", "--verbose", "--forward-subagent-text"]
+            "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
+            "--disallowedTools", "EnterWorktree", "ExitWorktree"]
     assert claude_command("msg", "play", cfg) == base
     assert claude_command("msg", "play", cfg, resume="s1", claude="/x/claude") == ["/x/claude", *base[1:], "--resume", "s1"]
 

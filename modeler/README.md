@@ -30,7 +30,7 @@ A dataset is a folder with `operations/`, `observations/` (both `<device>/<date>
 `replay` creates `<run>/model` (a git repository with `user-context.md` and `modeler-notes.md`), then repeats until all operations are committed:
 
 1. Copy the oldest whole operations files (with their observations), up to `MODELER_MAX_OPERATIONS` operations, into the model, untracked.
-2. Run Claude Code in the model folder, with the playbook appended to its system prompt and only project settings. Its tools are the files, `vitality-usermodel check` and `next-id`, and git. Sub-agents' text is forwarded into the stream (`--forward-subagent-text`), so the transcript holds it.
+2. Run Claude Code in the model folder, with the playbook appended to its system prompt and only project settings. Its tools are the files, `vitality-usermodel check` and `next-id`, and git. The worktree tools are disallowed (`--disallowedTools EnterWorktree ExitWorktree`) and the playbook forbids worktree isolation, so all work happens in the model folder; a revert also removes nested repositories and prunes worktrees. Sub-agents' text is forwarded into the stream (`--forward-subagent-text`), so the transcript holds it.
 3. Check the model. If there are problems, resume the same session once with them.
 4. Commit when the check passes and every offered operation is covered; otherwise revert the session's changes. The evidence stays in the model and is offered to the next session.
 

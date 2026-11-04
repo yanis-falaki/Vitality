@@ -106,14 +106,16 @@ def commit_all(model: Path, message: str) -> str:
 def revert(model: Path, start: str, offered: Offered) -> None:
     """Undo a run that began at commit `start` and was staged with `stage`.
 
-    Afterwards the tracked files are as at `start`, whatever the run created is gone, and the
-    offered files exist, untracked, byte-identical to when they were staged.
+    Afterwards the tracked files are as at `start`, whatever the run created is gone (nested git
+    repositories and worktrees included, and their worktree records pruned), and the offered files exist, untracked, byte-identical to when they were staged.
     """
     paths = [*offered.operations, *offered.observations]
     _git(model, "checkout", "--", *paths)  # the index still holds them as staged
     _git(model, "reset", "-q", start)
     _git(model, "checkout", start, "--", ".")
-    _git(model, "clean", "-fdq", "--", ".", ":!observations", ":!operations")
+    # -ff also removes nested repositories, such as a worktree the session made inside the model folder.
+    _git(model, "clean", "-ffdq", "--", ".", ":!observations", ":!operations")
+    _git(model, "worktree", "prune")
 
 
 def change_counts(model: Path, start: str) -> dict[str, int]:
