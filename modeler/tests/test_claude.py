@@ -95,3 +95,19 @@ def test_fake_claude_runs(tmp_path: Path):
     assert (r.session_id, r.text, r.is_error, r.cost_usd) == ("fake-1", "fine", False, 0.5)
     calls = Path(f"{script}.calls").read_text().splitlines()
     assert json.loads(calls[0])["argv"] == ["-p", "hello"] and json.loads(calls[0])["api_key"] is True
+
+
+def test_run_message_keeps_own_offsets():
+    from datetime import timedelta
+    west = datetime(2026, 10, 26, 18, 30, tzinfo=timezone(timedelta(hours=-4)))   # 22:30 UTC
+    east = datetime(2026, 10, 26, 23, 45, tzinfo=timezone(timedelta(hours=2)))    # 21:45 UTC
+    msg = run_message([("operations/w.md", west), ("operations/e.md", east)], [], [], None)
+    assert "2026-10-26T18:30-04:00" in msg and "2026-10-26T23:45+02:00" in msg
+    assert msg.index("operations/e.md") < msg.index("operations/w.md")
+
+
+def test_read_stream_malformed_result():
+    r = read_stream([_result(is_error=False, result="ok", usage=[], total_cost_usd="x")])
+    assert (r.text, r.input_tokens, r.output_tokens, r.cost_usd) == ("ok", None, None, None)
+    r = read_stream([_result(is_error=False, result="ok", usage={"input_tokens": "1", "output_tokens": 2}, total_cost_usd=1)])
+    assert (r.input_tokens, r.output_tokens, r.cost_usd) == (None, 2, 1.0)

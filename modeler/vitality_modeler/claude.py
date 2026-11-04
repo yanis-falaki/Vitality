@@ -42,12 +42,15 @@ def session_environment(environ: Mapping[str, str]) -> dict[str, str]:
 
 def run_message(offered: list[tuple[str, datetime]], activities: list[str], strivings: list[str],
                 captures: str | None) -> str:
-    """The message of a run: the offered operations files (path and local start, oldest first), the index of
+    """The message of a run: the offered operations files (path and start, oldest first), the index of
     activities and strivings (`model_index` lines; "none yet" when empty), the instruction to read the two
-    context files, and the captures folder when there is one."""
+    context files, and the captures folder when there is one.
+
+    Callers pass each file's frontmatter `start` as read (aware, with the device's offset); it is printed in
+    that offset, unconverted, so times of day are the user's local ones. Ordering is by instant."""
     lines = ["Operations files offered to this run (oldest first):"]
     for path, start in sorted(offered, key=lambda o: o[1]):
-        lines.append(f"- {path} (starts {start.astimezone():%Y-%m-%d %H:%M})")
+        lines.append(f"- {path} (starts {start.isoformat(timespec="minutes")})")
     lines += ["", "Activities:", *(activities or ["none yet"]),
               "", "Strivings:", *(strivings or ["none yet"]),
               "", "Read user-context.md and modeler-notes.md first."]
@@ -108,6 +111,10 @@ def read_stream(lines: Iterable[str]) -> StreamResult:
         return StreamResult(session_id, True, "no result in the stream", None, None, None, False)
     is_error = bool(result.get("is_error"))
     text = str(result.get("result") or "")
-    usage: dict[str, Any] = result.get("usage") or {}
-    return StreamResult(session_id, is_error, text, usage.get("input_tokens"), usage.get("output_tokens"),
-                        result.get("total_cost_usd"), is_error and LIMIT_RE.search(text) is not None)
+    raw = result.get("usage")
+    usage: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    tokens = [usage.get(k) if isinstance(usage.get(k), int) else None for k in ("input_tokens", "output_tokens")]
+    cost = result.get("total_cost_usd")
+    return StreamResult(session_id, is_error, text, tokens[0], tokens[1],
+                        float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None,
+                        is_error and LIMIT_RE.search(text) is not None)
