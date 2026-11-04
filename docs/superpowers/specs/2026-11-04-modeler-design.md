@@ -161,9 +161,13 @@ run itself happens in **one container**:
 
 - **On the host** (`vitality-lab`): check git and the dataset, create the run folder, write
   `run.yaml` and `changes.diff`, build the modeler image from the current code (cached when nothing
-  changed), then start one container:
-  `docker compose run --rm modeler vitality-modeler replay /dataset /run`, mounting the dataset
-  read-only at `/dataset`, the run folder at `/run` and the login file. When it exits, fill in
+  changed: `docker build -f modeler/Dockerfile -t vitality-modeler .`), then start one container
+  with plain Docker (no Compose: Compose describes the running application, and the lab is apart
+  from it):
+  `docker run --rm --user <VITALITY_UID>:<VITALITY_GID> -v <dataset>:/dataset:ro -v <run folder>:/run
+  -v ~/.claude/.credentials.json:<the login path in the container> vitality-modeler
+  vitality-modeler replay /dataset /run`. Every mount and setting the container gets is in that one
+  command, which `vitality-lab` prints before running it. When it exits, fill in
   `run.yaml`'s result from `sessions.jsonl` and the replay's summary.
 - **In the container** (`vitality-modeler replay`), steps 1–3 below, then exit.
 
@@ -202,9 +206,8 @@ lab/vitality_lab/
   cli.py                   gains `run modeler`; dataset kind check
 ```
 
-`compose.yaml` gains a `modeler` service under a `lab` profile (so `docker compose up` never starts
-it; milestone 2 changes that), running as `VITALITY_UID`/`VITALITY_GID`. `./vitality lab` also
-passes the `MODELER_*` settings.
+`compose.yaml` is unchanged in milestone 1; milestone 2 adds the `modeler` service, built from the
+same `modeler/Dockerfile`. `./vitality lab` also passes the `MODELER_*` settings.
 
 ## 9. Testing
 
