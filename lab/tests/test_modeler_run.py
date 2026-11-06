@@ -99,7 +99,7 @@ def test_modeler_run_writes_record(repo: Path, lab: Path, home: Path):
     config = modeler_settings(environ, [])
     assert (folder / "state").is_dir() and not (folder / "sessions.jsonl").exists()
     expected = docker_run_command(folder / "model", folder / "state", home / ".claude" / ".credentials.json",
-                                  config, os.getuid(), os.getgid())
+                                  config, os.getuid(), os.getgid(), (folder / "captures").resolve())
     assert launch == expected
     assert f"{os.getuid()}:{os.getgid()}" in launch
     assert not any("ANTHROPIC_API_KEY" in arg or "sk-secret" in arg for arg in launch)
@@ -242,7 +242,7 @@ def test_relative_lab_dir_gives_absolute_mounts(repo: Path, lab: Path, home: Pat
     runner = Runner()
     assert run(repo, Path("lab"), home, "ev", runner=runner) == 0
     mounts = [a for a in runner.commands[1] if ":/" in a and a.startswith("/")]
-    assert len(mounts) == 3 and all(m.startswith("/") for m in mounts)
+    assert len(mounts) == 4 and all(m.startswith("/") for m in mounts)  # model, state, captures, login
 
 
 def test_container_exit_recorded(repo: Path, lab: Path, home: Path):
@@ -274,7 +274,7 @@ def captured_lab(tmp_path: Path) -> tuple[Path, Path]:
 def test_captures_copied_and_mounted(repo: Path, home: Path, tmp_path: Path):
     lab, data = captured_lab(tmp_path)
     runner = Runner()
-    assert run(repo, lab, home, "day", "--captures", runner=runner, environ={"VITALITY_DATA": str(data)}) == 0
+    assert run(repo, lab, home, "day", runner=runner, environ={"VITALITY_DATA": str(data)}) == 0  # on by default
     [folder] = runs(lab)
     copied = folder / "captures" / "laptop" / "2026-10-25" / "23-18-41"
     assert (copied / "0000.webp").read_bytes() == b"img" and (copied / "interaction.json").is_file()
@@ -287,7 +287,7 @@ def test_captures_copied_and_mounted(repo: Path, home: Path, tmp_path: Path):
 
 def test_without_captures_nothing_is_mounted(repo: Path, lab: Path, home: Path):
     runner = Runner()
-    assert run(repo, lab, home, "ev", runner=runner) == 0
+    assert run(repo, lab, home, "ev", "--no-captures", runner=runner) == 0
     [folder] = runs(lab)
     assert not (folder / "captures").exists()
     assert not any(":/captures" in arg for arg in runner.commands[1])
@@ -299,6 +299,6 @@ def test_missing_captures_refused(repo: Path, home: Path, tmp_path: Path, capsys
     for item in (data / "server" / "captures" / "laptop" / "2026-10-26" / "00-21-43").iterdir():
         item.unlink()
     (data / "server" / "captures" / "laptop" / "2026-10-26" / "00-21-43").rmdir()
-    assert run(repo, lab, home, "day", "--captures", environ={"VITALITY_DATA": str(data)}) == 1
+    assert run(repo, lab, home, "day", environ={"VITALITY_DATA": str(data)}) == 1
     assert runs(lab) == []
     assert "laptop/2026-10-26/00-21-43" in capsys.readouterr().err

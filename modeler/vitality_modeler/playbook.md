@@ -47,7 +47,8 @@ You coordinate; three sub-agents do the stages. Each stage gets its own sub-agen
 with a clean context and a large batch fits. Sub-agents do not see this playbook, so when you
 delegate, give the sub-agent its brief from "Briefs for the sub-agents" below, together with the
 sections "Rules for every file" and "File formats" (copy them into the prompt in full: the sub-agent
-has no other way to learn them), plus the specific inputs named in the brief.
+has no other way to learn them), plus the specific inputs named in the brief. If the run message
+names a captures folder, pass the captures folder to every sub-agent too.
 
 1. **Read `modeler-notes.md` and `user-context.md`.** User context is background the owner wrote
    about themselves: use it to interpret what you see, but never as evidence that something
@@ -189,6 +190,13 @@ line of why.
   timestamp inside a file is local time with its offset (ISO 8601, for example
   `2026-11-03T09:22:05-05:00`). Reason about time of day, and which day something belongs to, only
   from these local times. Every time you write carries an offset, taken from the evidence.
+- **Screenshots, sparingly.** When a captures folder is given, each interaction's screenshots are
+  in `<captures>/<interaction>/` (`NNNN.webp`, in time order; the interaction is the evidence file's
+  name, e.g. `laptop/2026-10-25/23-18-41`). The observations were written from these screenshots, so
+  they usually say enough. Look at screenshots only when the observation and operations leave
+  something unclear that matters for a decision, and look at few: search the observations first
+  (`grep -rl` for a name, a site, a phrase) to find the interactions worth opening, then open only
+  those.
 - **Git.** Do not commit, stage, reset, check out or stash: the harness commits the session's work
   after its check. Reading history is fine.
 - **Check.** Run `vitality-usermodel check` (in the model folder) after writing files. It prints `ok`

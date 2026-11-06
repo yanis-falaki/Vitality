@@ -67,8 +67,8 @@ records the run (`run.yaml` with `stage: modeler`, `playbook.md`, `changes.diff`
 `/model` and `state/` at `/state` (the paths the service will use), the login file, the `MODELER_*`
 settings. The dataset, `run.yaml`, `playbook.md` and `changes.diff` are not mounted. Each session is
 offered the oldest evidence not yet committed, up to the cap, and may read the rest. The container
-commits to `model/` and writes `sessions.jsonl`, `transcripts/` and `replay.json` to `state/`. With
-`--captures`, the dataset's screenshots (and `interaction.json`) are copied from
+commits to `model/` and writes `sessions.jsonl`, `transcripts/` and `replay.json` to `state/`. By default
+(`--no-captures` to leave them out), the dataset's screenshots (and `interaction.json`) are copied from
 `~/vitality-data/server/captures` into the run's `captures/` and mounted read-only at `/captures`, so
 sessions may look at them; `run.yaml` records `captures: true`. The lab then
 finishes `run.yaml` (`result.sessions`, `cost_usd`, `stopped`, `not_offered`). Exit 0 if not stopped.

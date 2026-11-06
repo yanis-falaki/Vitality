@@ -176,6 +176,8 @@ def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Seq
     try:
         prepare(folder_in_lab, model)
         state.mkdir()
+        if captures:
+            (folder / "captures").mkdir()
         for name in capture_names:
             shutil.copytree(capture_root / name, folder / "captures" / name)
     except (ValueError, OSError) as e:

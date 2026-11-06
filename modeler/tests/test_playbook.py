@@ -21,6 +21,11 @@ def test_playbook_mentions():
                  "conflicts_with", "established", "tentative"):
         assert word in PLAYBOOK, word
     assert "24 hours" not in PLAYBOOK
+    # Screenshots: where they are, how to find the right ones, and that they are used sparingly.
+    flat_text = " ".join(PLAYBOOK.split())
+    for phrase in ("<captures>/<interaction>/", "sparingly", "search the observations",
+                   "pass the captures folder"):
+        assert phrase in flat_text, phrase
     # Impersonal: the owner is "[Name]" in examples, never a real name.
     assert "Yanis" not in PLAYBOOK and "[Name]" in PLAYBOOK
     # One sub-agent per stage: no splitting a stage across several, no seams to join.
