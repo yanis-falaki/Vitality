@@ -102,6 +102,13 @@ def test_replay_two_batches(dataset: Path, tmp_path: Path):
         {"sessions": {"committed": 2}, "stopped": None, "not_offered": []}
 
 
+def test_replay_passes_captures(dataset: Path, tmp_path: Path):
+    run = tmp_path / "run"
+    environ = script(tmp_path, [{"write": action(*FILES[:2])}, {"write": action(*FILES[2:])}])
+    replay(*prepared(dataset, run), CONFIG, captures="/captures", claude=str(FAKE), environ=environ)
+    assert all(c["argv"][c["argv"].index("--add-dir") + 1] == "/captures" for c in calls(tmp_path))
+
+
 def test_replay_progress_lines(dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     run = tmp_path / "run"
     environ = script(tmp_path, [FAILING, {"write": action(*FILES[:2])}, {"write": action(*FILES[2:])}])
@@ -236,7 +243,8 @@ def test_main_usage_and_exit_codes(dataset: Path, tmp_path: Path, monkeypatch: p
         if key != "PATH":
             monkeypatch.setenv(key, value)
     before = signal.getsignal(signal.SIGTERM)
-    assert main(["replay", *map(str, prepared(dataset, tmp_path / "ok"))]) == 0
+    assert main(["replay", *map(str, prepared(dataset, tmp_path / "ok")), "--captures", "/captures"]) == 0
+    assert all("--add-dir" in c["argv"] for c in calls(tmp_path))
     assert signal.getsignal(signal.SIGTERM) == before
     assert json.loads((tmp_path / "ok" / "state" / "replay.json").read_text())["sessions"] == {"committed": 2}
 

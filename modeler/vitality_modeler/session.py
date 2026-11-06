@@ -125,7 +125,7 @@ def run_session(model: Path, records: Path, config: ModelerConfig, playbook: str
     try:
         repo.stage(model, offered)
         work = _Work(model, records / transcript, config, playbook, claude, session_environment(environ),
-                     time.monotonic() + config.run_timeout_seconds, tally)
+                     time.monotonic() + config.run_timeout_seconds, tally, captures)
         outcome, detail = work.run(start, run_message(
             [(p, m.start) for p, m in zip(offered.operations, metas)], *model_index(model), captures))
         if outcome == "committed":
@@ -178,12 +178,14 @@ class _Work:
     env: dict[str, str]
     deadline: float          # time.monotonic() after which the session is given up on
     tally: _Tally
+    captures: str | None = None  # the screenshots folder, readable by the session, if any
 
     def run(self, start: str, message: str) -> tuple[Outcome, str]:
         """Up to two attempts; the outcome and, when failed, why. Leaves committing or reverting to the caller."""
         resume: str | None = None
         while True:
-            argv = claude_command(message, self.playbook, self.config, resume=resume, claude=self.claude)
+            argv = claude_command(message, self.playbook, self.config, captures=self.captures, resume=resume,
+                                  claude=self.claude)
             lines, code, stderr = _invoke(argv, self.model, self.env, self.transcript, self.deadline)
             result = read_stream(lines)
             self.tally.add(result)

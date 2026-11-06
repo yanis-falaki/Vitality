@@ -10,6 +10,7 @@ wrote in `state/` (`replay.json`, `sessions.jsonl`) is what `run.yaml` is finish
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -63,16 +64,19 @@ def docker_build_command(repo: Path) -> list[str]:
 
 
 def docker_run_command(model: Path, state: Path, credentials: Path, config: ModelerConfig,
-                       uid: int, gid: int) -> list[str]:
-    """The one container: the prepared model at /model, the state folder at /state, the login file, the settings.
+                       uid: int, gid: int, captures: Path | None = None) -> list[str]:
+    """The one container: the prepared model at /model, the state folder at /state, the login file, the settings,
+    and, when given, the run's copy of the captures read-only at /captures (the sessions may then read them).
 
     No API key is passed: the session uses the owner's Claude login.
     """
     env = [arg for name in SETTINGS for arg in ("-e", f"MODELER_{name.upper()}={getattr(config, name)}")]
     return ["docker", "run", "--rm", "--user", f"{uid}:{gid}",
             "-v", f"{model}:/model", "-v", f"{state}:/state",
+            *(["-v", f"{captures}:/captures:ro"] if captures is not None else []),
             "-v", f"{credentials}:{CREDENTIALS_IN_CONTAINER}",
-            *env, IMAGE, "vitality-modeler", "replay", "/model", "/state"]
+            *env, IMAGE, "vitality-modeler", "replay", "/model", "/state",
+            *(["--captures", "/captures"] if captures is not None else [])]
 
 
 def run_command(command: list[str]) -> int:
@@ -89,8 +93,12 @@ def run_command(command: list[str]) -> int:
 def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Sequence[str],
                       environ: Mapping[str, str], repo: Path, *,
                       runner: Callable[[list[str]], int] = run_command,
-                      now: Callable[[], datetime], home: Path = Path.home()) -> int:
+                      now: Callable[[], datetime], home: Path = Path.home(), captures: bool = False) -> int:
     """Check, create the run folder, run the container, finish the record. Raises Refused before writing.
+
+    With `captures`, the dataset's interactions are copied from the data folder's captures
+    (`$VITALITY_DATA/server/captures`, default `~/vitality-data`) into the run's `captures/`, and the
+    sessions may read them; every one must exist.
     """
     folder_in_lab = lab / "datasets" / dataset
     kind = dataset_kind(folder_in_lab)
@@ -103,6 +111,16 @@ def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Seq
     credentials = home / ".claude" / ".credentials.json"
     if not credentials.is_file():
         raise Refused(f"{credentials} is missing; log in to Claude Code on this machine first")
+    capture_root = Path(environ.get("VITALITY_DATA") or home / "vitality-data") / "server" / "captures"
+    capture_names: list[str] = []
+    if captures:
+        operations = folder_in_lab / "operations"
+        capture_names = sorted(p.relative_to(operations).with_suffix("").as_posix()
+                               for p in operations.glob("*/*/*.md"))
+        missing = [name for name in capture_names if not (capture_root / name).is_dir()]
+        if missing:
+            raise Refused(f"{len(missing)} of the dataset's interactions have no captures in {capture_root}:\n  "
+                          + "\n  ".join(missing))
     try:
         config = modeler_settings(environ, overrides)
     except ValueError as e:
@@ -134,6 +152,7 @@ def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Seq
         "label": label,
         "settings": settings_record(config),
         "playbook_version": PLAYBOOK_VERSION,
+        "captures": captures,
         "result": None,
         "stopped": None,
         "container_exit": None,
@@ -157,11 +176,14 @@ def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Seq
     try:
         prepare(folder_in_lab, model)
         state.mkdir()
+        for name in capture_names:
+            shutil.copytree(capture_root / name, folder / "captures" / name)
     except (ValueError, OSError) as e:
         return give_up(f"could not prepare the model: {e}")
     try:
         exit_code = runner(docker_run_command(model.resolve(), state.resolve(), credentials, config,
-                                              os.getuid(), os.getgid()))
+                                              os.getuid(), os.getgid(),
+                                              (folder / "captures").resolve() if captures else None))
     except OSError as e:
         return give_up(f"docker could not be run: {e}")
     record["container_exit"] = exit_code

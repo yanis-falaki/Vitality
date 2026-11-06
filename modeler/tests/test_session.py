@@ -42,10 +42,10 @@ def action(model: Path, *, skip: int = 0) -> dict[str, str]:
 
 
 def run(model: Path, records: Path, steps: list[dict[str, Any]], *, config: ModelerConfig = CONFIG,
-        environ: dict[str, str] | None = None) -> session.SessionRecord | None:
+        environ: dict[str, str] | None = None, captures: str | None = None) -> session.SessionRecord | None:
     script = records.parent / "script.json"
     script.write_text(json.dumps(steps))
-    return run_session(model, records, config, "the playbook", "abc123", trigger="replay", claude=FAKE,
+    return run_session(model, records, config, "the playbook", "abc123", trigger="replay", claude=FAKE, captures=captures,
                        environ={**(environ or {}), "PATH": "/usr/bin:/bin", "FAKE_CLAUDE_SCRIPT": str(script)},
                        clock=lambda: WHEN)
 
@@ -85,6 +85,15 @@ def test_refuses_foreign_changes(model: Path, records: Path):
     (model / "user-context.md").write_text("edited\n")
     with pytest.raises(RuntimeError, match="user-context.md"):
         run(model, records, [{}])
+
+
+def test_captures_reach_the_session(model: Path, records: Path):
+    with_evidence(model)
+    record = run(model, records, [{"write": action(model)}], captures="/captures")
+    assert record is not None and record.outcome == "committed"
+    argv = calls(records)[0]["argv"]
+    assert argv[argv.index("--add-dir") + 1] == "/captures"
+    assert "Captures folder: /captures" in argv[argv.index("-p") + 1]
 
 
 def test_committed(model: Path, records: Path):

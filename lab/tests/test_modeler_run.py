@@ -253,3 +253,52 @@ def test_container_exit_recorded(repo: Path, lab: Path, home: Path):
     assert run(repo, lab, home, "ev", runner=Failing()) == 1
     record = read_run_yaml(runs(lab)[0] / "run.yaml")
     assert record["container_exit"] == 137 and record["stopped"] == "container exited with 137"
+
+
+def captured_lab(tmp_path: Path) -> tuple[Path, Path]:
+    """A lab whose dataset has two real interactions, and a data folder holding their captures."""
+    lab = tmp_path / "lab2"
+    data = tmp_path / "vitality-data"
+    for name in ("laptop/2026-10-25/23-18-41", "laptop/2026-10-26/00-21-43"):
+        ops = lab / "datasets" / "day" / "operations" / f"{name}.md"
+        ops.parent.mkdir(parents=True)
+        ops.write_text("ops\n")
+        shot = data / "server" / "captures" / name
+        shot.mkdir(parents=True)
+        (shot / "interaction.json").write_text("{}")
+        (shot / "0000.webp").write_bytes(b"img")
+    (lab / "datasets" / "day" / "user-context.md").write_text("context")
+    return lab, data
+
+
+def test_captures_copied_and_mounted(repo: Path, home: Path, tmp_path: Path):
+    lab, data = captured_lab(tmp_path)
+    runner = Runner()
+    assert run(repo, lab, home, "day", "--captures", runner=runner, environ={"VITALITY_DATA": str(data)}) == 0
+    [folder] = runs(lab)
+    copied = folder / "captures" / "laptop" / "2026-10-25" / "23-18-41"
+    assert (copied / "0000.webp").read_bytes() == b"img" and (copied / "interaction.json").is_file()
+    assert (folder / "captures" / "laptop" / "2026-10-26" / "00-21-43" / "0000.webp").is_file()
+    launch = runner.commands[1]
+    assert f"{(folder / 'captures').resolve()}:/captures:ro" in launch
+    assert launch[-2:] == ["--captures", "/captures"]
+    assert read_run_yaml(folder / "run.yaml")["captures"] is True
+
+
+def test_without_captures_nothing_is_mounted(repo: Path, lab: Path, home: Path):
+    runner = Runner()
+    assert run(repo, lab, home, "ev", runner=runner) == 0
+    [folder] = runs(lab)
+    assert not (folder / "captures").exists()
+    assert not any(":/captures" in arg for arg in runner.commands[1])
+    assert read_run_yaml(folder / "run.yaml")["captures"] is False
+
+
+def test_missing_captures_refused(repo: Path, home: Path, tmp_path: Path, capsys):
+    lab, data = captured_lab(tmp_path)
+    for item in (data / "server" / "captures" / "laptop" / "2026-10-26" / "00-21-43").iterdir():
+        item.unlink()
+    (data / "server" / "captures" / "laptop" / "2026-10-26" / "00-21-43").rmdir()
+    assert run(repo, lab, home, "day", "--captures", environ={"VITALITY_DATA": str(data)}) == 1
+    assert runs(lab) == []
+    assert "laptop/2026-10-26/00-21-43" in capsys.readouterr().err

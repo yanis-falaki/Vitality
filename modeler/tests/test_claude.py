@@ -22,6 +22,8 @@ def test_command_exact():
             "--disallowedTools", "EnterWorktree", "ExitWorktree"]
     assert claude_command("msg", "play", cfg) == base
     assert claude_command("msg", "play", cfg, resume="s1", claude="/x/claude") == ["/x/claude", *base[1:], "--resume", "s1"]
+    assert claude_command("msg", "play", cfg, captures="/captures", resume="s1") == \
+        [*base, "--add-dir", "/captures", "--resume", "s1"]
 
 
 def test_environment_drops_key():

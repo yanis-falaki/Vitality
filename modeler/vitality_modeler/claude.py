@@ -26,17 +26,19 @@ LIMIT_ERRORS = ("rate_limit", "billing_error")
 _SECRETS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 
-def claude_command(message: str, playbook: str, config: ModelerConfig, *,
+def claude_command(message: str, playbook: str, config: ModelerConfig, *, captures: str | None = None,
                    resume: str | None = None, claude: str = "claude") -> list[str]:
     """The argv of one session: print mode, the playbook appended to the system prompt, project settings only,
     no ambient MCP servers, permissions bypassed, streamed JSON with the sub-agents' text, no worktree tools.
-    `resume` continues that session."""
+    `captures` (the screenshots folder) is added as a readable directory; `resume` continues that session."""
     argv = [claude, "-p", message, "--append-system-prompt", playbook,
             "--model", config.model, "--effort", config.effort,
             "--setting-sources", "project", "--strict-mcp-config",
             "--permission-mode", "bypassPermissions",
             "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
             "--disallowedTools", "EnterWorktree", "ExitWorktree"]
+    if captures is not None:
+        argv += ["--add-dir", captures]
     if resume is not None:
         argv += ["--resume", resume]
     return argv

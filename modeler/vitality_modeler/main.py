@@ -1,6 +1,6 @@
 """The `vitality-modeler` command.
 
-    vitality-modeler replay <model> <state>
+    vitality-modeler replay <model> <state> [--captures <folder>]
 
 Runs sessions on the model folder `<model>` (made by `vitality_modeler.replay.prepare`, on the host)
 until all its evidence is committed, writing its records to `<state>`, with the settings of `config.py`
@@ -30,6 +30,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     replay_parser = commands.add_parser("replay", help="run sessions on <model> until nothing waits")
     replay_parser.add_argument("model", type=Path, help="the prepared model folder (a git repo with evidence waiting)")
     replay_parser.add_argument("state", type=Path, help="gets sessions.jsonl, transcripts/, replay.json")
+    replay_parser.add_argument("--captures", metavar="FOLDER",
+                               help="the screenshots folder the sessions may read (in the container: /captures)")
     try:
         args = parser.parse_args(argv)
     except SystemExit as stop:
@@ -39,7 +41,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         try:
             config = load_modeler_config(os.environ)
-            summary = replay(args.model, args.state, config)
+            summary = replay(args.model, args.state, config, captures=args.captures)
         except ValueError as error:
             print(f"vitality-modeler: {error}", file=sys.stderr)
             return 2

@@ -74,9 +74,12 @@ def prepare(dataset: Path, model: Path) -> None:
             shutil.copytree(dataset / kind, model / kind)
 
 
-def replay(model: Path, state: Path, config: ModelerConfig, *, claude: str = "claude",
-           environ: Mapping[str, str] = os.environ) -> ReplaySummary:
+def replay(model: Path, state: Path, config: ModelerConfig, *, captures: str | None = None,
+           claude: str = "claude", environ: Mapping[str, str] = os.environ) -> ReplaySummary:
     """Run sessions on `model` until nothing waits, writing `<state>/replay.json`; return the summary.
+
+    `captures`, when given, is the screenshots folder each session may read (`--add-dir`, and named in
+    the run message).
 
     Raises ValueError, before anything is written, when `model` is not a prepared model (see `prepare`).
     KeyboardInterrupt stops the replay (`stopped: "interrupted"`) and is not raised again; any other
@@ -93,7 +96,7 @@ def replay(model: Path, state: Path, config: ModelerConfig, *, claude: str = "cl
     try:
         while True:
             record = run_session(model, state, config, PLAYBOOK, PLAYBOOK_VERSION, trigger="replay",
-                                 claude=claude, environ=environ)
+                                 captures=captures, claude=claude, environ=environ)
             if record is None:
                 break
             _progress(_session_line(record))

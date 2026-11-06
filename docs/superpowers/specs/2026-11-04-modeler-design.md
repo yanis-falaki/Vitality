@@ -187,10 +187,13 @@ run itself happens in **one container**:
    the service works through a backlog; live arrival is not simulated.)
 3. **Stop early** after 3 sessions in a row without a commit, on `limited`, or on Ctrl-C; `run.yaml`
    records the reason and which evidence was not offered.
-4. **Settings:** `MODELER_MODEL`, `MODELER_EFFORT`, `MODELER_MAX_OPERATIONS`,
+4. **Captures (optional, `--captures`):** the host copies the dataset's interactions' capture folders
+   from the data folder into the run's `captures/`, mounted read-only at `/captures` and given to each
+   session with `--add-dir /captures` and in the run message; `run.yaml` records `captures`.
+5. **Settings:** `MODELER_MODEL`, `MODELER_EFFORT`, `MODELER_MAX_OPERATIONS`,
    `MODELER_RUN_TIMEOUT_SECONDS` from `.env`; `--set` short names `model`, `effort`,
    `max_operations`, `run_timeout_seconds`.
-5. **Records:** `run.yaml` (stage `modeler`, input `datasets/<name>`, playbook hash, sessions by
+6. **Records:** `run.yaml` (stage `modeler`, input `datasets/<name>`, playbook hash, sessions by
    outcome, stop reason), and in `state/`: `sessions.jsonl`, `transcripts/`, `replay.json`.
 
 Reading a run: its `model/` folder, and `git -C model log --stat` for how it grew session by session.

@@ -44,6 +44,8 @@ def main(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] = os.e
     modeler = stages.add_parser("modeler", help="replay an evidence dataset through the modeler, in its container")
     modeler.add_argument("dataset", help="a folder name under $LAB_DIR/datasets")
     modeler.add_argument("--label", help="a nickname appended to the run's folder name")
+    modeler.add_argument("--captures", action="store_true",
+                         help="also give the sessions the dataset's screenshots (copied from the data folder)")
     modeler.add_argument("--set", dest="overrides", action="append", default=[], metavar="NAME=VALUE",
                          help="override a setting for this run: model, effort, max_operations, run_timeout_seconds")
     commands.add_parser("list", help="list datasets and runs")
@@ -56,7 +58,7 @@ def main(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] = os.e
     try:
         if args.stage == "modeler":
             return run_modeler_stage(lab, args.dataset, args.label, args.overrides, environ, repo,
-                                     runner=runner, now=now, home=home)
+                                     runner=runner, now=now, home=home, captures=args.captures)
         return run_observer_stage(lab, args.dataset, args.label, args.overrides, environ, repo, make_observer, now)
     except Refused as e:
         print(f"vitality-lab: {e}", file=sys.stderr)
