@@ -26,7 +26,7 @@ def app_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def client(fx: Fixture, app_dir: Path) -> TestClient:
-    return TestClient(create_app(fx.model, fx.state, fx.captures, app_dir))
+    return TestClient(create_app(fx.model, fx.state, fx.captures, app_dir, fresh=0))
 
 
 @pytest.fixture

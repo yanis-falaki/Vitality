@@ -4,7 +4,7 @@
 // its body; then what lies beneath it (a striving's activities, an activity's actions by day, an
 // action's evidence, an interaction's actions and evidence).
 import { Fragment, type ReactNode } from "react";
-import type { Action, Activity, Striving } from "../api/client";
+import { useAction, useEvidence, type Action, type Activity, type Striving } from "../api/client";
 import { clock, day, dayLabel, minutes, plural } from "../lib/format";
 import type { Model } from "../lib/model";
 import { useSelection } from "../lib/selection";
@@ -92,6 +92,8 @@ function ActivityPanel({ model, a }: { model: Model; a: Activity }) {
 
 function ActionPanel({ model, a }: { model: Model; a: Action }) {
   const interactions = model.interactionsOf(a);
+  const detail = useAction(a.id).data;     // the body and the operations it cites
+  const operations = detail?.operations;
   return (
     <>
       <LevelLabel kind="action" id={a.id} />
@@ -104,12 +106,12 @@ function ActionPanel({ model, a }: { model: Model; a: Action }) {
         {a.part_of.map((x) => <Chip key={x} model={model} id={x} />)}
         {a.part_of.length === 0 && <Muted>No activity yet</Muted>}
       </Section>
-      <RichText model={model} text={a.body} />
-      <Section title={`Evidence · ${plural(interactions.length, "interaction")}, ${plural(a.operations.length, "operation")}`}>
+      {detail ? <RichText model={model} text={detail.body} /> : <div className="prose-pending" aria-hidden />}
+      <Section title={`Evidence · ${plural(interactions.length, "interaction")}${operations ? `, ${plural(operations.length, "operation")}` : ""}`}>
         <div className="stack">
           {interactions.map((i) => (
             <EvidenceCard key={i} model={model} interaction={i}
-              cited={new Set(a.operations.filter((r) => r.startsWith(`${i}#`)).map((r) => r.split("#")[1]))} />
+              cited={operations && new Set(operations.filter((r) => r.startsWith(`${i}#`)).map((r) => r.split("#")[1]))} />
           ))}
         </div>
       </Section>
@@ -118,13 +120,14 @@ function ActionPanel({ model, a }: { model: Model; a: Action }) {
 }
 
 function InteractionPanel({ model, name }: { model: Model; name: string }) {
-  const summary = model.interaction(name);
+  const evidence = useEvidence(name).data;
+  const start = evidence?.start ?? model.interactionStart(name);
   const citing = model.actionsCiting(name);
   return (
     <>
       <LevelLabel kind="interaction" id={name} />
       <h2 className="inspector-title">
-        {summary ? `${dayLabel(day(summary.start))}, ${clock(summary.start)} – ${clock(summary.end)}` : name}
+        {start ? `${dayLabel(day(start))}, ${clock(start)}${evidence ? ` – ${clock(evidence.end)}` : ""}` : name}
       </h2>
       <Section title="In actions">
         {citing.map((a) => <Chip key={a.id} model={model} id={a.id} />)}

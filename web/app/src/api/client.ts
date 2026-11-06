@@ -8,7 +8,9 @@ export type ApiModel = S["Model"];
 export type Striving = S["Striving"];
 export type Activity = S["Activity"];
 export type Action = S["Action"];
+export type ActionDetail = S["ActionDetail"];
 export type InteractionSummary = S["InteractionSummary"];
+export type Interactions = Record<string, InteractionSummary>;
 export type Evidence = S["Evidence"];
 export type Modeler = S["Modeler"];
 export type Session = S["Session"];
@@ -19,9 +21,38 @@ async function get<T>(path: string): Promise<T> {
   return (await reply.json()) as T;
 }
 
-/** The whole model; re-read every minute, since the modeler may commit at any time. */
+/** The model (actions without their bodies); re-read every minute, since the modeler may commit at any
+ * time. The server answers an unchanged model with a 304, so the browser keeps the copy it has. */
 export function useApiModel() {
   return useQuery({ queryKey: ["model"], queryFn: () => get<ApiModel>("/api/model"), refetchInterval: 60_000 });
+}
+
+/** One action with its body and operation references (null when unknown). */
+export function useAction(id: string | null) {
+  return useQuery({
+    queryKey: ["action", id],
+    enabled: id !== null,
+    staleTime: 60_000,
+    queryFn: async (): Promise<ActionDetail | null> => {
+      const reply = await fetch(`/api/actions/${id}`);
+      if (reply.status === 404) return null;
+      if (!reply.ok) throw new Error(`action: ${reply.status}`);
+      return (await reply.json()) as ActionDetail;
+    },
+  });
+}
+
+/** The summaries of the cited interactions that started from day `from` (to the last, or `to`). */
+export function useInteractions(from: string | null, to: string | null, enabled = true) {
+  const query = new URLSearchParams();
+  if (from) query.set("from", from);
+  if (to) query.set("to", to);
+  return useQuery({
+    queryKey: ["interactions", from, to],
+    enabled,
+    staleTime: 60_000,
+    queryFn: () => get<Interactions>(`/api/interactions?${query}`),
+  });
 }
 
 const evidenceQuery = (interaction: string | null) => ({

@@ -21,6 +21,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/actions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Action */
+        get: operations["get_action_api_actions__id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Interactions */
+        get: operations["get_interactions_api_interactions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/evidence/{interaction}": {
         parameters: {
             query?: never;
@@ -76,7 +110,10 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** Action */
+        /**
+         * Action
+         * @description An action as the model lists it: without its body or operations, which `ActionDetail` adds.
+         */
         Action: {
             /** Id */
             id: string;
@@ -86,12 +123,31 @@ export interface components {
             start: string;
             /** End */
             end: string;
-            /** Operations */
-            operations: string[];
+            /** Interactions */
+            interactions: string[];
             /** Part Of */
             part_of: string[];
             /** Confidence */
             confidence: number;
+        };
+        /** ActionDetail */
+        ActionDetail: {
+            /** Id */
+            id: string;
+            /** Summary */
+            summary: string;
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /** Interactions */
+            interactions: string[];
+            /** Part Of */
+            part_of: string[];
+            /** Confidence */
+            confidence: number;
+            /** Operations */
+            operations: string[];
             /** Body */
             body: string;
         };
@@ -155,6 +211,13 @@ export interface components {
             /** First Operation */
             first_operation: string;
         };
+        /**
+         * Interactions
+         * @description Interaction summaries by name (`GET /api/interactions`).
+         */
+        Interactions: {
+            [key: string]: components["schemas"]["InteractionSummary"];
+        };
         /** Model */
         Model: {
             /** Strivings */
@@ -163,10 +226,6 @@ export interface components {
             activities: components["schemas"]["Activity"][];
             /** Actions */
             actions: components["schemas"]["Action"][];
-            /** Interactions */
-            interactions: {
-                [key: string]: components["schemas"]["InteractionSummary"];
-            };
             /** Problems */
             problems: components["schemas"]["Problem"][];
         };
@@ -313,6 +372,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Model"];
+                };
+            };
+        };
+    };
+    get_action_api_actions__id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionDetail"];
+                };
+            };
+            /** @description No such action */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_interactions_api_interactions_get: {
+        parameters: {
+            query?: {
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interactions"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

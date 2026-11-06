@@ -23,6 +23,112 @@
         }
       }
     },
+    "/api/actions/{id}": {
+      "get": {
+        "summary": "Get Action",
+        "operationId": "get_action_api_actions__id__get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such action"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/interactions": {
+      "get": {
+        "summary": "Get Interactions",
+        "operationId": "get_interactions_api_interactions_get",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Interactions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/evidence/{interaction}": {
       "get": {
         "summary": "Get Evidence",
@@ -126,12 +232,62 @@
             "type": "string",
             "title": "End"
           },
-          "operations": {
+          "interactions": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Operations"
+            "title": "Interactions"
+          },
+          "part_of": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Part Of"
+          },
+          "confidence": {
+            "type": "integer",
+            "title": "Confidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "summary",
+          "start",
+          "end",
+          "interactions",
+          "part_of",
+          "confidence"
+        ],
+        "title": "Action",
+        "description": "An action as the model lists it: without its body or operations, which `ActionDetail` adds."
+      },
+      "ActionDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "interactions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Interactions"
           },
           "part_of": {
             "items": {
@@ -144,6 +300,13 @@
             "type": "integer",
             "title": "Confidence"
           },
+          "operations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Operations"
+          },
           "body": {
             "type": "string",
             "title": "Body"
@@ -155,12 +318,13 @@
           "summary",
           "start",
           "end",
-          "operations",
+          "interactions",
           "part_of",
           "confidence",
+          "operations",
           "body"
         ],
-        "title": "Action"
+        "title": "ActionDetail"
       },
       "Activity": {
         "properties": {
@@ -331,6 +495,14 @@
         "title": "InteractionSummary",
         "description": "What the views need about one interaction without fetching its evidence."
       },
+      "Interactions": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/InteractionSummary"
+        },
+        "type": "object",
+        "title": "Interactions",
+        "description": "Interaction summaries by name (`GET /api/interactions`)."
+      },
       "Model": {
         "properties": {
           "strivings": {
@@ -354,13 +526,6 @@
             "type": "array",
             "title": "Actions"
           },
-          "interactions": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/InteractionSummary"
-            },
-            "type": "object",
-            "title": "Interactions"
-          },
           "problems": {
             "items": {
               "$ref": "#/components/schemas/Problem"
@@ -374,7 +539,6 @@
           "strivings",
           "activities",
           "actions",
-          "interactions",
           "problems"
         ],
         "title": "Model"

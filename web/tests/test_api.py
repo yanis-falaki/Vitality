@@ -6,8 +6,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from pydantic import BaseModel
+
 from fixture import Fixture
+from vitality_usermodel.formats import Kind
 from vitality_web.app import create_app
+from vitality_web.model import ModelReader
 from vitality_web.main import main, web_port
 
 
@@ -18,17 +22,52 @@ def test_model_lists_every_level_by_start(client: TestClient, fx: Fixture) -> No
     assert [a["id"] for a in model["actions"]] == fx.actions
     first = model["actions"][0]
     assert first["start"] == "2026-11-02T09:04:00-05:00"  # local time with its offset, as in the file
-    assert first["body"].startswith("Set up a new Rust crate")
+    assert "body" not in first and "operations" not in first  # those come with the action (/api/actions)
+    assert first["interactions"] == ["laptop/2026-11-02/14-04-00", "laptop/2026-11-02/14-10-00"]
     assert model["strivings"][0]["relations"]["conflicts_with"] == ["str-0002"]
+    assert model["strivings"][0]["body"].startswith("Most mornings begin in a terminal")
 
 
-def test_model_summarizes_the_cited_interactions(client: TestClient, fx: Fixture) -> None:
-    interactions = client.get("/api/model").json()["interactions"]
+def test_action_with_its_operations_and_body(client: TestClient) -> None:
+    action = client.get("/api/actions/2026-11-02/14-29-00").json()
+    assert action["body"].startswith("Implemented get and put")
+    assert action["operations"] == ["laptop/2026-11-02/14-18-00#op3", "laptop/2026-11-02/14-29-00#op1",
+                                    "laptop/2026-11-02/14-36-00#op1"]
+    assert action["interactions"] == ["laptop/2026-11-02/14-18-00", "laptop/2026-11-02/14-29-00",
+                                      "laptop/2026-11-02/14-36-00"]
+
+
+@pytest.mark.parametrize("id", ["2026-01-01/00-00-00", "nonsense", "../strivings/str-0001"])
+def test_unknown_action_is_404(client: TestClient, id: str) -> None:
+    assert client.get(f"/api/actions/{id}").status_code == 404
+
+
+def test_interactions_summarizes_the_cited_ones(client: TestClient, fx: Fixture) -> None:
+    interactions = client.get("/api/interactions").json()
     assert sorted(interactions) == sorted(set(fx.interactions) - set(fx.waiting))
     shared = interactions["laptop/2026-11-02/14-18-00"]  # holds an operation of the next action too
     assert shared == {"start": "2026-11-02T09:18:00-05:00", "end": "2026-11-02T09:30:00-05:00",
                       "operations": 3, "screenshots": 3,
                       "first_operation": "Opened doc.rust-lang.org on the collections chapter"}
+
+
+def test_interactions_of_some_days(client: TestClient) -> None:
+    # By the local day each started on, both ends included.
+    one = client.get("/api/interactions?from=2026-11-03&to=2026-11-03").json()
+    assert one and all(s["start"].startswith("2026-11-03") for s in one.values())
+    since = client.get("/api/interactions?from=2026-11-03").json()
+    assert {s["start"][:10] for s in since.values()} == {"2026-11-03", "2026-11-04"}
+    assert client.get("/api/interactions?to=2026-11-01").json() == {}
+    assert client.get("/api/interactions?from=yesterday").status_code == 422
+
+
+def test_model_is_sent_gzipped_with_an_etag(client: TestClient) -> None:
+    reply = client.get("/api/model", headers={"Accept-Encoding": "gzip"})
+    assert reply.headers["content-encoding"] == "gzip" and reply.headers["cache-control"] == "no-cache"
+    again = client.get("/api/model", headers={"If-None-Match": reply.headers["etag"]})
+    assert again.status_code == 304 and again.content == b""
+    plain = client.get("/api/model", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers and plain.json() == reply.json()
 
 
 def test_malformed_files_are_listed_not_raised(client: TestClient, fx: Fixture) -> None:
@@ -42,7 +81,7 @@ def test_malformed_files_are_listed_not_raised(client: TestClient, fx: Fixture) 
         "strivings/str-0009.md": "missing frontmatter",
         "operations/laptop/2026-11-02/14-04-00.md": "missing, but cited by an action",
     }
-    assert "laptop/2026-11-02/14-04-00" not in reply.json()["interactions"]
+    assert "laptop/2026-11-02/14-04-00" not in client.get("/api/interactions").json()
 
 
 def test_model_follows_changes_to_the_files(client: TestClient, fx: Fixture) -> None:
@@ -51,6 +90,52 @@ def test_model_follows_changes_to_the_files(client: TestClient, fx: Fixture) -> 
     text = (fx.model / "strivings" / "str-0003.md").read_text().replace("str-0002", "str-0003")
     (fx.model / "strivings" / "str-0003.md").write_text(text)
     assert [s["id"] for s in client.get("/api/model").json()["strivings"]] == ["str-0001", "str-0002", "str-0003"]
+
+
+def test_unchanged_files_are_parsed_once(client: TestClient, fx: Fixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    import vitality_web.model
+    parsed: list[Path] = []
+    real = vitality_web.model.read_file
+
+    def counting(path: Path, kind: Kind) -> tuple[BaseModel, str]:
+        parsed.append(path)
+        return real(path, kind)
+
+    monkeypatch.setattr(vitality_web.model, "read_file", counting)
+    client.get("/api/model")
+    assert len(parsed) > 50  # every level file and every cited operations file, once
+    parsed.clear()
+    client.get("/api/model")
+    client.get("/api/interactions")
+    client.get(f"/api/actions/{fx.actions[0]}")
+    assert parsed == []
+    action = fx.model / "actions" / "2026-11-02" / "14-04-00.md"
+    action.write_text(action.read_text().replace("Set up a new Rust crate", "Set up a new crate"))
+    model = client.get("/api/model").json()
+    assert parsed == [action]
+    assert model["actions"][0]["summary"].startswith("Set up a new crate for")
+
+
+def test_summaries_follow_changes_to_operations_and_captures(client: TestClient, fx: Fixture) -> None:
+    name = "laptop/2026-11-02/14-18-00"
+    assert client.get("/api/interactions").json()[name]["screenshots"] == 3
+    folder = fx.captures / name
+    (folder / "0600.png").write_bytes((folder / "0000.png").read_bytes())
+    ops = fx.model / "operations" / f"{name}.md"
+    ops.write_text(ops.read_text().replace("Opened doc.rust-lang.org", "Opened the Rust book"))
+    summary = client.get("/api/interactions").json()[name]
+    assert summary["screenshots"] == 4
+    assert summary["first_operation"].startswith("Opened the Rust book")
+
+
+def test_a_fresh_check_is_reused(fx: Fixture) -> None:
+    # Within `fresh` seconds the files are not looked at again: a view's burst of requests shares one check.
+    reader = ModelReader(fx.model, fx.captures, fresh=60)
+    first = reader.snapshot()
+    shutil.copy(fx.model / "strivings" / "str-0002.md", fx.model / "strivings" / "str-0003.md")
+    assert reader.snapshot() is first
+    reader.fresh = 0
+    assert len(reader.snapshot().model.strivings) == 3
 
 
 def test_evidence_of_an_interaction(client: TestClient) -> None:
@@ -99,8 +184,8 @@ def test_modeler_without_records_or_repo(tmp_path: Path, app_dir: Path) -> None:
     client = TestClient(create_app(tmp_path / "model", tmp_path / "state", tmp_path / "captures", app_dir))
     assert client.get("/api/modeler").json() == {"status": {"state": "not running", "since": None, "until": None},
                                                  "waiting": None, "sessions": []}
-    assert client.get("/api/model").json() == {"strivings": [], "activities": [], "actions": [],
-                                               "interactions": {}, "problems": []}
+    assert client.get("/api/model").json() == {"strivings": [], "activities": [], "actions": [], "problems": []}
+    assert client.get("/api/interactions").json() == {}
 
 
 def test_screenshot_is_served_with_long_cache(client: TestClient) -> None:
@@ -159,7 +244,8 @@ def test_health(client: TestClient) -> None:
 
 def test_nothing_is_written(client: TestClient, fx: Fixture) -> None:
     before = subprocess.run(["git", "-C", str(fx.model), "status", "--porcelain"], capture_output=True, text=True).stdout
-    for path in ("/api/model", "/api/modeler", f"/api/evidence/{fx.interactions[0]}"):
+    for path in ("/api/model", "/api/modeler", f"/api/evidence/{fx.interactions[0]}", "/api/interactions",
+                 f"/api/actions/{fx.actions[0]}"):
         client.get(path)
     after = subprocess.run(["git", "-C", str(fx.model), "status", "--porcelain"], capture_output=True, text=True).stdout
     assert before == after

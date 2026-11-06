@@ -2,10 +2,16 @@
 //
 // `indexModel(api)` is built once per fetch; `useModel()` returns it (or the query's loading/error
 // state). Items are looked up by id with `kind`, `title` and the typed getters. An interaction is
-// known by its name (`laptop/2026-11-03/14-22-05`); its evidence is fetched separately.
+// known by its name (`laptop/2026-11-03/14-22-05`), from the actions that cite it; its summary
+// (`useInteractions`) and evidence (`useEvidence`) are fetched where a view needs them, and an
+// action's body and operations with `useAction`.
 import { useMemo } from "react";
-import { useApiModel, type Action, type Activity, type ApiModel, type InteractionSummary, type Striving } from "../api/client";
+import { useApiModel, type Action, type Activity, type ApiModel, type Striving } from "../api/client";
+import { addDays } from "./calendar";
 import { day } from "./format";
+
+/** Activities not seen for longer than this (before the model's last day) are "older". */
+export const STALE_DAYS = 30;
 
 export type Kind = "striving" | "activity" | "action" | "interaction";
 
@@ -26,13 +32,18 @@ export interface Model {
   striving(id: string): Striving | undefined;
   activity(id: string): Activity | undefined;
   action(id: string): Action | undefined;
-  interaction(name: string): InteractionSummary | undefined;
+  /** When an interaction started, as local time: its name's UTC time at the offset of an action citing it. */
+  interactionStart(name: string): string | undefined;
   activitiesOf(striving: string): Activity[];      // activities whose part_of names it
   actionsOf(activity: string): Action[];           // by start
   interactionsOf(action: Action): string[];        // the interactions it cites, in order
   actionsCiting(interaction: string): Action[];
+  actionsOn(day: string): Action[];                // by start
   unassigned: Activity[];                          // serving no striving yet
   days: string[];                                  // local days with actions, ascending
+  lastDay: string | undefined;                     // the model's latest day with actions
+  /** Whether an activity was last seen more than STALE_DAYS before the model's last day. */
+  stale(a: Activity): boolean;
   /** The interaction or action a dated reference (`2026-11-03/14-22-05`) in a body points at. */
   resolveRef(ref: string): string | undefined;
 }
@@ -45,22 +56,26 @@ export function indexModel(api: ApiModel): Model {
   api.strivings.forEach((s) => kinds.set(s.id, "striving"));
   api.activities.forEach((a) => kinds.set(a.id, "activity"));
   api.actions.forEach((a) => kinds.set(a.id, "action"));
-  Object.keys(api.interactions).forEach((i) => kinds.set(i, "interaction"));
 
   const activitiesOf = new Map<string, Activity[]>();
   for (const a of api.activities) for (const s of a.part_of) push(activitiesOf, s, a);
   const actionsOf = new Map<string, Action[]>();
   const citing = new Map<string, Action[]>();
-  const interactionsOf = new Map<string, string[]>();
+  const byDay = new Map<string, Action[]>();
   for (const a of api.actions) {
     for (const act of a.part_of) push(actionsOf, act, a);
-    const names = [...new Set(a.operations.map((r) => r.split("#")[0]))];
-    interactionsOf.set(a.id, names);
-    for (const n of names) push(citing, n, a);
+    for (const n of a.interactions) {
+      push(citing, n, a);
+      if (!kinds.has(n)) kinds.set(n, "interaction");
+    }
+    push(byDay, day(a.start), a);
   }
   // A dated reference names an interaction without its device, or an action.
   const byTime = new Map<string, string>();
-  for (const name of Object.keys(api.interactions)) byTime.set(name.slice(name.indexOf("/") + 1), name);
+  for (const name of citing.keys()) byTime.set(name.slice(name.indexOf("/") + 1), name);
+  const days = [...byDay.keys()].sort();
+  const lastDay = days[days.length - 1];
+  const staleBefore = lastDay ? addDays(lastDay, -STALE_DAYS) : "";
 
   const model: Model = {
     api,
@@ -73,22 +88,42 @@ export function indexModel(api: ApiModel): Model {
       if (k === "striving") return strivings.get(id)!.title;
       if (k === "activity") return activities.get(id)!.title;
       if (k === "action") return actions.get(id)!.summary;
-      if (k === "interaction") return api.interactions[id].first_operation;
+      if (k === "interaction") {
+        const start = model.interactionStart(id);
+        return start ? `Evidence · ${start.slice(0, 10)} ${start.slice(11, 16)}` : id;
+      }
       return id;
     },
     striving: (id) => strivings.get(id),
     activity: (id) => activities.get(id),
     action: (id) => actions.get(id),
-    interaction: (name) => api.interactions[name],
+    interactionStart(name) {
+      const by = citing.get(name)?.[0];
+      return by ? localTime(name, by.start) : undefined;
+    },
     activitiesOf: (s) => activitiesOf.get(s) ?? [],
     actionsOf: (a) => actionsOf.get(a) ?? [],
-    interactionsOf: (a) => interactionsOf.get(a.id) ?? [],
+    interactionsOf: (a) => a.interactions,
     actionsCiting: (i) => citing.get(i) ?? [],
+    actionsOn: (d) => byDay.get(d) ?? [],
     unassigned: api.activities.filter((a) => a.part_of.length === 0),
-    days: [...new Set(api.actions.map((a) => day(a.start)))].sort(),
+    days,
+    lastDay,
+    stale: (a) => day(a.last_seen) < staleBefore,
     resolveRef: (ref) => byTime.get(ref) ?? (actions.has(ref) ? ref : undefined),
   };
   return model;
+}
+
+// An interaction's name holds its start in UTC (`laptop/2026-11-03/14-22-05`); shown at the offset of
+// `like` (a local time of the same day, e.g. an action citing it) as that wall clock would read it.
+function localTime(name: string, like: string): string | undefined {
+  const m = name.match(/(\d{4}-\d\d-\d\d)\/(\d\d)-(\d\d)-(\d\d)/);
+  const offset = like.match(/([+-])(\d\d):(\d\d)$/);
+  if (!m || !offset) return undefined;
+  const sign = offset[1] === "+" ? 1 : -1;
+  const ms = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`) + sign * (Number(offset[2]) * 60 + Number(offset[3])) * 60_000;
+  return `${new Date(ms).toISOString().slice(0, 19)}${like.slice(-6)}`;
 }
 
 /** The indexed model, with the query's state. */

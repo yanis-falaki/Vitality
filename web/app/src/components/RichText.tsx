@@ -60,7 +60,7 @@ function linkRefs(doc: Document, model: Model, node: Text) {
     a.href = "#";
     a.title = model.title(id);
     if (match[1]) {
-      const start = kind === "action" ? model.action(id)!.start : model.interaction(id)!.start;
+      const start = kind === "action" ? model.action(id)!.start : model.interactionStart(id)!;
       a.textContent = `${dayLabel(start.slice(0, 10)).replace(/^\w+, /, "")} · ${clock(start)}`;
     } else a.textContent = id;
     out.append(a);

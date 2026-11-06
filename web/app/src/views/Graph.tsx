@@ -1,7 +1,10 @@
 // Graph: the model as a network (web spec, §6). Strivings, activities and actions are circles sized
 // and coloured by level; edges are part_of, hinders and the strivings' relations; "+ Evidence" adds
-// the interactions. Laid out once with ForceAtlas2 from a circle (so the same model always gives the
-// same picture). Clicking (or tapping) a node focuses its two-step neighbourhood and opens it in the
+// the interactions. A time range (all, the last 30 or 7 days of the model) keeps every striving and
+// activity and the actions (and evidence) of those days. Each (range, evidence) is laid out once,
+// when first shown, with ForceAtlas2 from a circle (so the same model always gives the same
+// picture), in a worker; a range with more evidence than can be laid out calmly shows the model with
+// a note, and the selected action's own evidence around it. Clicking (or tapping) a node focuses its two-step neighbourhood and opens it in the
 // inspector; hovering highlights its neighbours; the search box jumps to a node. Strivings and
 // activities are always labelled, actions once zoomed in, never overlapping (Sigma's label grid).
 import Graph from "graphology";
@@ -11,7 +14,10 @@ import type { NodeLabelDrawingFunction } from "sigma/rendering";
 import type { NodeDisplayData } from "sigma/types";
 import { WithModel } from "../components/Loading";
 import { ViewFrame } from "../components/Shell";
-import { clock, short } from "../lib/format";
+import { useInteractions, type Action, type InteractionSummary, type Interactions } from "../api/client";
+import { addDays } from "../lib/calendar";
+import { clock, day, short } from "../lib/format";
+import { useLayout } from "../lib/media";
 import { LEVEL, type Kind, type Model } from "../lib/model";
 import { useSelection } from "../lib/selection";
 import "./graph.css";
@@ -26,35 +32,86 @@ export function GraphView() {
   return <WithModel>{(model) => <GraphPage model={model} />}</WithModel>;
 }
 
+type Range = "all" | "30" | "7";
+const RANGES: { range: Range; label: string; short: string }[] = [
+  { range: "all", label: "All", short: "All" },
+  { range: "30", label: "Last 30 days", short: "30 days" },
+  { range: "7", label: "Last 7 days", short: "7 days" },
+];
+/** Above this many interactions in the range, the evidence is not laid out (the note says why). */
+const EVIDENCE_CAP = 5000;
+
 function GraphPage({ model }: { model: Model }) {
   const [evidence, setEvidence] = useState(false);
+  const [range, setRange] = useState<Range>("all");
   const [query, setQuery] = useState("");
-  const { select } = useSelection();
-  // Layouts come from a worker; until the evidence's is ready, the model stays on screen with a note.
+  const { sel, select } = useSelection();
+  const phone = useLayout() === "phone";
+
+  // What the range holds: every striving and activity; the actions (and their evidence) since `from`.
+  const from = range === "all" || !model.lastDay ? null : addDays(model.lastDay, 1 - Number(range));
+  const actions = useMemo(() => (from ? model.actions.filter((a) => day(a.start) >= from) : model.actions), [model, from]);
+  const count = useMemo(() => new Set(actions.flatMap((a) => a.interactions)).size, [actions]);
+  const capped = evidence && count > EVIDENCE_CAP;
+  const withEvidence = evidence && !capped;
+  const summaries = useInteractions(from, null, withEvidence).data;
+  // Too much evidence for the range: the selected action's own, placed around it, once fetched.
+  const picked = capped && sel ? actions.find((a) => a.id === sel) : undefined;
+  const own = useInteractions(picked ? day(picked.start) : null, picked ? day(picked.start) : null, !!picked).data;
+
+  // Layouts come from a worker, one per (range, evidence), computed when first shown and kept.
   const layouts = useLayouts(model);
-  const showing = evidence && layouts.evidence ? "evidence" : "model";
-  const layout = showing === "evidence" ? layouts.evidence : layouts.model;
-  const graph = useMemo(() => (layout ? buildGraph(model, showing === "evidence", layout) : null), [model, showing, layout]);
-  const arranging = !graph ? "Arranging the graph…" : evidence && !layouts.evidence ? "Arranging the evidence…" : null;
+  const modelKey = `${range}|model`, evidenceKey = `${range}|evidence`;
+  useEffect(() => {
+    layouts.want(modelKey, () => buildGraph(model, actions, null, null));
+    if (withEvidence) layouts.want(evidenceKey, () => buildGraph(model, actions, {}, null));
+  }, [layouts, model, actions, modelKey, evidenceKey, withEvidence]);
+  const evidenceLayout = withEvidence && summaries ? layouts.get(evidenceKey) : null;
+  const modelLayout = layouts.get(modelKey);
+  const graph = useMemo(() => {
+    if (evidenceLayout) return buildGraph(model, actions, summaries!, evidenceLayout);
+    if (!modelLayout) return null;
+    const g = buildGraph(model, actions, null, modelLayout);
+    if (picked && own) around(g, picked, own);
+    return g;
+  }, [model, actions, summaries, evidenceLayout, modelLayout, picked, own]);
+  // While a range is first arranged, the graph shown before it stays, with a note.
+  const shown = useRef<Graph<NodeAttrs, EdgeAttrs> | null>(null);
+  if (graph) shown.current = graph;
+  const onScreen = graph ?? shown.current;
+  const arranging = !modelLayout ? (onScreen ? "Arranging the range…" : "Arranging the graph…")
+    : withEvidence && !evidenceLayout ? "Arranging the evidence…" : null;
+
   return (
     <ViewFrame model={model} empty="Click a node to see what the model believes, and why.">
       <div className="graph-stage">
-        {graph && <Network graph={graph} query={query} />}
+        {onScreen && <Network graph={onScreen} query={query} />}
         {arranging && <div className="graph-arranging" role="status"><i className="spinner" aria-hidden />{arranging}</div>}
+        {!arranging && capped && (
+          <div className="graph-arranging graph-note" role="status">
+            Too much evidence for this range — pick a shorter range or select an action
+          </div>
+        )}
         <div className="graph-tools">
           <div className="graph-search">
             <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
               placeholder="Search the model…" aria-label="Search the model (Enter jumps to the first match)"
               onKeyDown={(e) => {
-                if (e.key === "Enter" && graph) { jump(graph, query, select); setQuery(""); }
+                if (e.key === "Enter" && onScreen) { jump(onScreen, query, select); setQuery(""); }
               }} />
           </div>
           <div className="seg" role="group" aria-label="What to show">
             <button type="button" className={evidence ? "" : "on"} onClick={() => setEvidence(false)}>Model</button>
             <button type="button" className={evidence ? "on" : ""} onClick={() => setEvidence(true)}>+ Evidence</button>
           </div>
+          <div className="seg" role="group" aria-label="Time range">
+            {RANGES.map((r) => (
+              <button type="button" key={r.range} className={range === r.range ? "on" : ""} title={r.label}
+                onClick={() => setRange(r.range)}>{phone ? r.short : r.label}</button>
+            ))}
+          </div>
         </div>
-        {graph && <Legend graph={graph} />}
+        {onScreen && <Legend graph={onScreen} />}
       </div>
     </ViewFrame>
   );
@@ -158,32 +215,56 @@ function Legend({ graph }: { graph: Graph<NodeAttrs, EdgeAttrs> }) {
 
 type Layout = Map<string, { x: number; y: number }>;
 
-/** The layout of the model with or without its evidence, computed in a worker (null until ready).
- * Both are started when the view opens, the model first, and kept for as long as the model is. */
-function useLayouts(model: Model): { model: Layout | null; evidence: Layout | null } {
-  const [layouts, setLayouts] = useState<{ model: Layout | null; evidence: Layout | null }>({ model: null, evidence: null });
-  useEffect(() => {
-    setLayouts({ model: null, evidence: null });
-    const workers: Worker[] = [];
-    const run = (evidence: boolean) => {
-      const worker = new Worker(new URL("./layout.worker.ts", import.meta.url), { type: "module" });
-      workers.push(worker);
-      worker.onmessage = (event: MessageEvent<LayoutReply>) => {
-        const layout: Layout = new Map(Object.entries(event.data));
-        setLayouts((now) => (evidence ? { ...now, evidence: layout } : { ...now, model: layout }));
-        worker.terminate();
-      };
-      const request: LayoutRequest = { graph: buildGraph(model, evidence, null).export(), scalingRatio: evidence ? 6 : 14 };
-      worker.postMessage(request);
-    };
-    run(false);
-    run(true);
-    return () => workers.forEach((w) => w.terminate());
-  }, [model]);
-  return layouts;
+interface Layouts {
+  get(key: string): Layout | null;
+  /** Start laying out `key` (unless it is done or under way): `graph` builds what the worker places. */
+  want(key: string, graph: () => Graph<NodeAttrs, EdgeAttrs>): void;
 }
 
-function buildGraph(model: Model, evidence: boolean, layout: Layout | null): Graph<NodeAttrs, EdgeAttrs> {
+/** The layouts of one model, by key, each computed once in its own worker and kept while the model is. */
+function useLayouts(model: Model): Layouts {
+  const store = useRef(new WeakMap<Model, Map<string, Layout | "running">>());
+  const workers = useRef(new Map<Worker, () => void>());
+  const [, setVersion] = useState(0);
+  // A new model (or leaving the view) stops the work still under way for the old one.
+  useEffect(() => () => {
+    workers.current.forEach((forget, w) => { w.terminate(); forget(); });
+    workers.current.clear();
+  }, [model]);
+  return useMemo(() => {
+    const of = () => {
+      let layouts = store.current.get(model);
+      if (!layouts) store.current.set(model, (layouts = new Map()));
+      return layouts;
+    };
+    return {
+      get(key) {
+        const found = of().get(key);
+        return found && found !== "running" ? found : null;
+      },
+      want(key, graph) {
+        const layouts = of();
+        if (layouts.has(key)) return;
+        layouts.set(key, "running");
+        const worker = new Worker(new URL("./layout.worker.ts", import.meta.url), { type: "module" });
+        workers.current.set(worker, () => layouts.delete(key));
+        worker.onmessage = (event: MessageEvent<LayoutReply>) => {
+          layouts.set(key, new Map(Object.entries(event.data)));
+          workers.current.delete(worker);
+          worker.terminate();
+          setVersion((v) => v + 1);
+        };
+        const g = graph();
+        const request: LayoutRequest = { graph: g.export(), scalingRatio: key.endsWith("|evidence") ? 6 : 14 };
+        worker.postMessage(request);
+      },
+    };
+  }, [model]);
+}
+
+/** The graph of the model with `actions` (and, with `summaries`, the interactions they cite), placed by
+ * `layout` when given. For a layout request, `summaries` may be empty: the worker needs no labels. */
+function buildGraph(model: Model, actions: Action[], summaries: Interactions | null, layout: Layout | null): Graph<NodeAttrs, EdgeAttrs> {
   const p = tokens();
   const colour: Record<Kind, string> = { striving: p.striving, activity: p.activity, action: p.action, interaction: p.evidence };
   const graph = new Graph<NodeAttrs, EdgeAttrs>({ type: "undirected", multi: false });
@@ -194,31 +275,51 @@ function buildGraph(model: Model, evidence: boolean, layout: Layout | null): Gra
   };
   model.strivings.forEach((s) => add(s.id, "striving", short(s.title, 60)));
   model.activities.forEach((a) => add(a.id, "activity", short(a.title, 48), a.status === "tentative"));
-  model.actions.forEach((a) => add(a.id, "action", short(a.summary, 44)));
+  actions.forEach((a) => add(a.id, "action", short(a.summary, 44)));
   for (const a of model.activities) {
     a.part_of.forEach((s) => edge(a.id, s, 2, p.edgeStrong));
     a.hinders.forEach((s) => edge(a.id, s, 2, p.edgeAgainst));
   }
-  for (const a of model.actions) a.part_of.forEach((x) => edge(a.id, x, 1, p.edge));
+  for (const a of actions) a.part_of.forEach((x) => edge(a.id, x, 1, p.edge));
   for (const s of model.strivings) {
     s.relations.conflicts_with.forEach((t) => edge(s.id, t, 2.5, p.edgeAgainst));
     [...s.relations.facilitates, ...s.relations.serves].forEach((t) => edge(s.id, t, 2.5, p.edgeStrong));
   }
-  if (evidence) {
-    for (const a of model.actions) {
-      for (const i of model.interactionsOf(a)) {
-        const summary = model.interaction(i);
-        if (!summary) continue;
-        if (!graph.hasNode(i)) {
-          const more = summary.operations - 1;
-          add(i, "interaction", `${clock(summary.start)} · ${short(summary.first_operation, 40)}${more ? ` (+${more})` : ""}`);
-        }
+  if (summaries) {
+    for (const a of actions) {
+      for (const i of a.interactions) {
+        if (!graph.hasNode(i)) add(i, "interaction", interactionLabel(summaries[i]));
         edge(a.id, i, 0.6, p.edge);
       }
     }
   }
   if (layout) graph.forEachNode((n) => { const at = layout.get(n); if (at) graph.mergeNodeAttributes(n, at); });
   return graph;
+}
+
+// "9:18 a.m. · Opened doc.rust-lang.org on the… (+2)"; empty until its summary is known.
+function interactionLabel(summary: InteractionSummary | undefined): string {
+  if (!summary) return "";
+  const more = summary.operations - 1;
+  return `${clock(summary.start)} · ${short(summary.first_operation, 40)}${more ? ` (+${more})` : ""}`;
+}
+
+// The interactions of `action` (summaries of its day in `summaries`), on a small ring around it: when
+// the range holds too much evidence to lay out, the selected action still shows its own.
+function around(graph: Graph<NodeAttrs, EdgeAttrs>, action: Action, summaries: Interactions) {
+  if (!graph.hasNode(action.id)) return;
+  const p = tokens();
+  let minX = Infinity, maxX = -Infinity;
+  graph.forEachNode((_, a) => { minX = Math.min(minX, a.x); maxX = Math.max(maxX, a.x); });
+  const r = Math.max(1, (maxX - minX) * 0.012);
+  const at = graph.getNodeAttributes(action.id);
+  action.interactions.forEach((i, n) => {
+    if (graph.hasNode(i)) return;
+    const angle = (2 * Math.PI * n) / action.interactions.length;
+    graph.addNode(i, { key: i, kind: "interaction", label: interactionLabel(summaries[i]), size: SIZE.interaction,
+      color: p.evidence, x: at.x + r * Math.cos(angle), y: at.y + r * Math.sin(angle), tentative: false });
+    graph.addEdge(action.id, i, { size: 0.6, color: p.edge });
+  });
 }
 
 // How far right of a node the camera must look (in framed graph units, at `ratio`) for the node to sit

@@ -172,6 +172,7 @@
 .prose pre { white-space: pre-wrap; font: 12px/1.5 var(--mono); background: var(--panel-2); padding: var(--s2); border-radius: var(--r-sm); }
 .prose strong { font-weight: 650; }
 .prose-small { font-size: 13.5px; line-height: 1.55; color: var(--ink-2); }
+.prose-pending { min-height: 3em; margin: var(--s4) 0; }   /* an action's body, while it loads */
 .ref {
   text-decoration: none; border-bottom: 1px dotted currentColor; font: 500 0.74em var(--mono);
   padding: 0 1px; white-space: nowrap; cursor: pointer;

@@ -19,9 +19,8 @@ export function EvidenceCard({ model, interaction, cited, showObservation = fals
   const { data, isLoading } = useEvidence(interaction);
   const { show } = useLightbox();
   const [observation, setObservation] = useState(showObservation);
-  const summary = model.interaction(interaction);
-  const start = data?.start ?? summary?.start;
-  const end = data?.end ?? summary?.end;
+  const start = data?.start ?? model.interactionStart(interaction);
+  const end = data?.end;
   const urls = (data?.screenshots ?? []).map((f) => shotUrl(interaction, f));
   return (
     <div className="evidence">
@@ -29,7 +28,6 @@ export function EvidenceCard({ model, interaction, cited, showObservation = fals
         <span className="time">{start ? clock(start) : "—"}</span>
         <span>
           {data ? `${plural(data.operations.length, "operation")} · ${plural(urls.length, "screenshot")}`
-            : summary ? `${plural(summary.operations, "operation")} · ${plural(summary.screenshots, "screenshot")}`
             : isLoading ? "Loading…" : "Not found"}
           {start && end && <span className="muted"> · {minutes(start, end)} min</span>}
         </span>

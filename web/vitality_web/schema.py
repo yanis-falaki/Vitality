@@ -5,7 +5,7 @@ These models are the contract with the app: FastAPI publishes them as its OpenAP
 local time with its offset); the app shows the wall-clock text before the offset.
 """
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, RootModel
 
 
 class Relations(BaseModel):
@@ -41,13 +41,19 @@ class Activity(BaseModel):
 
 
 class Action(BaseModel):
+    """An action as the model lists it: without its body or operations, which `ActionDetail` adds."""
+
     id: str                 # "2026-11-03/14-22-05"
     summary: str
     start: str
     end: str
-    operations: list[str]   # "<interaction>#<id>"
+    interactions: list[str]  # the interactions it cites, in the order of its operations
     part_of: list[str]
     confidence: int
+
+
+class ActionDetail(Action):
+    operations: list[str]   # "<interaction>#<id>"
     body: str
 
 
@@ -61,6 +67,10 @@ class InteractionSummary(BaseModel):
     first_operation: str    # the text of its first operation (the graph's label)
 
 
+class Interactions(RootModel[dict[str, InteractionSummary]]):
+    """Interaction summaries by name (`GET /api/interactions`)."""
+
+
 class Problem(BaseModel):
     path: str               # relative to the model folder
     error: str
@@ -70,8 +80,7 @@ class Model(BaseModel):
     strivings: list[Striving]
     activities: list[Activity]
     actions: list[Action]                       # by start
-    interactions: dict[str, InteractionSummary]  # every interaction an action cites, by name
-    problems: list[Problem]
+    problems: list[Problem]                     # including cited interactions that are missing or malformed
 
 
 class Operation(BaseModel):
