@@ -17,6 +17,20 @@
 .outline-activity { margin-left: var(--s3); width: calc(100% - var(--s3)); border-left: 2px solid var(--activity); }
 .outline-activity.tentative { border-left-style: dashed; }
 .outline-striving:hover, .outline-activity:hover { background: var(--hover); }
+.outline-row { display: flex; align-items: stretch; gap: 2px; margin-top: var(--s2); }
+.outline-row .outline-striving { flex: 1; min-width: 0; margin-top: 0; }
+.outline-fold {
+  flex: none; border: 0; background: none; cursor: pointer; padding: 0 6px; min-width: 28px; border-radius: var(--r-sm);
+  font: 500 var(--text-xs) var(--mono); color: var(--ink-3);
+}
+.outline-fold:hover { background: var(--hover); color: var(--ink); }
+.outline-older {
+  display: block; margin: 2px 0 2px var(--s3); padding: 5px 10px; border: 0; background: none; cursor: pointer;
+  font-size: var(--text-xs); color: var(--ink-3); text-align: left;
+}
+.outline-older:hover { color: var(--ink); }
+.outline-activity.older { color: var(--ink-3); border-left-color: var(--line-2); }
+.outline-activity.older.on { color: var(--ink); }
 .outline-striving.on, .outline-activity.on { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
 .outline-problems { margin: var(--s5) var(--s2) 0; font-size: var(--text-xs); color: var(--ink-3); line-height: 1.5; }
 .outline-problem { font-family: var(--mono); overflow-wrap: anywhere; }
@@ -41,16 +55,6 @@
 .reader .page > .prose { font-size: 17.5px; line-height: 1.72; }
 .reader-phone .page > .prose { font-size: 16.5px; }
 
-.when { display: flex; gap: var(--s1); margin: 0 0 var(--s5); }
-.when-day { flex: 1; min-width: 0; }
-.when-track { position: relative; height: 30px; background: var(--hover); border-radius: 5px; }
-.when-tick {
-  position: absolute; top: 0; bottom: 0; width: 11px; margin-left: -5px; padding: 0; border: 0; background: none; cursor: pointer;
-}
-.when-tick::after { content: ""; position: absolute; left: 4px; top: 4px; bottom: 4px; width: 2.5px; border-radius: 2px; background: var(--action); opacity: 0.75; }
-.when-tick:hover::after, .when-tick.on::after { opacity: 1; width: 3px; }
-.when-label { font-size: var(--text-xs); color: var(--ink-3); text-align: center; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
 .page-below { margin-top: var(--s6); }
 .page-below-gap { margin-top: var(--s5); }
 .page-card {
@@ -58,6 +62,8 @@
   border: 1px solid var(--line); border-left: 3px solid var(--activity); border-radius: var(--r); background: var(--panel);
 }
 .page-card.tentative { border-left-style: dashed; }
+.page-card.older { background: var(--panel-2); border-left-color: var(--line-2); }
+.page-card.older b { color: var(--ink-2); font-weight: 550; }
 .page-card:hover { border-color: var(--line-2); border-left-color: var(--activity); }
 .page-card b { display: block; font-weight: 600; margin-bottom: 4px; }
 .page-card span { font-size: var(--text-sm); color: var(--ink-3); }
@@ -75,6 +81,13 @@
   background: var(--action); box-shadow: 0 0 0 3px var(--bg);
 }
 .timeline-row:hover { background: var(--hover); }
+.timeline.groups { padding-left: 0; }
+.timeline.groups::before { display: none; }
+.timeline.groups .group-week > :not(.group-head) { margin-left: 22px; }
+.timeline.groups .group-week { position: relative; }
+.timeline.groups .group-week:has(> .timeline-row)::before {
+  content: ""; position: absolute; left: 6px; top: 40px; bottom: 8px; width: 2px; background: var(--line);
+}
 .timeline-row.on { background: var(--select); }
 .timeline-text { flex: 1; min-width: 0; }
 .timeline-len { font: 500 11px var(--mono); color: var(--ink-3); white-space: nowrap; }
@@ -89,7 +102,5 @@
 
 @media (pointer: coarse) {
   .outline-striving, .outline-activity, .timeline-row, .page-card, .byline-link { min-height: var(--touch); }
-  .when-track { height: 36px; }
-  .when-tick { width: 16px; margin-left: -8px; }
-  .when-tick::after { left: 7px; }
+  .outline-fold, .outline-older { min-height: var(--touch); }
 }

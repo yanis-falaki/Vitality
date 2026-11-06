@@ -1,17 +1,21 @@
-// Reader: the model as pages to read (web spec, §6). An outline of the strivings, their activities,
-// then the activities serving none; the page of the one chosen (`?page=<id>`): serif title, byline,
-// when its actions happened, its body, then its activities or its actions by day. References and
-// actions open in the inspector. On a phone the outline is a drawer.
+// Reader: the model as pages to read (web spec, §6, §10). An outline of the strivings (each folds
+// away), their activities most recently seen first and the older ones behind a toggle, then the
+// activities serving none; the page of the one chosen (`?page=<id>`): serif title, byline, a heatmap
+// of when its actions happened, its body, then its activities or its actions (by day, or by month
+// and week when there are many). References and actions open in the inspector. On a phone the
+// outline is a drawer.
 import { Fragment, useEffect, useState } from "react";
 import type { Action, Activity, Striving } from "../api/client";
+import { ActionGroups, actionsTitle } from "../components/ActionGroups";
 import { Confidence, Dot, LevelLabel, Status } from "../components/bits";
+import { Heatmap } from "../components/Heatmap";
 import { span } from "../components/Inspector";
 import { WithModel } from "../components/Loading";
 import { RichText } from "../components/RichText";
 import { ViewFrame } from "../components/Shell";
-import { clock, day, dayLabel, minutes, plural, short } from "../lib/format";
+import { clock, dayLabel, minutes, plural, short } from "../lib/format";
 import { useLayout } from "../lib/media";
-import type { Model } from "../lib/model";
+import { byRecency, type Model } from "../lib/model";
 import { useParam, useSelection } from "../lib/selection";
 import "./reader.css";
 
@@ -65,21 +69,53 @@ function ReaderView({ model }: { model: Model }) {
 }
 
 function Outline({ model, page, open }: { model: Model; page: string | null; open(id: string): void }) {
-  const item = (a: Activity) => (
-    <button type="button" key={a.id} className={`outline-activity${a.status === "tentative" ? " tentative" : ""}${page === a.id ? " on" : ""}`}
+  // Strivings fold away (the one whose page is open stays unfolded); older activities wait behind a toggle.
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const [older, setOlder] = useState<Set<string>>(new Set());
+  const flip = (set: Set<string>, id: string) => { const next = new Set(set); if (!next.delete(id)) next.add(id); return next; };
+  const item = (a: Activity, quiet = false) => (
+    <button type="button" key={a.id} className={`outline-activity${a.status === "tentative" ? " tentative" : ""}${quiet ? " older" : ""}${page === a.id ? " on" : ""}`}
       onClick={() => open(a.id)}>{a.title}</button>
   );
+  const list = (group: string, activities: Activity[]) => {
+    const { recent, older: old } = byRecency(model, activities);
+    const shown = older.has(group) || old.some((a) => a.id === page);
+    return (
+      <>
+        {recent.map((a) => item(a))}
+        {old.length > 0 && (
+          <button type="button" className="outline-older" aria-expanded={shown} onClick={() => setOlder((o) => flip(o, group))}>
+            <span className="caret" aria-hidden>{shown ? "▾" : "▸"}</span>Older · {old.length}
+          </button>
+        )}
+        {shown && old.map((a) => item(a, true))}
+      </>
+    );
+  };
   return (
     <>
       <div className="eyebrow outline-head">Strivings</div>
-      {model.strivings.map((s) => (
-        <Fragment key={s.id}>
-          <button type="button" className={`outline-striving${page === s.id ? " on" : ""}`} onClick={() => open(s.id)}>{s.title}</button>
-          {model.activitiesOf(s.id).map(item)}
-        </Fragment>
-      ))}
+      {model.strivings.map((s) => {
+        const activities = model.activitiesOf(s.id);
+        const unfolded = !folded.has(s.id) || activities.some((a) => a.id === page);
+        return (
+          <Fragment key={s.id}>
+            <div className="outline-row">
+              <button type="button" className={`outline-striving${page === s.id ? " on" : ""}`} onClick={() => open(s.id)}>{s.title}</button>
+              {activities.length > 0 && (
+                <button type="button" className="outline-fold" aria-expanded={unfolded}
+                  aria-label={`${unfolded ? "Fold" : "Unfold"} its ${plural(activities.length, "activity", "activities")}`}
+                  onClick={() => setFolded((f) => flip(f, s.id))}>
+                  {unfolded ? "▾" : <>{activities.length} ▸</>}
+                </button>
+              )}
+            </div>
+            {unfolded && list(s.id, activities)}
+          </Fragment>
+        );
+      })}
       {model.unassigned.length > 0 && <div className="eyebrow outline-head">Not yet serving a striving</div>}
-      {model.unassigned.map(item)}
+      {list("none", model.unassigned)}
       {model.api.problems.length > 0 && (
         <div className="outline-problems" title={model.api.problems.map((p) => `${p.path}: ${p.error}`).join("\n")}>
           {plural(model.api.problems.length, "file")} could not be read:
@@ -100,9 +136,11 @@ function Page({ model, id, sel, open }: PageProps) {
 
 function StrivingPage({ model, s, open }: { model: Model; s: Striving; open(id: string): void }) {
   const activities = model.activitiesOf(s.id);
-  const against = model.activities.filter((a) => a.hinders.includes(s.id));
+  const { recent, older } = byRecency(model, activities);
+  const against = byRecency(model, model.activities.filter((a) => a.hinders.includes(s.id)));
   const card = (a: Activity) => (
-    <button type="button" key={a.id} className={`page-card${a.status === "tentative" ? " tentative" : ""}`} onClick={() => open(a.id)}>
+    <button type="button" key={a.id} className={`page-card${a.status === "tentative" ? " tentative" : ""}${model.stale(a) ? " older" : ""}`}
+      onClick={() => open(a.id)}>
       <b>{a.title}</b>
       <span>{a.status} · {plural(model.actionsOf(a.id).length, "action")} · {span(a.first_seen, a.last_seen)}</span>
     </button>
@@ -116,13 +154,15 @@ function StrivingPage({ model, s, open }: { model: Model; s: Striving; open(id: 
         <span>{s.needs.map((n) => n.replace(/_/g, " ")).join(" · ")}</span>
         <span>{s.orientation}, {s.aspiration_vs_obligation}, {s.autonomy}</span>
       </div>
-      <When model={model} actions={activities.flatMap((a) => model.actionsOf(a.id))} />
+      <Heatmap model={model} actions={strivingActions(model, activities)} level="striving" />
       <RichText model={model} text={s.body} />
       <section className="page-below">
         <h3 className="eyebrow">Activities serving it</h3>
-        {activities.length ? activities.map(card) : <span className="muted">None yet.</span>}
-        {against.length > 0 && <h3 className="eyebrow page-below-gap">Working against it</h3>}
-        {against.map(card)}
+        {activities.length ? recent.map(card) : <span className="muted">None yet.</span>}
+        {older.length > 0 && <h3 className="eyebrow page-below-gap">Older · not seen for over a month</h3>}
+        {older.map(card)}
+        {against.recent.length + against.older.length > 0 && <h3 className="eyebrow page-below-gap">Working against it</h3>}
+        {[...against.recent, ...against.older].map(card)}
       </section>
     </>
   );
@@ -131,7 +171,6 @@ function StrivingPage({ model, s, open }: { model: Model; s: Striving; open(id: 
 function ActivityPage({ model, a, sel }: { model: Model; a: Activity; sel: string | null }) {
   const { select } = useSelection();
   const actions = model.actionsOf(a.id);
-  let last = "";
   return (
     <>
       <LevelLabel kind="activity" id={a.id} />
@@ -147,54 +186,26 @@ function ActivityPage({ model, a, sel }: { model: Model; a: Activity; sel: strin
           ))}
         </span>
       </div>
-      <When model={model} actions={actions} />
+      <Heatmap model={model} actions={actions} level="activity" />
       <RichText model={model} text={a.body} />
       <section className="page-below">
-        <h3 className="eyebrow">{plural(actions.length, "action")}</h3>
-        <div className="timeline">
-          {actions.map((x) => {
-            const d = day(x.start);
-            const head = d !== last;
-            last = d;
-            return (
-              <Fragment key={x.id}>
-                {head && <div className="timeline-day">{dayLabel(d)}</div>}
-                <button type="button" className={`timeline-row${sel === x.id ? " on" : ""}`} onClick={() => select(x.id)}>
-                  <span className="time">{clock(x.start)}</span>
-                  <span className="timeline-text">{x.summary}</span>
-                  <span className="timeline-len">{minutes(x.start, x.end)} min</span>
-                </button>
-              </Fragment>
-            );
-          })}
-        </div>
+        <h3 className="eyebrow">{actionsTitle(actions)}</h3>
+        <ActionGroups actions={actions} className="timeline"
+          dayHead={(d) => <div className="timeline-day" key={`day-${d}`}>{dayLabel(d)}</div>}
+          row={(x) => (
+            <button type="button" key={x.id} className={`timeline-row${sel === x.id ? " on" : ""}`} onClick={() => select(x.id)}>
+              <span className="time">{clock(x.start)}</span>
+              <span className="timeline-text">{x.summary}</span>
+              <span className="timeline-len">{minutes(x.start, x.end)} min</span>
+            </button>
+          )} />
       </section>
     </>
   );
 }
 
-/** When the page's actions happened: a column per day of the model, a tick per action at its time of day. */
-function When({ model, actions }: { model: Model; actions: Action[] }) {
-  const { sel, select } = useSelection();
-  if (!actions.length) return null;
-  const days = model.days;
-  return (
-    <div className="when" aria-label="When its actions happened">
-      {days.map((d) => (
-        <div className="when-day" key={d}>
-          <div className="when-track">
-            {actions.filter((a) => day(a.start) === d).map((a) => {
-              const h = Number(a.start.slice(11, 13)) + Number(a.start.slice(14, 16)) / 60;
-              return (
-                <button type="button" key={a.id} className={`when-tick${sel === a.id ? " on" : ""}`}
-                  style={{ left: `${(h / 24) * 100}%` }} title={`${clock(a.start)} · ${a.summary}`}
-                  aria-label={`${clock(a.start)} ${a.summary}`} onClick={() => select(a.id)} />
-              );
-            })}
-          </div>
-          <div className="when-label">{dayLabel(d)}</div>
-        </div>
-      ))}
-    </div>
-  );
+// The actions of a striving's activities, once each (an action may serve two of them), by start.
+function strivingActions(model: Model, activities: Activity[]): Action[] {
+  const ids = new Set(activities.map((a) => a.id));
+  return model.actions.filter((x) => x.part_of.some((p) => ids.has(p)));
 }

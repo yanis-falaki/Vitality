@@ -36,6 +36,20 @@
   --activity-soft: #dcefeb;
   --action-soft: #e5e8f4;
   --evidence-soft: #ebe8e3;
+  /* How much, in four soft steps of a level's colour over white (the Reader's heatmap, the Day
+     calendar): 18, 38, 62 and 88 % of the colour. An empty day is --hover. */
+  --striving-1: #f3e6d8;
+  --striving-2: #e7caad;
+  --striving-3: #d7a97a;
+  --striving-4: #c78542;
+  --activity-1: #d1ebe9;
+  --activity-2: #9ed6d0;
+  --activity-3: #61bbb2;
+  --activity-4: #1f9f91;
+  --action-1: #e0e3f2;
+  --action-2: #bdc5e4;
+  --action-3: #94a0d3;
+  --action-4: #6778c1;
 
   /* Status (the modeler's state only) */
   /* Day's lanes: one muted colour per activity (by its place in the model, so it is the same on

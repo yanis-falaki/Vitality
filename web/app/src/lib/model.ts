@@ -126,6 +126,12 @@ function localTime(name: string, like: string): string | undefined {
   return `${new Date(ms).toISOString().slice(0, 19)}${like.slice(-6)}`;
 }
 
+/** Activities most recently seen first: those seen within STALE_DAYS, and the older ones. */
+export function byRecency(model: Model, activities: Activity[]): { recent: Activity[]; older: Activity[] } {
+  const sorted = [...activities].sort((a, b) => (a.last_seen < b.last_seen ? 1 : a.last_seen > b.last_seen ? -1 : 0));
+  return { recent: sorted.filter((a) => !model.stale(a)), older: sorted.filter((a) => model.stale(a)) };
+}
+
 /** The indexed model, with the query's state. */
 export function useModel(): { model: Model | undefined; error: unknown; loading: boolean } {
   const query = useApiModel();

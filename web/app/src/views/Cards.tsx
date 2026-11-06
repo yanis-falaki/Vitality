@@ -1,16 +1,19 @@
 // Cards: the model as a tree of cards on a canvas (web spec, §6). Strivings across the top, the
-// activities serving each beneath with curved links (dashed for a second striving), a group for the
-// activities serving none, and an activity's actions expanding under it by day. The depth control
+// activities serving each beneath with curved links (dashed for a second striving), most recently
+// seen first and quieter once not seen for a month, a group for the activities serving none, and an
+// activity's actions expanding under it by day (by month and week when there are many, so even
+// "+ Actions" shows only the latest week of each). The depth control
 // shows strivings only, with activities, or with every action. Drag to pan, pinch or wheel to zoom
 // around the pointer, or use the zoom buttons; a tap or click selects.
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { Activity, Striving } from "../api/client";
+import { ActionGroups } from "../components/ActionGroups";
 import { Confidence, LevelLabel } from "../components/bits";
 import { WithModel } from "../components/Loading";
 import { ViewFrame } from "../components/Shell";
-import { clock, day, dayLabel, minutes, plural } from "../lib/format";
+import { clock, dayLabel, minutes, plural } from "../lib/format";
 import { useLayout } from "../lib/media";
-import type { Model } from "../lib/model";
+import { byRecency, type Model } from "../lib/model";
 import { useSelection } from "../lib/selection";
 import "./cards.css";
 
@@ -33,9 +36,11 @@ function CardsView({ model }: { model: Model }) {
     else next.add(id);
     return next;
   });
+  // Under each striving, its activities most recently seen first; those not seen for a month after them, quieter.
+  const recency = (list: Activity[]) => { const { recent, older } = byRecency(model, list); return [...recent, ...older]; };
   const groups: { head: Striving | null; activities: Activity[] }[] = [
-    ...model.strivings.map((s) => ({ head: s, activities: model.activities.filter((a) => a.part_of[0] === s.id) })),
-    ...(model.unassigned.length ? [{ head: null, activities: model.unassigned }] : []),
+    ...model.strivings.map((s) => ({ head: s, activities: recency(model.activities.filter((a) => a.part_of[0] === s.id)) })),
+    ...(model.unassigned.length ? [{ head: null, activities: recency(model.unassigned) }] : []),
   ];
   return (
     <ViewFrame model={model} empty="Select a card to see what the model believes, and why.">
@@ -82,7 +87,7 @@ function ActivityCard({ model, a, open, onToggle }: { model: Model; a: Activity;
   const { sel, select } = useSelection();
   const n = model.actionsOf(a.id).length;
   return (
-    <div className={`card card-activity ${a.status}${sel === a.id ? " sel" : ""}`} data-anchor={a.id}
+    <div className={`card card-activity ${a.status}${model.stale(a) ? " older" : ""}${sel === a.id ? " sel" : ""}`} data-anchor={a.id}
       role="button" tabIndex={0} onClick={() => select(a.id)} onKeyDown={(e) => { if (e.key === "Enter") select(a.id); }}>
       <div className="level level-activity"><i className={`dot dot-activity${a.status === "tentative" ? " tentative" : ""}`} />Activity · {a.status}</div>
       <span className="card-title">{a.title}</span>
@@ -99,24 +104,16 @@ function ActivityCard({ model, a, open, onToggle }: { model: Model; a: Activity;
 
 function ActionList({ model, a }: { model: Model; a: Activity }) {
   const { sel, select } = useSelection();
-  let last = "";
+  const actions = model.actionsOf(a.id);
   return (
-    <div className="cards-actions">
-      {model.actionsOf(a.id).map((x) => {
-        const d = day(x.start);
-        const head = d !== last;
-        last = d;
-        return (
-          <Fragment key={x.id}>
-            {head && <div className="cards-day">{dayLabel(d)}</div>}
-            <button type="button" className={`card-action${sel === x.id ? " sel" : ""}`} onClick={() => select(x.id)}>
-              <span className="time">{clock(x.start)} · {minutes(x.start, x.end)} min</span>
-              {x.summary}
-            </button>
-          </Fragment>
-        );
-      })}
-    </div>
+    <ActionGroups actions={actions} className="cards-actions"
+      dayHead={(d) => <div className="cards-day" key={`day-${d}`}>{dayLabel(d)}</div>}
+      row={(x) => (
+        <button type="button" key={x.id} className={`card-action${sel === x.id ? " sel" : ""}`} onClick={() => select(x.id)}>
+          <span className="time">{clock(x.start)} · {minutes(x.start, x.end)} min</span>
+          {x.summary}
+        </button>
+      )} />
   );
 }
 

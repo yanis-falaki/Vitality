@@ -1,13 +1,15 @@
 // The inspector: one panel, the same in every view, showing whatever is selected (web spec, §6).
 //
 // For each level: its label and id, title, confidence, status and time span; its links as chips;
-// its body; then what lies beneath it (a striving's activities, an activity's actions by day, an
-// action's evidence, an interaction's actions and evidence).
-import { Fragment, type ReactNode } from "react";
+// its body; then what lies beneath it (a striving's activities, an activity's actions by day, or by
+// month and week when there are many, an action's evidence, an interaction's actions and evidence).
+// An action's body and operations are fetched when it is shown.
+import type { ReactNode } from "react";
 import { useAction, useEvidence, type Action, type Activity, type Striving } from "../api/client";
 import { clock, day, dayLabel, minutes, plural } from "../lib/format";
 import type { Model } from "../lib/model";
 import { useSelection } from "../lib/selection";
+import { ActionGroups, actionsTitle } from "./ActionGroups";
 import { Chip, Confidence, LevelLabel, Muted, Section, Status } from "./bits";
 import { EvidenceCard } from "./Evidence";
 import { RichText } from "./RichText";
@@ -85,7 +87,7 @@ function ActivityPanel({ model, a }: { model: Model; a: Activity }) {
         <Section title="Works against">{a.hinders.map((s) => <Chip key={s} model={model} id={s} />)}</Section>
       )}
       <RichText model={model} text={a.body} />
-      <Section title={plural(actions.length, "action")}><ActionsByDay actions={actions} /></Section>
+      <Section title={actionsTitle(actions)}><ActionsByDay actions={actions} /></Section>
     </>
   );
 }
@@ -138,27 +140,18 @@ function InteractionPanel({ model, name }: { model: Model; name: string }) {
   );
 }
 
-/** Actions under their day, as rows that select. */
+/** Actions under their day (by month and week when there are many), as rows that select. */
 export function ActionsByDay({ actions }: { actions: Action[] }) {
   const { sel, select } = useSelection();
-  let last = "";
   return (
-    <div className="rows">
-      {actions.map((a) => {
-        const d = day(a.start);
-        const head = d !== last;
-        last = d;
-        return (
-          <Fragment key={a.id}>
-            {head && <div className="row-day">{dayLabel(d)}</div>}
-            <button type="button" className={`row${sel === a.id ? " on" : ""}`} onClick={() => select(a.id)}>
-              <span className="time">{clock(a.start)}</span>
-              <span className="row-text">{a.summary}</span>
-            </button>
-          </Fragment>
-        );
-      })}
-    </div>
+    <ActionGroups actions={actions} className="rows"
+      dayHead={(d) => <div className="row-day" key={`day-${d}`}>{dayLabel(d)}</div>}
+      row={(a) => (
+        <button type="button" key={a.id} className={`row${sel === a.id ? " on" : ""}`} onClick={() => select(a.id)}>
+          <span className="time">{clock(a.start)}</span>
+          <span className="row-text">{a.summary}</span>
+        </button>
+      )} />
   );
 }
 
