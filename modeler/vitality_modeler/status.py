@@ -3,6 +3,7 @@
     modeler: 2412 operations waiting · last session 14:32 committed (9 actions, 2 activities) · running
 """
 
+import fcntl
 import json
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,8 @@ def _last_session(state: Path, now: datetime) -> str:
 
 
 def _state(state: Path, now: datetime) -> str:
+    if not _locked(state / "scheduler.lock"):
+        return "not running"  # whatever status.json says, no scheduler holds the lock
     try:
         record = json.loads((state / "status.json").read_text(encoding="utf-8"))
         name = record["state"]
@@ -49,3 +52,16 @@ def _state(state: Path, now: datetime) -> str:
         return _STATES[name]
     except (OSError, ValueError, KeyError, TypeError):
         return "not running"
+
+
+def _locked(path: Path) -> bool:
+    # True when a scheduler holds the lock (a shared lock cannot be taken).
+    try:
+        with open(path) as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            return False
+    except OSError:
+        return False

@@ -49,7 +49,7 @@ delegate, give the sub-agent its brief from "Briefs for the sub-agents" below, t
 sections "Rules for every file" and "File formats" (copy them into the prompt in full: the sub-agent
 has no other way to learn them), plus the specific inputs named in the brief. When the batch is
 small, under about 100 operations, do the three stages yourself instead, in order, following the
-same briefs; delegate when it is larger. If the run message
+same briefs (wherever a step below says to delegate); delegate when it is larger. If the run message
 names a captures folder, pass the captures folder to every sub-agent too.
 
 1. **Read `modeler-notes.md` and `user-context.md`.** User context is background the owner wrote

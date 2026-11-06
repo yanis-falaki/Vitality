@@ -51,6 +51,11 @@ def foreign_changes(model: Path) -> list[str]:
     return found
 
 
+def staged(model: Path) -> list[str]:
+    """Paths staged in the index that differ from HEAD (repo-relative)."""
+    return [p for p in _git(model, "diff", "--cached", "--name-only", "-z").split("\0") if p]
+
+
 def waiting(model: Path) -> dict[str, int]:
     """The untracked operations files (repo-relative path -> how many operations it holds): the evidence waiting."""
     found: dict[str, int] = {}

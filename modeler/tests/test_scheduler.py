@@ -247,3 +247,43 @@ def test_status_idle_after_a_failed_session(model: Path, state: Path):
     session, clock = Session("failed"), Clock()
     scheduler(model, state, session, clock).step()
     assert status(state)["state"] == "idle"
+
+
+def test_recovers_a_killed_session_on_start(model: Path, state: Path):
+    evidence(model, 4, ops=5)
+    start = git(model, "rev-parse", "HEAD").strip()
+    offered = repo.choose_batch(model, 500)
+    assert offered is not None
+    repo.stage(model, offered)
+    (model / "actions" / "2026-11-06").mkdir(parents=True)
+    (model / "actions" / "2026-11-06" / "14-00-00.md").write_text("half written")
+    (state / "session.json").write_text(json.dumps({"start": start}))  # a session was killed mid-way
+    clock = Clock()
+
+    def stop(seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    session = Session()
+    s = Scheduler(model, state, ModelerConfig(), session=session, clock=clock, now=clock.now, sleep=stop,
+                  log=lambda line: None)
+    s.run()
+    assert not (model / "actions" / "2026-11-06" / "14-00-00.md").exists()
+    assert not (state / "session.json").exists()
+    assert len(session.calls) == 1  # then it carried on normally
+
+
+def test_owner_edit_racing_a_session_is_not_a_failure(model: Path, state: Path):
+    evidence(model, 4, ops=5)
+
+    def refuse(*args: Any, **kwargs: Any) -> Record:
+        (model / "user-context.md").write_text("edited just now\n")  # the owner, a moment earlier
+        raise RuntimeError("the model folder has changes other than new evidence: user-context.md")
+
+    clock = Clock()
+    s = Scheduler(model, state, ModelerConfig(), session=refuse, clock=clock, now=clock.now, sleep=clock.sleep,
+                  log=lambda line: None)
+    for _ in range(5):
+        clock.sleep(s.step())
+    assert not s.paused
+    assert status(state)["state"] == "waiting-edits"
+    assert (model / "user-context.md").read_text() == "edited just now\n"  # the owner's edit is kept

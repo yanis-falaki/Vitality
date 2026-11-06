@@ -12,9 +12,10 @@ Milestone 1 is the lab: the host prepares `<run>/model` with a dataset's whole e
 - 3 sessions in a row without a commit: it pauses and stays paused (still running, doing nothing) until restarted: read `sessions.jsonl` and the transcripts, fix what is wrong, then `docker compose restart modeler`.
 - The usage limit of the Claude seat: it waits an hour, then tries again. A restart forgets the wait.
 - Uncommitted edits of yours in the model folder: it waits until you commit or discard them.
-- `docker compose stop modeler` stops it; a session in progress is reverted.
+- `docker compose stop modeler` stops it; a session in progress is reverted (it has 60 seconds). If the process is killed outright mid-session, the next start reverts what that session left (`/state/session.json` marks a session in progress).
+- The login file is shared with your own Claude Code on the VM. If your `claude` there refreshes the login by replacing the file, the running modeler keeps the old one until it restarts, and its sessions may fail to log in (three such failures pause it): `docker compose restart modeler` picks up the new file.
 
-`vitality-modeler status` (part of `./vitality status`) prints one line: the operations waiting, the last session, and the state (`idle`, `running`, `paused (3 failed)`, `waiting (usage limit until HH:MM)`, `waiting (uncommitted edits in the model folder)`, or `not running`). The state is kept in `/state/status.json`; `/state/scheduler.lock` keeps a second modeler from running on the same data. Its log (`./vitality logs modeler`) has one line per session, and every pause and wait.
+`vitality-modeler status` (part of `./vitality status`) prints one line: the operations waiting, the last session, and the state (`idle`, `running`, `paused (3 failed)`, `waiting (usage limit until HH:MM)`, `waiting (uncommitted edits in the model folder)`, or `not running`). The state is kept in `/state/status.json`; `/state/scheduler.lock` keeps a second modeler from running on the same data, and tells `status` whether one is running (`not running` when nobody holds it). Its log (`./vitality logs modeler`) has one line per session, and every pause and wait.
 
 ## The image
 

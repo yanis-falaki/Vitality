@@ -78,7 +78,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _status(model: Path, state: Path) -> int:
     try:
         print(status_line(model, state, datetime.now().astimezone()))
-    except (OSError, RuntimeError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"vitality-modeler: cannot read {model}: {error}", file=sys.stderr)
         return 1
     return 0
@@ -90,7 +90,8 @@ def _run(model: Path, state: Path, captures: str, sleep: Callable[[float], objec
     previous = signal.signal(signal.SIGTERM, _interrupt)
     try:
         config = load_modeler_config(os.environ)
-        if Scheduler(model, state, config, captures=captures).run() == 0:
+        scheduler = Scheduler(model, state, config, captures=captures)  # kept: it holds the lock while paused
+        if scheduler.run() == 0:
             return 0
         try:
             while True:

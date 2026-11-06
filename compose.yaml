@@ -121,11 +121,15 @@ services:
     command: ["vitality-modeler", "run"]
     # A small init as process 1, to reap Claude Code's sub-processes.
     init: true
-    # Claude Code keeps its own state under HOME: a throwaway folder, emptied on restart (the root is
-    # read-only). The login is the one file mounted into it below.
+    # Claude Code keeps its own state under HOME and ~/.claude: throwaway folders, emptied on restart
+    # (the root is read-only). Both must be writable by the service's user; without the second, Docker
+    # would make ~/.claude root-owned when it mounts the login file into it.
     tmpfs:
       - /tmp
       - /home/modeler:mode=1777
+      - /home/modeler/.claude:mode=1777
+    # Time for a session in progress to be killed and reverted on `docker compose stop`.
+    stop_grace_period: 60s
     environment:
       # Never an API key: the sessions use the owner's Claude login (the Team seat).
       MODELER_MODEL: ${MODELER_MODEL:-claude-opus-5-5}

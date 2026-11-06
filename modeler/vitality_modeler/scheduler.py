@@ -6,7 +6,9 @@ anything is waiting and no new operations file has appeared for `IDLE_SECONDS`. 
 checks again at once; after `MAX_FAILED_IN_A_ROW` sessions without a commit it pauses (returns 1)
 until restarted; a `limited` session makes it wait `LIMIT_WAIT_SECONDS`. While the owner has
 uncommitted edits in the model folder it waits. What it is doing is kept in `<state>/status.json`;
-`<state>/scheduler.lock` keeps a second scheduler from running on the same state.
+`<state>/scheduler.lock` keeps a second scheduler from running on the same state. While a session
+runs, `<state>/session.json` holds its start commit; if the process is killed mid-session, the next
+start finds it and reverts what the session left.
 """
 
 import fcntl
@@ -72,6 +74,7 @@ class Scheduler:
         """Run until paused (returns 1) or interrupted (KeyboardInterrupt; returns 0)."""
         self.lock()
         self._write("idle", force=True)
+        self._recover()
         try:
             while True:
                 wait = self.step()
@@ -80,6 +83,7 @@ class Scheduler:
                 if wait:
                     self._sleep(wait)
         except KeyboardInterrupt:
+            self._recover()
             self._write("idle", force=True)
             self._log("stopped")
             return 0
@@ -98,7 +102,11 @@ class Scheduler:
             return CHECK_SECONDS
         self._edits_logged = False
 
-        waiting = repo.waiting(self._model)
+        try:
+            waiting = repo.waiting(self._model)
+        except ValueError as error:  # a malformed operations file: say so, and keep looking
+            self._log(f"cannot read the waiting evidence: {error}")
+            return CHECK_SECONDS
         if set(waiting) - self._seen:
             self._last_new = self._clock()
         self._seen = set(waiting)
@@ -112,6 +120,7 @@ class Scheduler:
             return CHECK_SECONDS
 
         self._write("running")
+        write_text_atomic(self._state / "session.json", json.dumps({"start": repo.head(self._model)}) + "\n")
         try:
             record = self._session(self._model, self._state, self._config, PLAYBOOK, PLAYBOOK_VERSION,
                                    trigger=trigger, captures=self._captures)
@@ -119,8 +128,14 @@ class Scheduler:
         except KeyboardInterrupt:
             raise
         except Exception as error:
+            if repo.foreign_changes(self._model) and not repo.staged(self._model):
+                # The owner edited the model just before the session began: wait for them, not a failure.
+                (self._state / "session.json").unlink(missing_ok=True)
+                self._write("waiting-edits")
+                return CHECK_SECONDS
             self._log(f"session crashed: {type(error).__name__}: {error}")
             outcome = "failed"
+        (self._state / "session.json").unlink(missing_ok=True)  # the harness committed or reverted it
         if outcome is None:
             self._write("idle")
             return CHECK_SECONDS
@@ -142,6 +157,24 @@ class Scheduler:
             return 0
         self._write("idle")
         return CHECK_SECONDS
+
+    def _recover(self) -> None:
+        # If a session's marker is left (it was killed, or its own revert was interrupted) and its
+        # batch is still staged at its start commit, revert what it left; then drop the marker. The
+        # owner's edits are never staged, so a folder with only those is left alone.
+        marker = self._state / "session.json"
+        try:
+            start = json.loads(marker.read_text(encoding="utf-8"))["start"]
+        except (OSError, ValueError, KeyError, TypeError):
+            marker.unlink(missing_ok=True)
+            return
+        staged = repo.staged(self._model)
+        if repo.head(self._model) == start and staged:
+            offered = repo.Offered([p for p in staged if p.startswith("operations/")],
+                                   [p for p in staged if p.startswith("observations/")], 0)
+            self._log("reverting what an interrupted session left in the model folder")
+            repo.revert(self._model, start, offered)
+        marker.unlink(missing_ok=True)
 
     def _write(self, state: str, *, until: datetime | None = None, force: bool = False) -> None:
         # Record the scheduler's state in status.json when it changes.
