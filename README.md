@@ -12,7 +12,7 @@ your Claude login.
 | Part | Where | What it is | How it runs |
 |---|---|---|---|
 | [`client/`](client/README.md) | the laptop | captures interactions and uploads them | its own `install.sh` and a systemd user service |
-| `server/`, `observer/`, `modeler/` | the VM | [`server/`](server/README.md) stores uploads; [`observer/`](observer/README.md) turns them into observations and operations; [`modeler/`](modeler/README.md) turns those into the user model | Docker Compose, from this checkout |
+| `server/`, `observer/`, `modeler/`, `web/` | the VM | [`server/`](server/README.md) stores uploads; [`observer/`](observer/README.md) turns them into observations and operations; [`modeler/`](modeler/README.md) turns those into the user model; [`web/`](web/README.md) is a private, read-only web app for reading it | Docker Compose, from this checkout |
 
 `protocol/` is the small package the client and server share. The laptop is set up from
 [`client/README.md`](client/README.md); everything below is about the VM.
@@ -61,8 +61,8 @@ Each one prints the `docker compose` or `git` commands it runs.
 | Command | What it does |
 |---|---|
 | `./vitality setup` | creates `.env`, the data folders and the `model/` git repo if missing; checks the Claude login and the API key. Safe to rerun |
-| `./vitality status` | `docker compose ps`, then the server's, the observer's and the modeler's status, then the data folder |
-| `./vitality logs [service]` | follows the logs; `service` is `server`, `observer` or `modeler` (default: all) |
+| `./vitality status` | `docker compose ps`, then the server's, the observer's and the modeler's status, the web app's address, then the data folder |
+| `./vitality logs [service]` | follows the logs; `service` is `server`, `observer`, `modeler` or `web` (default: all) |
 | `./vitality upgrade` | fast-forwards to the newest `main` (only from a clean `main`), then `docker compose up -d --build` |
 | `./vitality lab <args>` | runs `vitality-lab` (a stage on a fixed dataset, outside `vitality-data`) with the key and settings from `.env`; see [`lab/README.md`](lab/README.md); `lab run modeler <dataset>` replays an evidence dataset through the modeler in its container |
 
@@ -73,7 +73,11 @@ laptop: 595 interactions · 1835 shots · 201.0 MB · last received 21:30:37
 disk: 19.7 GB free
 observer: 560 / 595 observed · 2 skipped · last call 21:28:26 EDT ok (40 s)
 modeler: 12 operations waiting · last session 21:20 committed (9 actions, 2 activities) · idle
+web: https://vitality-librarian.exe.xyz:4000/ (private: only you, through exe.dev's proxy)
 ```
+
+The model can be read in the web app at `https://vitality-librarian.exe.xyz:4000/` (exe.dev's private
+proxy, so only you; see [`web/README.md`](web/README.md)).
 
 To stop everything: `docker compose down`. The data stays.
 
