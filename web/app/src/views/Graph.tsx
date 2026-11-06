@@ -31,7 +31,10 @@ function GraphPage({ model }: { model: Model }) {
   const [evidence, setEvidence] = useState(false);
   const [query, setQuery] = useState("");
   const { select } = useSelection();
-  const graph = useMemo(() => buildGraph(model, evidence), [model, evidence]);
+  // The model's layout is computed once; "+ Evidence" only adds dots around their actions, so the
+  // toggle is instant and nothing already on screen moves.
+  const layout = useMemo(() => layoutModel(model), [model]);
+  const graph = useMemo(() => buildGraph(model, evidence, layout), [model, evidence, layout]);
   return (
     <ViewFrame model={model} empty="Click a node to see what the model believes, and why.">
       <div className="graph-stage">
@@ -151,7 +154,51 @@ function Legend({ graph }: { graph: Graph<NodeAttrs, EdgeAttrs> }) {
 
 // -- the graph ---------------------------------------------------------------------------------
 
-function buildGraph(model: Model, evidence: boolean): Graph<NodeAttrs, EdgeAttrs> {
+type Layout = Map<string, { x: number; y: number }>;
+
+// Positions of the strivings, activities and actions: ForceAtlas2 from a circle (deterministic).
+function layoutModel(model: Model): Layout {
+  const graph = buildGraph(model, false, null);
+  circular.assign(graph, { scale: 100 });
+  const settings = forceAtlas2.inferSettings(graph);
+  forceAtlas2.assign(graph, {
+    iterations: 600,
+    settings: { ...settings, gravity: 1.2, scalingRatio: 14, barnesHutOptimize: false, adjustSizes: false },
+  });
+  const layout: Layout = new Map();
+  graph.forEachNode((n, a) => layout.set(n, { x: a.x, y: a.y }));
+  return layout;
+}
+
+// Each action's evidence fans out on a small arc beyond the action, pointing away from its activity.
+function placeEvidence(graph: Graph<NodeAttrs, EdgeAttrs>, model: Model) {
+  const at = (id: string) => ({ x: graph.getNodeAttribute(id, "x"), y: graph.getNodeAttribute(id, "y") });
+  const reach: number[] = [];
+  for (const a of model.actions) {
+    const parent = a.part_of.find((x) => graph.hasNode(x));
+    if (parent) { const p = at(parent), q = at(a.id); reach.push(Math.hypot(q.x - p.x, q.y - p.y)); }
+  }
+  reach.sort((a, b) => a - b);
+  const radius = (reach[Math.floor(reach.length / 2)] ?? 10) * 0.32;
+  const placed = new Set<string>();
+  for (const a of model.actions) {
+    const mine = model.interactionsOf(a).filter((i) => graph.hasNode(i) && !placed.has(i));
+    if (!mine.length) continue;
+    const q = at(a.id);
+    const parent = a.part_of.find((x) => graph.hasNode(x));
+    const p = parent ? at(parent) : { x: 0, y: 0 };
+    const base = Math.atan2(q.y - p.y, q.x - p.x);
+    const spread = Math.min(Math.PI * 0.9, 0.35 * mine.length);
+    mine.forEach((i, k) => {
+      const angle = base + (mine.length > 1 ? (k / (mine.length - 1) - 0.5) * spread : 0);
+      const r = radius * (1 + 0.12 * (k % 2));
+      graph.mergeNodeAttributes(i, { x: q.x + Math.cos(angle) * r, y: q.y + Math.sin(angle) * r });
+      placed.add(i);
+    });
+  }
+}
+
+function buildGraph(model: Model, evidence: boolean, layout: Layout | null): Graph<NodeAttrs, EdgeAttrs> {
   const p = tokens();
   const colour: Record<Kind, string> = { striving: p.striving, activity: p.activity, action: p.action, interaction: p.evidence };
   const graph = new Graph<NodeAttrs, EdgeAttrs>({ type: "undirected", multi: false });
@@ -185,12 +232,10 @@ function buildGraph(model: Model, evidence: boolean): Graph<NodeAttrs, EdgeAttrs
       }
     }
   }
-  circular.assign(graph, { scale: 100 });
-  const settings = forceAtlas2.inferSettings(graph);
-  forceAtlas2.assign(graph, {
-    iterations: 600,
-    settings: { ...settings, gravity: 1.2, scalingRatio: evidence ? 6 : 14, barnesHutOptimize: false, adjustSizes: false },
-  });
+  if (layout) {
+    graph.forEachNode((n) => { const at = layout.get(n); if (at) graph.mergeNodeAttributes(n, at); });
+    if (evidence) placeEvidence(graph, model);
+  }
   return graph;
 }
 

@@ -4,10 +4,9 @@
 // screenshots as a strip; activity filters (or a lane's name) that filter the list and dim the other
 // lanes; and the day's actions in a list grouped by sitting. The pane fits the window: only the
 // strip, the list (and on a phone the lanes, sideways) scroll.
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { shotUrl, useEvidenceOf, type Action } from "../api/client";
-import { Dot } from "../components/bits";
 import { useLightbox } from "../components/Lightbox";
 import { WithModel } from "../components/Loading";
 import { ViewFrame } from "../components/Shell";
@@ -18,6 +17,19 @@ import "./day.css";
 
 const GAP = 30;            // minutes without an action that end a sitting
 const NONE = "";           // the lane of actions with no activity yet
+const LANE_COLOURS = 8;
+
+/** The colour of an activity's lane (`--lane-1` … `--lane-8`, by its place in the model; none: grey). */
+function laneColour(model: Model, id: string): string {
+  const i = model.activities.findIndex((a) => a.id === id);
+  return i < 0 ? "var(--lane-none)" : `var(--lane-${(i % LANE_COLOURS) + 1})`;
+}
+
+/** A small square in the lane's colour (dashed outline when the activity is tentative). */
+function Swatch({ model, id }: { model: Model; id: string }) {
+  const tentative = !!id && model.activity(id)?.status === "tentative";
+  return <i className={`day-swatch${tentative ? " tentative" : ""}`} style={{ "--c": laneColour(model, id) } as CSSProperties} aria-hidden />;
+}
 
 interface Sitting { start: string; end: string; actions: Action[] }
 
@@ -73,7 +85,7 @@ function DayView({ model }: { model: Model }) {
           <button type="button" className={`chip${only === null ? " on" : ""}`} onClick={() => setOnly(null)}>All {actions.length} actions</button>
           {lanes.map((id) => (
             <button type="button" key={id || "none"} className={`chip${only === id ? " on" : ""}`} onClick={() => choose(id)}>
-              {id ? <Dot kind="activity" tentative={model.activity(id)?.status === "tentative"} /> : <i className="dot dot-none" />}
+              <Swatch model={model} id={id} />
               <span className="chip-text">{id ? short(model.title(id), 34) : "No activity yet"} · {actions.filter((a) => (a.part_of[0] ?? NONE) === id).length}</span>
             </button>
           ))}
@@ -124,7 +136,7 @@ function Lanes({ model, sits, lanes, only, sel, onChoose }: LanesProps) {
           <div className={`day-lane${only !== null && only !== id ? " dim" : ""}`} key={id || "none"}>
             <button type="button" className={`day-lane-name${only === id ? " on" : ""}`} onClick={() => onChoose(id)}
               title={id ? model.title(id) : "No activity yet"}>
-              {id ? <Dot kind="activity" tentative={model.activity(id)?.status === "tentative"} /> : <i className="dot dot-none" />}
+              <Swatch model={model} id={id} />
               <span>{id ? model.title(id) : "No activity yet"}</span>
             </button>
             <div className="day-tracks">
@@ -134,7 +146,7 @@ function Lanes({ model, sits, lanes, only, sel, onChoose }: LanesProps) {
                   <div className="day-track" key={s.start} style={width(i)}>
                     {s.actions.filter((a) => (a.part_of[0] ?? NONE) === id).map((a) => (
                       <button type="button" key={a.id} className={`day-bar${sel === a.id ? " on" : ""}`}
-                        style={{ left: `${((Date.parse(a.start) - t0) / 60000 / lengths[i]) * 100}%`, width: `${(minutes(a.start, a.end) / lengths[i]) * 100}%` }}
+                        style={{ left: `${((Date.parse(a.start) - t0) / 60000 / lengths[i]) * 100}%`, width: `${(minutes(a.start, a.end) / lengths[i]) * 100}%`, "--c": laneColour(model, id) } as CSSProperties}
                         title={`${clock(a.start)} · ${a.summary}`} aria-label={`${clock(a.start)} ${a.summary}`} onClick={() => select(a.id)} />
                     ))}
                   </div>
@@ -196,6 +208,7 @@ function List({ model, sits, only, sel }: { model: Model; sits: Sitting[]; only:
           {s.actions.filter(shown).map((a) => (
             <button type="button" key={a.id} data-id={a.id} className={`day-row${sel === a.id ? " on" : ""}`} onClick={() => select(a.id)}>
               <span className="time">{clock(a.start)}</span>
+              <Swatch model={model} id={a.part_of[0] ?? NONE} />
               <span className="day-row-text">
                 {a.summary}
                 <span className="day-row-activity">{a.part_of[0] ? model.title(a.part_of[0]) : "No activity yet"}</span>

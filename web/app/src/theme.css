@@ -38,6 +38,17 @@
   --evidence-soft: #ebe8e3;
 
   /* Status (the modeler's state only) */
+  /* Day's lanes: one muted colour per activity (by its place in the model, so it is the same on
+     every day), told apart from each other; the levels keep their own colours everywhere else. */
+  --lane-1: #4f7cac;
+  --lane-2: #c2803f;
+  --lane-3: #5f9a62;
+  --lane-4: #8b6bb0;
+  --lane-5: #b65a5f;
+  --lane-6: #3f9a96;
+  --lane-7: #a8913a;
+  --lane-8: #7c7770;
+  --lane-none: #c9c2b5;
   --ok: #3d7f55;
   --warn: #a8701c;
   --bad: #a6473c;
