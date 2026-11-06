@@ -1,6 +1,6 @@
 // The API, as typed queries. The types come from schema.ts, generated from the API's OpenAPI schema
 // (`npm run api`; see README.md), so a change to the API shows up here as a type error.
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import type { components } from "./schema";
 
 type S = components["schemas"];
@@ -24,19 +24,26 @@ export function useApiModel() {
   return useQuery({ queryKey: ["model"], queryFn: () => get<ApiModel>("/api/model"), refetchInterval: 60_000 });
 }
 
+const evidenceQuery = (interaction: string | null) => ({
+  queryKey: ["evidence", interaction],
+  enabled: interaction !== null,
+  staleTime: 5 * 60_000,
+  queryFn: async (): Promise<Evidence | null> => {
+    const reply = await fetch(`/api/evidence/${interaction}`);
+    if (reply.status === 404) return null;
+    if (!reply.ok) throw new Error(`evidence: ${reply.status}`);
+    return (await reply.json()) as Evidence;
+  },
+});
+
 /** One interaction's evidence (observation, operations, screenshots), or null when unknown. */
 export function useEvidence(interaction: string | null) {
-  return useQuery({
-    queryKey: ["evidence", interaction],
-    enabled: interaction !== null,
-    staleTime: 5 * 60_000,
-    queryFn: async () => {
-      const reply = await fetch(`/api/evidence/${interaction}`);
-      if (reply.status === 404) return null;
-      if (!reply.ok) throw new Error(`evidence: ${reply.status}`);
-      return (await reply.json()) as Evidence;
-    },
-  });
+  return useQuery(evidenceQuery(interaction));
+}
+
+/** The evidence of several interactions, in their order (an entry is undefined while it loads). */
+export function useEvidenceOf(interactions: string[]): (Evidence | null | undefined)[] {
+  return useQueries({ queries: interactions.map(evidenceQuery) }).map((q) => q.data);
 }
 
 /** The modeler's state, polled every 30 seconds. */
