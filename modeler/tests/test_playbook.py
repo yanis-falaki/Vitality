@@ -16,11 +16,17 @@ def test_playbook_version_stable():
 
 
 def test_playbook_mentions():
-    for word in ("segmentation", "activities", "strivings", "vitality-usermodel next-id",
+    for word in ("actions sub-agent", "activities sub-agent", "strivings sub-agent", "vitality-usermodel next-id",
                  "vitality-usermodel check", "user-context.md", "modeler-notes.md", "locked",
                  "conflicts_with", "established", "tentative"):
         assert word in PLAYBOOK, word
     assert "24 hours" not in PLAYBOOK
+    # Impersonal: the owner is "[Name]" in examples, never a real name.
+    assert "Yanis" not in PLAYBOOK and "[Name]" in PLAYBOOK
+    # One sub-agent per stage: no splitting a stage across several, no seams to join.
+    assert "segmentation" not in PLAYBOOK.lower()
+    for split in ("split the work", "seams"):
+        assert split not in " ".join(PLAYBOOK.split()), split
     assert "last revised" not in PLAYBOOK
     flat = " ".join(PLAYBOOK.split())
     # No prior on how often strivings are revisited: the meaningful-change test alone decides.

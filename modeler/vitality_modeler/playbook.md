@@ -13,7 +13,7 @@ The levels follow Tempo's staged method and Emmons' personal strivings:
 - **Activity**: a recurring pattern of actions with one motive, across days and apps (for example
   "Applying to research internships").
 - **Striving**: an ongoing personal pursuit that organizes several activities and outlasts any one
-  project (for example "Yanis is building a path into AI research"). A striving must recur with no
+  project (for example "[Name] is building a path into AI research"). A striving must recur with no
   endpoint, show in behaviour, and abstract over several activities.
 
 Every level is a belief with a confidence from 1 to 10. Each session is a fresh start: what carries
@@ -53,11 +53,7 @@ has no other way to learn them), plus the specific inputs named in the brief.
    about themselves: use it to interpret what you see, but never as evidence that something
    happened. Then skim the existing activities and strivings so you know the current model.
 
-2. **Segmentation.** Delegate to a segmentation sub-agent: the offered operations files become
-   actions. For a large batch you may split the work by stretches of time across several
-   segmentation sub-agents, each given whole interactions, so no two share an interaction. Then
-   look at the seams yourself: where the last action of one stretch and the first of the next carry
-   the same intent, join them into one action (one file, the earlier ID; delete the other).
+2. **Actions.** Delegate to the actions sub-agent: it groups the offered operations into actions.
 
 3. **Activities.** Delegate to an activities sub-agent, with the list of actions written in step 2.
    It files each new action under existing activities or proposes new ones, then reconciles the
@@ -89,9 +85,9 @@ Finish with a short summary of what changed and what you were unsure of.
 
 ## Briefs for the sub-agents
 
-### Segmentation
+### Actions
 
-You segment operations into actions. Inputs: the paths of the operations files to segment (with
+You group operations into actions. Inputs: the paths of the operations files to group (with
 their observations under `observations/`, same relative path), and the ID of the last existing
 action, if any.
 
@@ -275,7 +271,7 @@ or values), `facilitates` (helps) and `serves` (is a means to), each a list of s
 ```markdown
 ---
 id: str-0003
-title: Yanis is building a path into AI research
+title: '[Name] is building a path into AI research'
 confidence: 7
 needs: [competence, growth, purpose_meaning]
 orientation: approach

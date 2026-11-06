@@ -132,9 +132,8 @@ The main agent is an orchestrator. It:
 
 1. Reads `modeler-notes.md` and `user-context.md`. User context is background, never evidence.
    Times of day come only from local times inside files; file and folder names are UTC identifiers.
-2. Delegates **segmentation** to a sub-agent: the offered operations into actions at shifts of
-   intent, covering every operation exactly once. For a large batch it may split the work by
-   stretches of time across sub-agents, then join the seams.
+2. Delegates **actions** to one sub-agent: the offered operations into actions at shifts of
+   intent, covering every operation exactly once.
 3. Delegates **activities** to a sub-agent: file each new action under existing activities or
    propose new ones (`tentative`), then reconcile the affected activities: match, revise, merge or
    create. Promote to `established` at 3+ actions over 2+ sessions with confidence 6+.
