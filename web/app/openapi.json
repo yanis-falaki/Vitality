@@ -1,0 +1,703 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Vitality web",
+    "version": "1"
+  },
+  "paths": {
+    "/api/model": {
+      "get": {
+        "summary": "Get Model",
+        "operationId": "get_model_api_model_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Model"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/evidence/{interaction}": {
+      "get": {
+        "summary": "Get Evidence",
+        "operationId": "get_evidence_api_evidence__interaction__get",
+        "parameters": [
+          {
+            "name": "interaction",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Interaction"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Evidence"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such interaction"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/modeler": {
+      "get": {
+        "summary": "Get Modeler",
+        "operationId": "get_modeler_api_modeler_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Modeler"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Get Health",
+        "operationId": "get_health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "type": "object",
+                  "title": "Response Get Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Action": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "operations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Operations"
+          },
+          "part_of": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Part Of"
+          },
+          "confidence": {
+            "type": "integer",
+            "title": "Confidence"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "summary",
+          "start",
+          "end",
+          "operations",
+          "part_of",
+          "confidence",
+          "body"
+        ],
+        "title": "Action"
+      },
+      "Activity": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "part_of": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Part Of"
+          },
+          "hinders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hinders"
+          },
+          "confidence": {
+            "type": "integer",
+            "title": "Confidence"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "first_seen": {
+            "type": "string",
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "type": "string",
+            "title": "Last Seen"
+          },
+          "locked": {
+            "type": "boolean",
+            "title": "Locked"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "part_of",
+          "hinders",
+          "confidence",
+          "status",
+          "first_seen",
+          "last_seen",
+          "locked",
+          "body"
+        ],
+        "title": "Activity"
+      },
+      "Evidence": {
+        "properties": {
+          "interaction": {
+            "type": "string",
+            "title": "Interaction"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Observation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/Operation"
+            },
+            "type": "array",
+            "title": "Operations"
+          },
+          "screenshots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Screenshots"
+          },
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Actions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "interaction",
+          "start",
+          "end",
+          "observation",
+          "operations",
+          "screenshots",
+          "actions"
+        ],
+        "title": "Evidence"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "InteractionSummary": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "operations": {
+            "type": "integer",
+            "title": "Operations"
+          },
+          "screenshots": {
+            "type": "integer",
+            "title": "Screenshots"
+          },
+          "first_operation": {
+            "type": "string",
+            "title": "First Operation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "operations",
+          "screenshots",
+          "first_operation"
+        ],
+        "title": "InteractionSummary",
+        "description": "What the views need about one interaction without fetching its evidence."
+      },
+      "Model": {
+        "properties": {
+          "strivings": {
+            "items": {
+              "$ref": "#/components/schemas/Striving"
+            },
+            "type": "array",
+            "title": "Strivings"
+          },
+          "activities": {
+            "items": {
+              "$ref": "#/components/schemas/Activity"
+            },
+            "type": "array",
+            "title": "Activities"
+          },
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/Action"
+            },
+            "type": "array",
+            "title": "Actions"
+          },
+          "interactions": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/InteractionSummary"
+            },
+            "type": "object",
+            "title": "Interactions"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "type": "array",
+            "title": "Problems"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strivings",
+          "activities",
+          "actions",
+          "interactions",
+          "problems"
+        ],
+        "title": "Model"
+      },
+      "Modeler": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/SchedulerState"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            },
+            "type": "array",
+            "title": "Sessions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "waiting",
+          "sessions"
+        ],
+        "title": "Modeler"
+      },
+      "Observation": {
+        "properties": {
+          "device": {
+            "type": "string",
+            "title": "Device"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device",
+          "start",
+          "end",
+          "body"
+        ],
+        "title": "Observation"
+      },
+      "Operation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "confidence": {
+            "type": "integer",
+            "title": "Confidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "confidence"
+        ],
+        "title": "Operation"
+      },
+      "Problem": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "error"
+        ],
+        "title": "Problem"
+      },
+      "Relations": {
+        "properties": {
+          "conflicts_with": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Conflicts With"
+          },
+          "facilitates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Facilitates"
+          },
+          "serves": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Serves"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conflicts_with",
+          "facilitates",
+          "serves"
+        ],
+        "title": "Relations"
+      },
+      "SchedulerState": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "SchedulerState",
+        "description": "The modeler's `status.json`; `not running` when no scheduler holds its lock."
+      },
+      "Session": {
+        "properties": {
+          "run": {
+            "type": "string",
+            "title": "Run"
+          },
+          "started": {
+            "type": "string",
+            "title": "Started"
+          },
+          "ended": {
+            "type": "string",
+            "title": "Ended"
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          },
+          "changes": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Changes",
+            "default": {}
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "run",
+          "started",
+          "ended",
+          "outcome"
+        ],
+        "title": "Session",
+        "description": "One line of the modeler's `sessions.jsonl` (`offered` dropped); fields the app shows are named."
+      },
+      "Striving": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "confidence": {
+            "type": "integer",
+            "title": "Confidence"
+          },
+          "needs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Needs"
+          },
+          "orientation": {
+            "type": "string",
+            "title": "Orientation"
+          },
+          "aspiration_vs_obligation": {
+            "type": "string",
+            "title": "Aspiration Vs Obligation"
+          },
+          "autonomy": {
+            "type": "string",
+            "title": "Autonomy"
+          },
+          "relations": {
+            "$ref": "#/components/schemas/Relations"
+          },
+          "locked": {
+            "type": "boolean",
+            "title": "Locked"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "confidence",
+          "needs",
+          "orientation",
+          "aspiration_vs_obligation",
+          "autonomy",
+          "relations",
+          "locked",
+          "body"
+        ],
+        "title": "Striving"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
