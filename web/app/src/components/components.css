@@ -55,7 +55,7 @@
   transform: translateX(105%); transition: transform 0.22s ease; visibility: hidden;
 }
 .frame-tablet .frame-inspector.shown { transform: none; visibility: visible; }
-.frame-scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 19; opacity: 0.5; }
+.frame-scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 19; opacity: 0.35; }
 
 .frame-phone .frame-inspector {
   position: fixed; inset: 0; z-index: 40; background: var(--panel);

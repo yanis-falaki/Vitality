@@ -11,7 +11,7 @@ import { Shell } from "./components/Shell";
 import { SelectionProvider } from "./lib/selection";
 import { Cards } from "./views/Cards";
 import { Day } from "./views/Day";
-import { Graph } from "./views/Graph";
+import { GraphView } from "./views/Graph";
 import { Reader } from "./views/Reader";
 
 const queries = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: true } } });
@@ -25,7 +25,7 @@ createRoot(document.getElementById("root")!).render(
             <Routes>
               <Route element={<Shell />}>
                 <Route index element={<Reader />} />
-                <Route path="graph" element={<Graph />} />
+                <Route path="graph" element={<GraphView />} />
                 <Route path="cards" element={<Cards />} />
                 <Route path="day/:date?" element={<Day />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

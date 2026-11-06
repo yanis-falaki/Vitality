@@ -81,7 +81,10 @@ def main() -> None:
                 page.on("pageerror", lambda e: errors.append(str(e)))
                 label = f"{name}/{size}"
                 page.goto(args.url + path)
-                page.wait_for_selector(ready, timeout=15000)
+                try:
+                    page.wait_for_selector(ready, timeout=15000)
+                except Exception:
+                    fail(f"{label}: did not render ({ready}); errors: {errors}")
                 page.wait_for_timeout(900)
                 overflow(page, label)
                 if name == "day" and size == "desktop":
