@@ -23,7 +23,7 @@ def test_playbook_mentions():
     assert "24 hours" not in PLAYBOOK
     # Screenshots: where they are, how to find the right ones, and that they are used sparingly.
     flat_text = " ".join(PLAYBOOK.split())
-    for phrase in ("<captures>/<interaction>/", "sparingly", "search the observations",
+    for phrase in ("<captures>/<interaction>/", "sparingly", "observations can be searched",
                    "pass the captures folder"):
         assert phrase in flat_text, phrase
     # Impersonal: the owner is "[Name]" in examples, never a real name.

@@ -194,9 +194,8 @@ line of why.
   in `<captures>/<interaction>/` (`NNNN.webp`, in time order; the interaction is the evidence file's
   name, e.g. `laptop/2026-10-25/23-18-41`). The observations were written from these screenshots, so
   they usually say enough. Look at screenshots only when the observation and operations leave
-  something unclear that matters for a decision, and look at few: search the observations first
-  (`grep -rl` for a name, a site, a phrase) to find the interactions worth opening, then open only
-  those.
+  something unclear that matters for a decision, and keep it to a few. The observations can be
+  searched, which is a quick way to find the interactions worth opening.
 - **Git.** Do not commit, stage, reset, check out or stash: the harness commits the session's work
   after its check. Reading history is fine.
 - **Check.** Run `vitality-usermodel check` (in the model folder) after writing files. It prints `ok`
