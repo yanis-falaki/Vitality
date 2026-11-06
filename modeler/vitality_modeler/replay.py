@@ -1,12 +1,14 @@
 """The lab's replay of the scheduler over a dataset (modeler spec, section 7, steps 1-3).
 
-`prepare` starts a fresh model in `<run>/model` holding the dataset's whole evidence, untracked, as
-the service's model folder holds a backlog. `replay` then runs session after session on it: each
+`prepare` starts a fresh model folder holding the dataset's whole evidence, untracked, as the
+service's model folder holds a backlog. `replay` then runs session after session on it: each
 session is offered the oldest evidence not yet committed (up to the cap) and may read the rest. A
 batch that is not committed stays untracked and is offered again to the next session. The replay stops
 when every operations file is committed, after `MAX_FAILED_IN_A_ROW` sessions in a row without a
-commit, when the usage limit is reached, or on KeyboardInterrupt. Its summary is `<run>/replay.json`;
-the sessions' records are `<run>/sessions.jsonl` and `<run>/transcripts/`. Progress goes to stderr: a line
+commit, when the usage limit is reached, or on KeyboardInterrupt. The records go to a separate folder,
+as the service keeps them apart from the model: `<records>/sessions.jsonl`, `<records>/transcripts/`
+and the summary `<records>/replay.json`. In the lab's container these are `/model` and `/state`, the
+paths the service will use. Progress goes to stderr: a line
 at the start, one as each session ends, and one at the end.
 """
 
@@ -53,17 +55,16 @@ class _Evidence:
     count: int          # operations in the file
 
 
-def prepare(dataset: Path, run: Path) -> None:
-    """Start `<run>/model`: the templates, the dataset's `user-context.md` (committed) and all its evidence.
+def prepare(dataset: Path, model: Path) -> None:
+    """Start the model folder `model`: the templates, the dataset's `user-context.md` (committed) and all its evidence.
 
     The evidence (`observations/`, `operations/`) is copied untracked, waiting to be offered. Raises
-    ValueError, before anything is written, when the dataset has no `user-context.md` or
-    `<run>/model` already exists.
+    ValueError, before anything is written, when the dataset has no `user-context.md` or `model`
+    already exists.
     """
     context = dataset / "user-context.md"
     if not context.is_file():
         raise ValueError(f"the dataset has no user-context.md: {context}")
-    model = run / "model"
     if model.exists():
         raise ValueError(f"{model} already exists")
     model.mkdir(parents=True)
@@ -73,26 +74,25 @@ def prepare(dataset: Path, run: Path) -> None:
             shutil.copytree(dataset / kind, model / kind)
 
 
-def replay(run: Path, config: ModelerConfig, *, claude: str = "claude",
+def replay(model: Path, records: Path, config: ModelerConfig, *, claude: str = "claude",
            environ: Mapping[str, str] = os.environ) -> ReplaySummary:
-    """Run sessions on `<run>/model` until nothing waits, writing `<run>/replay.json`; return the summary.
+    """Run sessions on `model` until nothing waits, writing `<records>/replay.json`; return the summary.
 
-    Raises ValueError, before anything is written, when `<run>/model` does not exist (see `prepare`).
+    Raises ValueError, before anything is written, when `model` is not a prepared model (see `prepare`).
     KeyboardInterrupt stops the replay (`stopped: "interrupted"`) and is not raised again; any other
     error is written as the stop reason and raised again.
     """
-    model = run / "model"
     if not (model / ".git").is_dir():
-        raise ValueError(f"no model in {run}; prepare it first")
-    records = run / "sessions.jsonl"
-    earlier = _read_outcomes(records)  # a run folder is fresh, but count only this replay's sessions
+        raise ValueError(f"no model in {model}; prepare it first")
+    records.mkdir(parents=True, exist_ok=True)
+    earlier = _read_outcomes(records / "sessions.jsonl")  # a run folder is fresh, but count only this replay's sessions
     stopped: str | None = None
     without_commit = 0
     _progress(f"{len(_operations_files(model))} operations files to offer, "
               f"batches of up to {config.max_operations} operations")
     try:
         while True:
-            record = run_session(model, run, config, PLAYBOOK, PLAYBOOK_VERSION, trigger="replay",
+            record = run_session(model, records, config, PLAYBOOK, PLAYBOOK_VERSION, trigger="replay",
                                  claude=claude, environ=environ)
             if record is None:
                 break
@@ -107,9 +107,9 @@ def replay(run: Path, config: ModelerConfig, *, claude: str = "claude",
     except KeyboardInterrupt:
         stopped = "interrupted"  # run_session has reverted and recorded the session it was in
     except BaseException as error:
-        _finish(run, model, earlier, f"{type(error).__name__}: {error}")
+        _finish(records, model, earlier, f"{type(error).__name__}: {error}")
         raise
-    return _finish(run, model, earlier, stopped)
+    return _finish(records, model, earlier, stopped)
 
 
 def _progress(line: str) -> None:
@@ -142,15 +142,15 @@ def _read_outcomes(records: Path) -> list[str]:
     return [json.loads(line)["outcome"] for line in records.read_text(encoding="utf-8").splitlines() if line]
 
 
-def _finish(run: Path, model: Path, earlier: list[str], stopped: str | None) -> ReplaySummary:
+def _finish(records: Path, model: Path, earlier: list[str], stopped: str | None) -> ReplaySummary:
     # Build the summary from this replay's session records and what the model committed; write it.
     sessions: dict[str, int] = {}
-    for outcome in _read_outcomes(run / "sessions.jsonl")[len(earlier):]:
+    for outcome in _read_outcomes(records / "sessions.jsonl")[len(earlier):]:
         sessions[outcome] = sessions.get(outcome, 0) + 1
     committed = set(repo.tracked(model, "operations"))
     summary = ReplaySummary(sessions, stopped,
                             [e.interaction for e in _operations_files(model) if e.path not in committed])
-    run.mkdir(parents=True, exist_ok=True)
-    (run / "replay.json").write_text(json.dumps(summary.to_json(), indent=2) + "\n", encoding="utf-8")
+    records.mkdir(parents=True, exist_ok=True)
+    (records / "replay.json").write_text(json.dumps(summary.to_json(), indent=2) + "\n", encoding="utf-8")
     _progress("done: " + (", ".join(f"{k} {n}" for k, n in sorted(sessions.items())) or "no sessions"))
     return summary

@@ -63,10 +63,11 @@ run that went through, 1 for one that was refused or stopped early.
 Runs on the VM, with the Claude login in `~/.claude/.credentials.json` (not the API key). The lab
 records the run (`run.yaml` with `stage: modeler`, `playbook.md`, `changes.diff`), builds the image
 (`docker build`), prepares the run's `model/` (the dataset's whole evidence copied in, waiting, plus its
-`user-context.md`), prints the `docker run` command and runs ONE container: the run folder at `/run`,
-the login file, the `MODELER_*` settings. The dataset itself is not mounted. Each session is offered
-the oldest evidence not yet committed, up to the cap, and may read the rest. The container writes
-`model/`, `sessions.jsonl`, `transcripts/` and `replay.json` into the run folder; the lab then
+`user-context.md`), prints the `docker run` command and runs ONE container: the run's `model/` at
+`/model` and `records/` at `/state` (the paths the service will use), the login file, the `MODELER_*`
+settings. The dataset, `run.yaml`, `playbook.md` and `changes.diff` are not mounted. Each session is
+offered the oldest evidence not yet committed, up to the cap, and may read the rest. The container
+commits to `model/` and writes `sessions.jsonl`, `transcripts/` and `replay.json` to `records/`; the lab then
 finishes `run.yaml` (`result.sessions`, `cost_usd`, `stopped`, `not_offered`). Exit 0 if not stopped.
 It refuses a captures dataset, a dataset without `user-context.md`, a missing login file and
 untracked files under `modeler/` (among the watched folders). `observer` in turn refuses an

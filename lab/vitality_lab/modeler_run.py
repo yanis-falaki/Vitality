@@ -1,10 +1,11 @@
 """The modeler stage of a lab run: its settings, the docker commands, and finishing the record.
 
-The host side records the run, prepares its model (the dataset's whole evidence copied in, waiting,
-as the service's model folder holds a backlog), and starts ONE container (`docker run`) that sees
-only the run folder; the replay itself is the modeler's own (`vitality-modeler replay /run`). What
-the container wrote in the run folder (`replay.json`, `sessions.jsonl`) is what `run.yaml` is
-finished from.
+The host side records the run, prepares its `model/` (the dataset's whole evidence copied in,
+waiting, as the service's model folder holds a backlog), and starts ONE container (`docker run`)
+that sees only `model/` at `/model` and `records/` at `/state`, the paths the service will use; the
+replay itself is the modeler's own (`vitality-modeler replay /model /state`). What the container
+wrote in `records/` (`replay.json`, `sessions.jsonl`) is what `run.yaml` is finished from;
+`run.yaml`, `playbook.md` and `changes.diff` are never mounted.
 """
 
 import json
@@ -61,16 +62,17 @@ def docker_build_command(repo: Path) -> list[str]:
     return ["docker", "build", "-f", str(repo / "modeler/Dockerfile"), "-t", IMAGE, str(repo)]
 
 
-def docker_run_command(run: Path, credentials: Path, config: ModelerConfig, uid: int, gid: int) -> list[str]:
-    """The one container: the run folder (holding the prepared model), the login file, the settings.
+def docker_run_command(model: Path, records: Path, credentials: Path, config: ModelerConfig,
+                       uid: int, gid: int) -> list[str]:
+    """The one container: the prepared model at /model, the records folder at /state, the login file, the settings.
 
     No API key is passed: the session uses the owner's Claude login.
     """
     env = [arg for name in SETTINGS for arg in ("-e", f"MODELER_{name.upper()}={getattr(config, name)}")]
     return ["docker", "run", "--rm", "--user", f"{uid}:{gid}",
-            "-v", f"{run}:/run",
+            "-v", f"{model}:/model", "-v", f"{records}:/state",
             "-v", f"{credentials}:{CREDENTIALS_IN_CONTAINER}",
-            *env, IMAGE, "vitality-modeler", "replay", "/run"]
+            *env, IMAGE, "vitality-modeler", "replay", "/model", "/state"]
 
 
 def run_command(command: list[str]) -> int:
@@ -151,22 +153,25 @@ def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Seq
         return give_up(f"docker could not be run: {e}")
     if built != 0:
         return give_up("image build failed")
+    model, records = folder / "model", folder / "records"
     try:
-        prepare(folder_in_lab, folder)
+        prepare(folder_in_lab, model)
+        records.mkdir()
     except (ValueError, OSError) as e:
         return give_up(f"could not prepare the model: {e}")
     try:
-        exit_code = runner(docker_run_command(folder.resolve(), credentials, config, os.getuid(), os.getgid()))
+        exit_code = runner(docker_run_command(model.resolve(), records.resolve(), credentials, config,
+                                              os.getuid(), os.getgid()))
     except OSError as e:
         return give_up(f"docker could not be run: {e}")
     record["container_exit"] = exit_code
 
-    summary = _read_summary(folder)
+    summary = _read_summary(records)
     record["finished"] = now().isoformat(timespec="seconds")
     if summary is None:
         record["stopped"] = "container ended without a summary"
     else:
-        cost = _total_cost(folder / "sessions.jsonl")
+        cost = _total_cost(records / "sessions.jsonl")
         record.update(result={"sessions": summary["sessions"], "cost_usd": round(cost, 4)},
                       stopped=summary["stopped"], not_offered=summary["not_offered"])
         if exit_code != 0 and record["stopped"] is None:

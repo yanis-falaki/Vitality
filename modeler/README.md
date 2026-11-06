@@ -2,7 +2,7 @@
 
 The modeler turns the observer's evidence (operations and observations) into the user model: actions, activities and strivings, written as Markdown files in a git repository. The writing is done by a Claude Code agent. This package is the harness around it: it stages a batch of evidence, runs one session, checks the result with `vitality-usermodel check`, and commits it or reverts it. The design is in `docs/superpowers/specs/2026-11-04-modeler-design.md`.
 
-Milestone 1 is the lab: the host prepares `<run>/model` with a dataset's whole evidence (`vitality_modeler.replay.prepare`), and `vitality-modeler replay <run>` works through it batch by batch, as the service will through a backlog.
+Milestone 1 is the lab: the host prepares `<run>/model` with a dataset's whole evidence (`vitality_modeler.replay.prepare`), and `vitality-modeler replay /model /state` works through it batch by batch in the container, as the service will through a backlog. The container sees the model at `/model` and the records at `/state`, the paths the service will use.
 
 ## The image
 
@@ -15,18 +15,18 @@ The image holds Python 3.14, the `vitality-modeler` and `vitality-usermodel` com
 It runs as any `--user uid:gid` (`/home/modeler` and `/home/modeler/.claude` are mode 1777; git trusts every folder). The lab runs it without Compose:
 
     docker run --rm --user "$(id -u):$(id -g)" \
-      -v <run>:/run \
+      -v <run>/model:/model -v <run>/records:/state \
       -v ~/.claude/.credentials.json:/home/modeler/.claude/.credentials.json \
       -e MODELER_MODEL=... -e MODELER_EFFORT=... \
-      vitality-modeler vitality-modeler replay /run
+      vitality-modeler vitality-modeler replay /model /state
 
 The credentials file is the only thing of the owner's that is mounted. Claude Code may refresh the token in it.
 
-A dataset is a folder with `operations/`, `observations/` (both `<device>/<date>/<time>.md`) and `user-context.md` (who the owner is; it seeds the model). `prepare(dataset, run)` copies all of it into `<run>/model`; the container sees only `<run>`, never the dataset.
+A dataset is a folder with `operations/`, `observations/` (both `<device>/<date>/<time>.md`) and `user-context.md` (who the owner is; it seeds the model). `prepare(dataset, model)` copies all of it into the model folder; the container sees only `/model` and `/state`, never the dataset or the rest of the run folder.
 
 ## What a session does
 
-`prepare` has created `<run>/model`: a git repository with `user-context.md` and `modeler-notes.md` committed, and the dataset's whole evidence untracked. `replay` then repeats until all operations are committed:
+`prepare` has created the model folder: a git repository with `user-context.md` and `modeler-notes.md` committed, and the dataset's whole evidence untracked. `replay` then repeats until all operations are committed:
 
 1. Stage the oldest whole operations files not yet committed (with their observations), up to `MODELER_MAX_OPERATIONS` operations: that is the session's batch. The rest of the evidence stays readable.
 2. Run Claude Code in the model folder, with the playbook appended to its system prompt and only project settings. Its tools are the files, `vitality-usermodel check` and `next-id`, and git. The worktree tools are disallowed (`--disallowedTools EnterWorktree ExitWorktree`) and the playbook forbids worktree isolation, so all work happens in the model folder; a revert also removes nested repositories and prunes worktrees. Sub-agents' text is forwarded into the stream (`--forward-subagent-text`), so the transcript holds it.
@@ -50,9 +50,8 @@ Environment variables; unset or empty keeps the default.
 
 ## Records
 
-In `<run>/`:
+The model folder (`/model`) holds the user model, one commit per successful session. In the records folder (`/state`):
 
-- `model/`: the user model, one commit per successful session.
 - `sessions.jsonl`: one JSON line per session: outcome (`committed`, `reverted`, `failed`, `limited`), operations offered, model, playbook version, attempts, check errors, commit, changes, duration, tokens, cost. Tokens and cost come from the last result's `modelUsage` (all models, sub-agents included; input tokens count cache reads and writes) and `total_cost_usd`. A resumed attempt's result is taken to carry the earlier attempt's totals already, as Claude Code 2.1.309 documents, so the last attempt's totals are recorded, not a sum: to be confirmed on the first real run.
 - `transcripts/<run>.jsonl`: the session's full stream.
 - `replay.json`: sessions per outcome, why the replay stopped (`null` if all was committed), and the interactions never committed.
@@ -67,12 +66,12 @@ To iterate: run a replay, read the model and the transcripts, edit `playbook.md`
 
 ## Isolation probe
 
-This checks that a Claude Code session in the container sees none of the owner's own setup or files. It runs a real session, so the owner runs it on the VM (not the agent). It mounts only the credentials file and an empty folder as `/run`, and starts in an empty model folder.
+This checks that a Claude Code session in the container sees none of the owner's own setup or files. It runs a real session, so the owner runs it on the VM (not the agent). It mounts only the credentials file and an empty folder as `/model`, and starts in it.
 
     mkdir -p /tmp/probe-run/model
     docker run --rm -v ~/.claude/.credentials.json:/home/modeler/.claude/.credentials.json \
-      -v /tmp/probe-run:/run -v "$PWD/modeler/probe.md":/probe.md:ro \
-      -w /run/model --user "$(id -u):$(id -g)" vitality-modeler \
+      -v /tmp/probe-model:/model -v "$PWD/modeler/probe.md":/probe.md:ro \
+      -w /model --user "$(id -u):$(id -g)" vitality-modeler \
       sh -c 'claude -p "$(cat /probe.md)" --setting-sources project --strict-mcp-config --permission-mode bypassPermissions'
 
 (Run from the repository root; `probe.md` is the run message.)
@@ -80,7 +79,7 @@ This checks that a Claude Code session in the container sees none of the owner's
 What to look for in the answer:
 
 - No memory or CLAUDE.md files, no plugins, no MCP servers. Skills and tools only the built-in ones.
-- Working directory `/run/model`, empty.
+- Working directory `/model`, empty.
 - `/home/modeler/.claude` holds `.credentials.json` and nothing of the owner's (a session may create its own cache files there; that is fine).
 - `/etc/hostname` is the container's, and nothing under `/` looks like the owner's files.
 - The usage-limit text, if it knows it (the harness recognizes a limited session by the stream's typed error, or else by this text; see `claude.py`).
