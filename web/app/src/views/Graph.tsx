@@ -5,8 +5,6 @@
 // inspector; hovering highlights its neighbours; the search box jumps to a node. Strivings and
 // activities are always labelled, actions once zoomed in, never overlapping (Sigma's label grid).
 import Graph from "graphology";
-import { circular } from "graphology-layout";
-import forceAtlas2 from "graphology-layout-forceatlas2";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sigma from "sigma";
 import type { NodeLabelDrawingFunction } from "sigma/rendering";
@@ -17,6 +15,7 @@ import { clock, short } from "../lib/format";
 import { LEVEL, type Kind, type Model } from "../lib/model";
 import { useSelection } from "../lib/selection";
 import "./graph.css";
+import type { LayoutReply, LayoutRequest } from "./layout.worker";
 
 interface NodeAttrs { key: string; kind: Kind; label: string; size: number; color: string; x: number; y: number; tentative: boolean }
 interface EdgeAttrs { size: number; color: string }
@@ -31,20 +30,23 @@ function GraphPage({ model }: { model: Model }) {
   const [evidence, setEvidence] = useState(false);
   const [query, setQuery] = useState("");
   const { select } = useSelection();
-  // The model's layout is computed once; "+ Evidence" only adds dots around their actions, so the
-  // toggle is instant and nothing already on screen moves.
-  const layout = useMemo(() => layoutModel(model), [model]);
-  const graph = useMemo(() => buildGraph(model, evidence, layout), [model, evidence, layout]);
+  // Layouts come from a worker; until the evidence's is ready, the model stays on screen with a note.
+  const layouts = useLayouts(model);
+  const showing = evidence && layouts.evidence ? "evidence" : "model";
+  const layout = showing === "evidence" ? layouts.evidence : layouts.model;
+  const graph = useMemo(() => (layout ? buildGraph(model, showing === "evidence", layout) : null), [model, showing, layout]);
+  const arranging = !graph ? "Arranging the graph…" : evidence && !layouts.evidence ? "Arranging the evidence…" : null;
   return (
     <ViewFrame model={model} empty="Click a node to see what the model believes, and why.">
       <div className="graph-stage">
-        <Network graph={graph} query={query} />
+        {graph && <Network graph={graph} query={query} />}
+        {arranging && <div className="graph-arranging" role="status"><i className="spinner" aria-hidden />{arranging}</div>}
         <div className="graph-tools">
           <div className="graph-search">
             <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
               placeholder="Search the model…" aria-label="Search the model (Enter jumps to the first match)"
               onKeyDown={(e) => {
-                if (e.key === "Enter") { jump(graph, query, select); setQuery(""); }
+                if (e.key === "Enter" && graph) { jump(graph, query, select); setQuery(""); }
               }} />
           </div>
           <div className="seg" role="group" aria-label="What to show">
@@ -52,7 +54,7 @@ function GraphPage({ model }: { model: Model }) {
             <button type="button" className={evidence ? "on" : ""} onClick={() => setEvidence(true)}>+ Evidence</button>
           </div>
         </div>
-        <Legend graph={graph} />
+        {graph && <Legend graph={graph} />}
       </div>
     </ViewFrame>
   );
@@ -156,46 +158,29 @@ function Legend({ graph }: { graph: Graph<NodeAttrs, EdgeAttrs> }) {
 
 type Layout = Map<string, { x: number; y: number }>;
 
-// Positions of the strivings, activities and actions: ForceAtlas2 from a circle (deterministic).
-function layoutModel(model: Model): Layout {
-  const graph = buildGraph(model, false, null);
-  circular.assign(graph, { scale: 100 });
-  const settings = forceAtlas2.inferSettings(graph);
-  forceAtlas2.assign(graph, {
-    iterations: 600,
-    settings: { ...settings, gravity: 1.2, scalingRatio: 14, barnesHutOptimize: false, adjustSizes: false },
-  });
-  const layout: Layout = new Map();
-  graph.forEachNode((n, a) => layout.set(n, { x: a.x, y: a.y }));
-  return layout;
-}
-
-// Each action's evidence fans out on a small arc beyond the action, pointing away from its activity.
-function placeEvidence(graph: Graph<NodeAttrs, EdgeAttrs>, model: Model) {
-  const at = (id: string) => ({ x: graph.getNodeAttribute(id, "x"), y: graph.getNodeAttribute(id, "y") });
-  const reach: number[] = [];
-  for (const a of model.actions) {
-    const parent = a.part_of.find((x) => graph.hasNode(x));
-    if (parent) { const p = at(parent), q = at(a.id); reach.push(Math.hypot(q.x - p.x, q.y - p.y)); }
-  }
-  reach.sort((a, b) => a - b);
-  const radius = (reach[Math.floor(reach.length / 2)] ?? 10) * 0.32;
-  const placed = new Set<string>();
-  for (const a of model.actions) {
-    const mine = model.interactionsOf(a).filter((i) => graph.hasNode(i) && !placed.has(i));
-    if (!mine.length) continue;
-    const q = at(a.id);
-    const parent = a.part_of.find((x) => graph.hasNode(x));
-    const p = parent ? at(parent) : { x: 0, y: 0 };
-    const base = Math.atan2(q.y - p.y, q.x - p.x);
-    const spread = Math.min(Math.PI * 0.9, 0.35 * mine.length);
-    mine.forEach((i, k) => {
-      const angle = base + (mine.length > 1 ? (k / (mine.length - 1) - 0.5) * spread : 0);
-      const r = radius * (1 + 0.12 * (k % 2));
-      graph.mergeNodeAttributes(i, { x: q.x + Math.cos(angle) * r, y: q.y + Math.sin(angle) * r });
-      placed.add(i);
-    });
-  }
+/** The layout of the model with or without its evidence, computed in a worker (null until ready).
+ * Both are started when the view opens, the model first, and kept for as long as the model is. */
+function useLayouts(model: Model): { model: Layout | null; evidence: Layout | null } {
+  const [layouts, setLayouts] = useState<{ model: Layout | null; evidence: Layout | null }>({ model: null, evidence: null });
+  useEffect(() => {
+    setLayouts({ model: null, evidence: null });
+    const workers: Worker[] = [];
+    const run = (evidence: boolean) => {
+      const worker = new Worker(new URL("./layout.worker.ts", import.meta.url), { type: "module" });
+      workers.push(worker);
+      worker.onmessage = (event: MessageEvent<LayoutReply>) => {
+        const layout: Layout = new Map(Object.entries(event.data));
+        setLayouts((now) => (evidence ? { ...now, evidence: layout } : { ...now, model: layout }));
+        worker.terminate();
+      };
+      const request: LayoutRequest = { graph: buildGraph(model, evidence, null).export(), scalingRatio: evidence ? 6 : 14 };
+      worker.postMessage(request);
+    };
+    run(false);
+    run(true);
+    return () => workers.forEach((w) => w.terminate());
+  }, [model]);
+  return layouts;
 }
 
 function buildGraph(model: Model, evidence: boolean, layout: Layout | null): Graph<NodeAttrs, EdgeAttrs> {
@@ -232,10 +217,7 @@ function buildGraph(model: Model, evidence: boolean, layout: Layout | null): Gra
       }
     }
   }
-  if (layout) {
-    graph.forEachNode((n) => { const at = layout.get(n); if (at) graph.mergeNodeAttributes(n, at); });
-    if (evidence) placeEvidence(graph, model);
-  }
+  if (layout) graph.forEachNode((n) => { const at = layout.get(n); if (at) graph.mergeNodeAttributes(n, at); });
   return graph;
 }
 
