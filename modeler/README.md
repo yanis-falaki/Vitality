@@ -84,6 +84,6 @@ What to look for in the answer:
 - `/etc/hostname` is the container's, and nothing under `/` looks like the owner's files.
 - The usage-limit text, if it knows it (the harness recognizes a limited session by the stream's typed error, or else by this text; see `claude.py`).
 
-Result: not yet run
+Result (2026-11-06, Claude Code 2.1.309, on the VM): passed. The login worked with only the credentials file mounted (no `~/.claude.json` needed). No user or project `CLAUDE.md`, no settings, no third-party plugins, no MCP servers; only Claude Code's built-in skills and the Team organization's managed settings (`remote-settings.json`, `policy-limits.json`, fetched at login). Nothing of the owner's was readable. The usage-limit text was unknown, as expected. The owner's own Claude Code on the VM still worked afterwards.
 
 Afterwards, check that the owner's own Claude Code on the VM still works (`claude -p hi`): the mounted credentials file may have been refreshed by the container's session.
