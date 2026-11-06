@@ -1,0 +1,67 @@
+/* Cards: layout only; colours and type come from theme.css. */
+.cards-stage {
+  position: absolute; inset: 0; overflow: hidden; cursor: grab; user-select: none; touch-action: none;
+  background: radial-gradient(circle, var(--line) 1px, transparent 1.2px) 0 0 / 22px 22px, var(--bg);
+}
+.cards-stage:active { cursor: grabbing; }
+.cards-tree {
+  position: absolute; left: 0; top: 0; display: flex; gap: 44px; align-items: flex-start;
+  padding: 72px 48px 160px; width: max-content; transform-origin: 0 0;
+}
+.cards-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.cards-link { fill: none; stroke: var(--striving); stroke-opacity: 0.6; stroke-width: 1.6; }
+.cards-link.second { stroke-opacity: 0.4; stroke-dasharray: 5 5; }
+.cards-link.none { stroke: var(--line-2); stroke-opacity: 1; stroke-dasharray: 5 5; }
+
+.cards-group { display: flex; flex-direction: column; align-items: center; gap: 56px; }
+.cards-activities { display: flex; gap: 20px; align-items: flex-start; }
+.cards-column { display: flex; flex-direction: column; align-items: center; }
+.cards-none {
+  font: 600 var(--text-xs) var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
+  border: 1.5px dashed var(--line-2); border-radius: var(--r-pill); padding: 7px 15px; background: var(--bg);
+}
+.cards-empty { font-size: var(--text-sm); color: var(--ink-3); padding: var(--s3); }
+
+.card {
+  display: flex; flex-direction: column; gap: 6px; width: 240px; text-align: left; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px 10px;
+  box-shadow: var(--shadow); font-size: 13px; transition: box-shadow 0.15s, border-color 0.15s;
+}
+.card:hover { box-shadow: var(--shadow-lift); }
+.card.sel { border-color: var(--ink-2); box-shadow: 0 0 0 3px var(--select), var(--shadow); }
+.card-striving { width: 300px; border-top: 3px solid var(--striving); padding-top: 14px; }
+.card-activity { border-top: 3px solid var(--activity); }
+.card-activity.tentative { border-top-style: dashed; }
+.card-title { font-weight: 600; line-height: 1.36; letter-spacing: -0.005em; color: var(--ink); }
+.card-striving .card-title { font-size: 15px; }
+.card-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-top: 4px; font-size: 11.5px; color: var(--ink-3); }
+.card-expand {
+  border: 0; background: var(--hover); border-radius: var(--r-sm); font-size: 11.5px; font-weight: 500;
+  color: var(--ink-2); padding: 4px 9px; cursor: pointer;
+}
+.card-expand:hover { background: var(--select); color: var(--ink); }
+
+.cards-actions { margin-top: 14px; display: flex; flex-direction: column; gap: 5px; width: 240px; position: relative; }
+.cards-actions::before { content: ""; position: absolute; left: 12px; top: -14px; bottom: 12px; width: 1.5px; background: var(--line-2); }
+.cards-day { font: 600 10.5px var(--sans); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin: 8px 0 0 28px; }
+.card-action {
+  margin-left: 24px; text-align: left; cursor: pointer; position: relative; font-size: 12px; line-height: 1.38; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--action); border-radius: 7px; padding: 6px 9px;
+}
+.card-action::before { content: ""; position: absolute; left: -15px; top: 50%; width: 11px; height: 1.5px; background: var(--line-2); }
+.card-action:hover { background: var(--hover); }
+.card-action.sel { box-shadow: 0 0 0 2px var(--ink-2); }
+.card-action .time { display: block; min-width: 0; font-size: 10.5px; padding-bottom: 2px; }
+
+.cards-tools { position: absolute; left: var(--s4); top: var(--s4); }
+.cards-tools .seg { box-shadow: var(--shadow); }
+.cards-zoom {
+  position: absolute; right: var(--s4); bottom: var(--s4); display: flex; gap: 2px; padding: 3px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: var(--shadow);
+}
+.cards-zoom button { width: 32px; height: 30px; border: 0; background: none; border-radius: 4px; cursor: pointer; color: var(--ink-2); font-size: 15px; }
+.cards-zoom button:hover { background: var(--hover); color: var(--ink); }
+@media (pointer: coarse) {
+  .cards-zoom button { width: var(--touch); height: var(--touch); }
+  .card-expand { min-height: 32px; }
+}
