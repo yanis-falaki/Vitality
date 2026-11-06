@@ -51,6 +51,18 @@ def foreign_changes(model: Path) -> list[str]:
     return found
 
 
+def waiting(model: Path) -> dict[str, int]:
+    """The untracked operations files (repo-relative path -> how many operations it holds): the evidence waiting."""
+    found: dict[str, int] = {}
+    listed = _git(model, "ls-files", "--others", "--exclude-standard", "-z", "--", "operations").split("\0")
+    for path in filter(None, listed):
+        if path.endswith(".md"):
+            meta, _ = read_file(model / path, "operations")
+            assert isinstance(meta, OperationsMeta)
+            found[path] = len(meta.operations)
+    return found
+
+
 def choose_batch(model: Path, max_operations: int) -> Offered | None:
     """The oldest untracked operations files, whole, while their operations total at most `max_operations`.
 
