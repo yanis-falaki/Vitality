@@ -4,3 +4,5 @@
 .superpowers
 docs
 .env
+web/app/node_modules
+web/app/dist

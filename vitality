@@ -3,8 +3,9 @@
 # the folder it lives in.
 #
 #   ./vitality setup            create .env, the data folders and the model repo; check the logins
-#   ./vitality status           containers, then the server's, the observer's and the modeler's status
-#   ./vitality logs [service]   follow the logs (service: server, observer or modeler; default: all)
+#   ./vitality status           containers, then the server's, the observer's and the modeler's status,
+#                               and the web app's address
+#   ./vitality logs [service]   follow the logs (service: server, observer, modeler or web; default: all)
 #   ./vitality upgrade          fast-forward to the newest main, then rebuild and restart
 #   ./vitality lab <args>       run vitality-lab (lab/README.md) with the settings from .env
 #
@@ -126,18 +127,21 @@ and run ./vitality setup again."
     fi
 }
 
-# Show the containers, then what the server and the observer say; carry on past a failing part.
+# Show the containers, then what the server, the observer and the modeler say, then where the web
+# app is; carry on past a failing part.
 cmd_status() {
-    local failed=0
+    local failed=0 port
     run docker compose ps || failed=1
     run docker compose run --rm --no-deps server vitality-server status || failed=1
     run docker compose run --rm --no-deps observer vitality-observer status || failed=1
     run docker compose run --rm --no-deps modeler vitality-modeler status || failed=1
+    port="${WEB_PORT:-$(env_file_value WEB_PORT)}"
+    echo "web: https://vitality-librarian.exe.xyz:${port:-4000}/ (private: only you, through exe.dev's proxy)"
     echo "data: $(data_dir)"
     return "$failed"
 }
 
-# Follow the logs of both services, or of the one named.
+# Follow the logs of every service, or of the one named.
 cmd_logs() {
     run docker compose logs -f "$@"
 }
@@ -191,8 +195,8 @@ usage() {
 usage: ./vitality <command>
 
   setup             create .env, the data folders and the model repo; check the logins
-  status            containers, then the server's, the observer's and the modeler's status
-  logs [service]    follow the logs (service: server, observer or modeler; default: all)
+  status            containers, then the server's, the observer's and the modeler's status, and the web app's address
+  logs [service]    follow the logs (service: server, observer, modeler or web; default: all)
   upgrade           fast-forward to the newest main, then rebuild and restart
   lab <args>        run vitality-lab with the settings from .env (see lab/README.md)
 EOF

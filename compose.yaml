@@ -1,10 +1,10 @@
-# Vitality: the two long-running services, built from this checkout.
-#   docker compose up -d --build     start (or update) both
+# Vitality: the long-running services, built from this checkout.
+#   docker compose up -d --build     start (or update) them all
 #   docker compose ps                state and health
 #   docker compose logs -f server    follow one service's log
 # Settings come from .env (copy .env.example); see it for what each one does.
 
-# Options both services share: they run as the data folder's owner and are locked down
+# Options every service shares: they run as the data folder's owner and are locked down
 # (the systemd sandbox of the old install, as container settings).
 x-common: &common
   # Not root: files written to the data folder belong to the owner (VITALITY_UID:VITALITY_GID).
@@ -161,3 +161,47 @@ services:
         bind: {create_host_path: false}
       # Timestamps in the host's time zone.
       - /etc/localtime:/etc/localtime:ro
+
+  # The private web app for reading the model: read-only, on WEB_PORT. exe.dev's private proxy
+  # (https://vitality-librarian.exe.xyz:4000/) is its access control; it has no login of its own.
+  web:
+    <<: *common
+    image: vitality-web
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    command: ["vitality-web", "serve"]
+    ports:
+      - "${WEB_PORT:-4000}:4000"
+    environment:
+      # The port inside the container; the host's port is WEB_PORT (above).
+      WEB_PORT: "4000"
+    # As for the others: a missing source folder is an error, never created by Docker. Every mount
+    # is read-only: the app never writes to the model, the modeler's records or the captures.
+    volumes:
+      # The model repo: its files, and git to tell the operations waiting.
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/model
+        target: /model
+        read_only: true
+        bind: {create_host_path: false}
+      # The modeler's records: status.json, sessions.jsonl, the scheduler's lock.
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/modeler
+        target: /state
+        read_only: true
+        bind: {create_host_path: false}
+      # The screenshots the evidence shows.
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/server/captures
+        target: /captures
+        read_only: true
+        bind: {create_host_path: false}
+      # Log timestamps in the host's time zone.
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD", "vitality-web", "healthcheck"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 15s
