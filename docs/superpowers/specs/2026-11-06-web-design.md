@@ -136,3 +136,43 @@ Reference mockups (behaviour and look; take the ideas, not the code), in the hub
 4. Day, then Compose, `./vitality`, docs.
 
 The owner looks after step 1 is deployed on the VM, and again at the end; merge to `main` on their word.
+
+## 10. Growing over time
+
+The model grows by about 20 actions and 150–200 interactions a captured day. The app was tuned on a
+week; at about four months (`web/tests/fixture_large.py`: 6 strivings, 25 activities, ~1,800
+actions over ~90 days, ~12,000 interactions) every view stays calm and the look is unchanged:
+
+- **Day:** the row of day tabs is replaced by `‹ <day> ›` arrows (previous and next days with
+  actions; also the ← and → keys) and a calendar button: a month page (months from the first to the
+  last with actions) whose days with actions are tinted in three soft steps of the action colour
+  and can be picked. Lane colours stay distinct within a day (an activity keeps its colour unless
+  another of that day's activities has it).
+- **Long lists of actions** (Reader page, inspector, Cards): up to 20 stay flat by day; longer,
+  grouped by month, then by week, newest first, all collapsed but the latest (and the one holding
+  the selection), titled "212 actions since Oct 21". Cards' "+ Actions" therefore shows only each
+  activity's latest week.
+- **Reader's "when"**: a calendar heatmap (a cell per day of the model, a column per week, month
+  names above), shaded in four soft steps of the page's level colour (`--striving-1…4`,
+  `--activity-1…4` in the theme); a day with actions opens Day. It scrolls sideways inside itself
+  when longer than the page, starting at the latest weeks.
+- **Outline and Cards:** strivings fold in the outline; activities are ordered by `last_seen`,
+  newest first; those last seen over 30 days before the model's last day go behind a quiet
+  "Older · n" toggle in the outline (per striving), and are quieter cards in Cards and on a
+  striving's page.
+- **Graph:** a time range, All (default) / Last 30 days / Last 7 days, relative to the model's last
+  day: strivings and activities always, actions and evidence only in range. Each (range, evidence)
+  is laid out once, when first shown, in a worker (ids and edges sent, not the serialized graph);
+  over 1,000 nodes ForceAtlas2 uses Barnes–Hut and 300 (over 3,000 nodes, 200) iterations. A range
+  with more than 5,000 interactions shows the model with "Too much evidence for this range — pick a
+  shorter range or select an action", and the selected action's own evidence on a ring around it.
+  Crowded graphs draw smaller action and evidence dots. Measured on the hub (headless Chromium):
+  last 7 days with evidence (~1,000 nodes) 1.0 s, last 30 days (~4,100 nodes) 3.1 s, the worst frame
+  while arranging 17 ms; mounting the finished 4,000-node graph takes one ~0.4 s frame.
+- **API:** `/api/model` no longer carries action bodies, operations or interaction summaries
+  (actions list the interactions they cite by name); `GET /api/actions/{id}` gives an action's body
+  and operations, `GET /api/interactions?from=&to=` the summaries of a range of days. The assembled
+  model is cached on the (path, mtime, size) of every file behind it, checked at most every 2 s,
+  sent gzipped with an ETag (a refetch of an unchanged model is a 304), and read once in the
+  background on start. At four months: 96 KB gzipped (730 KB plain), ~0.1 s per check, cold start
+  ~12 s (parsing YAML; `vitality_usermodel.formats` with libyaml's `CSafeLoader` would be ~7× faster).
