@@ -25,7 +25,7 @@ from vitality_usermodel.formats import write_text_atomic
 from vitality_modeler import repo
 from vitality_modeler.config import ModelerConfig
 from vitality_modeler.playbook import PLAYBOOK, PLAYBOOK_VERSION
-from vitality_modeler.session import run_session
+from vitality_modeler.session import SessionRecord, run_session, session_line
 
 CHECK_SECONDS = 30
 TRIGGER_OPERATIONS = 20
@@ -120,6 +120,8 @@ class Scheduler:
             return CHECK_SECONDS
 
         self._write("running")
+        self._log(f"session starting: {total} operations waiting (trigger: {trigger})")
+        record: _Outcome | None = None
         write_text_atomic(self._state / "session.json", json.dumps({"start": repo.head(self._model)}) + "\n")
         try:
             record = self._session(self._model, self._state, self._config, PLAYBOOK, PLAYBOOK_VERSION,
@@ -136,6 +138,10 @@ class Scheduler:
             self._log(f"session crashed: {type(error).__name__}: {error}")
             outcome = "failed"
         (self._state / "session.json").unlink(missing_ok=True)  # the harness committed or reverted it
+        if isinstance(record, SessionRecord):
+            self._log(session_line(record))
+        elif outcome is not None:
+            self._log(f"session {outcome}")
         if outcome is None:
             self._write("idle")
             return CHECK_SECONDS

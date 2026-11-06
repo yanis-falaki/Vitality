@@ -24,7 +24,7 @@ from typing import Any
 from vitality_modeler import repo
 from vitality_modeler.config import ModelerConfig
 from vitality_modeler.playbook import PLAYBOOK, PLAYBOOK_VERSION
-from vitality_modeler.session import SessionRecord, run_session
+from vitality_modeler.session import SessionRecord, run_session, session_line
 from vitality_usermodel.formats import OperationsMeta, read_file
 
 MODELER_NOTES_TEMPLATE = (
@@ -99,7 +99,7 @@ def replay(model: Path, state: Path, config: ModelerConfig, *, captures: str | N
                                  captures=captures, claude=claude, environ=environ)
             if record is None:
                 break
-            _progress(_session_line(record))
+            _progress(session_line(record))
             if record.outcome == "limited":
                 stopped = "usage limit reached"
                 break
@@ -117,14 +117,6 @@ def replay(model: Path, state: Path, config: ModelerConfig, *, captures: str | N
 
 def _progress(line: str) -> None:
     print(f"vitality-modeler: {line}", file=sys.stderr, flush=True)
-
-
-def _session_line(record: SessionRecord) -> str:
-    # "session <run>: <n> operations (<first> .. <last>), <outcome>, <seconds>s, $<cost>"
-    ops = record.operations
-    cost = "cost unknown" if record.cost is None else f"${record.cost:.2f}"
-    return (f"session {record.run}: {ops['count']} operations ({ops['from']} .. {ops['to']}), "
-            f"{record.outcome}, {record.duration_ms / 1000:.0f}s, {cost}")
 
 
 def _operations_files(folder: Path) -> list[_Evidence]:

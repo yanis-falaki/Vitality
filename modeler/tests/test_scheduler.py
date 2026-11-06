@@ -287,3 +287,11 @@ def test_owner_edit_racing_a_session_is_not_a_failure(model: Path, state: Path):
     assert not s.paused
     assert status(state)["state"] == "waiting-edits"
     assert (model / "user-context.md").read_text() == "edited just now\n"  # the owner's edit is kept
+
+
+def test_logs_each_session_start_and_end(model: Path, state: Path):
+    evidence(model, 4, ops=5)
+    logs: list[str] = []
+    scheduler(model, state, Session("committed"), Clock(), logs).step()
+    assert logs[0] == "session starting: 20 operations waiting (trigger: 20 operations)"
+    assert logs[1].startswith("session ") and "committed" in logs[1]

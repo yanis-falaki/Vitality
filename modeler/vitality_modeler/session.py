@@ -276,3 +276,12 @@ def _iso(moment: datetime) -> str:
 
 def _latest[N: (int, float)](earlier: N | None, later: N | None) -> N | None:
     return earlier if later is None else later
+
+
+def session_line(record: SessionRecord) -> str:
+    """One line about a finished session, for progress logs (the lab's replay and the service)."""
+    # "session <run>: <n> operations (<first> .. <last>), <outcome>, <seconds>s, $<cost>"
+    ops = record.operations
+    cost = "cost unknown" if record.cost is None else f"${record.cost:.2f}"
+    return (f"session {record.run}: {ops['count']} operations ({ops['from']} .. {ops['to']}), "
+            f"{record.outcome}, {record.duration_ms / 1000:.0f}s, {cost}")
