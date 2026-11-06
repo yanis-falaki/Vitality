@@ -9,7 +9,7 @@ import pytest
 from conftest import add_evidence
 from vitality_modeler import repo
 from vitality_modeler.config import ModelerConfig
-from vitality_modeler.scheduler import IDLE_SECONDS, LIMIT_WAIT_SECONDS, Scheduler
+from vitality_modeler.scheduler import IDLE_SECONDS, LIMIT_WAIT_SECONDS, MAX_WAIT_SECONDS, Scheduler
 
 T0 = datetime(2026, 11, 6, 14, 0, tzinfo=timezone(timedelta(hours=-5)))
 
@@ -42,17 +42,19 @@ class Clock:
 
 
 class Session:
-    """Plays the given outcomes in order (then the last again); `committed` commits all waiting evidence."""
+    """Plays the given outcomes in order (then the last again); `committed` commits the waiting
+    evidence, the oldest `files` files of it if given (a batch cap)."""
 
-    def __init__(self, *outcomes: str, during: Any = None) -> None:
+    def __init__(self, *outcomes: str, during: Any = None, files: int | None = None) -> None:
         self.outcomes = list(outcomes) or ["committed"]
         self.calls: list[dict[str, Any]] = []
         self.during = during
+        self.files = files
 
     def __call__(self, model: Path, state: Path, config: ModelerConfig, playbook: str, version: str,
                  **kwargs: Any) -> Record:
         self.calls.append(kwargs)
-        batch = list(repo.waiting(model))  # like the real harness, commit only what was offered
+        batch = sorted(repo.waiting(model))[:self.files]  # like the real harness, commit only what was offered
         if self.during is not None:
             self.during()
         outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
@@ -81,6 +83,12 @@ def evidence(model: Path, n: int, ops: int = 1, hour: int = 9) -> None:
         add_evidence(model, f"laptop/2026-11-06/{hour + 5:02d}-{i:02d}-00", f"2026-11-06T{hour:02d}:{i:02d}:00-05:00", ops)
 
 
+def ripe(s: Scheduler, clock: Clock) -> None:
+    """Let the scheduler see the waiting evidence, then a quiet stretch: the next step runs a session."""
+    s.step()
+    clock.sleep(IDLE_SECONDS)
+
+
 def status(state: Path) -> dict[str, Any]:
     return json.loads((state / "status.json").read_text())
 
@@ -101,15 +109,31 @@ def test_waits_below_trigger(model: Path, state: Path):
     assert status(state)["state"] == "idle"
 
 
-def test_triggers_at_20(model: Path, state: Path):
-    evidence(model, 4, ops=5)
+def test_many_operations_alone_do_not_trigger(model: Path, state: Path):
+    evidence(model, 40, ops=5)
     session, clock = Session(), Clock()
-    scheduler(model, state, session, clock).step()
-    assert [c["trigger"] for c in session.calls] == ["20 operations"]
+    s = scheduler(model, state, session, clock)
+    for _ in range(5):
+        clock.sleep(s.step())
+    assert session.calls == []
+
+
+def test_long_sitting_runs_after_max_wait(model: Path, state: Path):
+    session, clock = Session(), Clock()
+    s = scheduler(model, state, session, clock)
+    minute = 0
+    while not session.calls:  # a new file every 10 minutes: never quiet for IDLE_SECONDS
+        if clock.t >= minute * 60:
+            add_evidence(model, f"laptop/2026-11-06/{14 + minute // 60:02d}-{minute % 60:02d}-00",
+                         f"2026-11-06T{9 + minute // 60:02d}:{minute % 60:02d}:00-05:00", 1)
+            minute += 10
+        clock.sleep(s.step())
+    assert session.calls[0]["trigger"] == "max wait"
     assert session.calls[0]["captures"] == "/captures"
+    assert MAX_WAIT_SECONDS <= clock.t < MAX_WAIT_SECONDS + 60
 
 
-def test_idle_trigger_after_5_minutes(model: Path, state: Path):
+def test_idle_trigger_after_quiet_stretch(model: Path, state: Path):
     evidence(model, 3)
     session, clock = Session(), Clock()
     s = scheduler(model, state, session, clock)
@@ -137,21 +161,40 @@ def test_new_file_restarts_idle_timer(model: Path, state: Path):
     assert clock.t >= 240 + IDLE_SECONDS
 
 
-def test_continues_after_commit(model: Path, state: Path):
+def test_continues_at_once_on_what_a_capped_batch_left(model: Path, state: Path):
     evidence(model, 4, ops=5)
-    session, clock = Session(), Clock()
+    session, clock = Session(files=2), Clock()
     s = scheduler(model, state, session, clock)
+    ripe(s, clock)
     assert s.step() == 0
-    evidence(model, 4, ops=5, hour=11)
     assert s.step() == 0
-    assert len(session.calls) == 2
+    assert [c["trigger"] for c in session.calls] == ["idle", "backlog"]
+    assert repo.waiting(model) == {}
+
+
+def test_evidence_arriving_during_a_session_waits_for_quiet(model: Path, state: Path):
+    evidence(model, 4, ops=5)
+
+    def arrive() -> None:
+        add_evidence(model, "laptop/2026-11-06/18-00-00", "2026-11-06T13:00:00-05:00", 2)
+
+    session, clock = Session(during=arrive), Clock()
+    s = scheduler(model, state, session, clock)
+    ripe(s, clock)
+    s.step()
+    start = clock.t
+    while len(session.calls) < 2:
+        clock.sleep(s.step())
+    assert clock.t - start >= IDLE_SECONDS
 
 
 def test_pauses_after_3_failures(model: Path, state: Path):
     evidence(model, 4, ops=5)
     session, clock = Session("failed", "reverted", "failed", "committed"), Clock()
     logs: list[str] = []
-    assert scheduler(model, state, session, clock, logs).run() == 1
+    s = scheduler(model, state, session, clock, logs)
+    ripe(s, clock)
+    assert s.run() == 1
     assert len(session.calls) == 3
     assert status(state)["state"] == "paused"
     assert any("paused" in line for line in logs)
@@ -161,7 +204,9 @@ def test_session_exception_counts_as_failure(model: Path, state: Path):
     evidence(model, 4, ops=5)
     session, clock = Session("crash"), Clock()
     logs: list[str] = []
-    assert scheduler(model, state, session, clock, logs).run() == 1
+    s = scheduler(model, state, session, clock, logs)
+    ripe(s, clock)
+    assert s.run() == 1
     assert len(session.calls) == 3
     assert any("RuntimeError: boom" in line for line in logs)
 
@@ -170,15 +215,18 @@ def test_limited_waits_an_hour(model: Path, state: Path):
     evidence(model, 4, ops=5)
     session, clock = Session("limited", "committed"), Clock()
     s = scheduler(model, state, session, clock)
+    ripe(s, clock)
+    start = clock.t
     clock.sleep(s.step())
     assert status(state)["state"] == "waiting-limit"
-    assert status(state)["until"] == (T0 + timedelta(seconds=LIMIT_WAIT_SECONDS)).isoformat(timespec="seconds")
-    while clock.t < LIMIT_WAIT_SECONDS - 1:
+    until = T0 + timedelta(seconds=start + LIMIT_WAIT_SECONDS)
+    assert status(state)["until"] == until.isoformat(timespec="seconds")
+    while clock.t < start + LIMIT_WAIT_SECONDS - 1:
         clock.sleep(s.step())
     assert len(session.calls) == 1
     while len(session.calls) < 2:
         clock.sleep(s.step())
-    assert clock.t >= LIMIT_WAIT_SECONDS
+    assert clock.t >= start + LIMIT_WAIT_SECONDS
 
 
 def test_waits_while_owner_edits(model: Path, state: Path):
@@ -193,6 +241,7 @@ def test_waits_while_owner_edits(model: Path, state: Path):
     assert status(state)["state"] == "waiting-edits"
     assert sum("uncommitted" in line for line in logs) == 1
     git(model, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "edit")
+    ripe(s, clock)
     s.step()
     assert len(session.calls) == 1
 
@@ -225,6 +274,7 @@ def test_evidence_during_session_waits(model: Path, state: Path):
 
     session, clock = Session(during=arrive), Clock()
     s = scheduler(model, state, session, clock)
+    ripe(s, clock)
     s.step()
     assert repo.waiting(model) == {"operations/laptop/2026-11-06/18-00-00.md": 2}
 
@@ -245,7 +295,10 @@ def test_keyboard_interrupt_writes_idle(model: Path, state: Path):
 def test_status_idle_after_a_failed_session(model: Path, state: Path):
     evidence(model, 4, ops=5)
     session, clock = Session("failed"), Clock()
-    scheduler(model, state, session, clock).step()
+    s = scheduler(model, state, session, clock)
+    ripe(s, clock)
+    s.step()
+    assert len(session.calls) == 1
     assert status(state)["state"] == "idle"
 
 
@@ -260,8 +313,10 @@ def test_recovers_a_killed_session_on_start(model: Path, state: Path):
     (state / "session.json").write_text(json.dumps({"start": start}))  # a session was killed mid-way
     clock = Clock()
 
-    def stop(seconds: float) -> None:
-        raise KeyboardInterrupt
+    def stop(seconds: float) -> None:  # run until the first session is over
+        if session.calls:
+            raise KeyboardInterrupt
+        clock.sleep(seconds)
 
     session = Session()
     s = Scheduler(model, state, ModelerConfig(), session=session, clock=clock, now=clock.now, sleep=stop,
@@ -282,6 +337,7 @@ def test_owner_edit_racing_a_session_is_not_a_failure(model: Path, state: Path):
     clock = Clock()
     s = Scheduler(model, state, ModelerConfig(), session=refuse, clock=clock, now=clock.now, sleep=clock.sleep,
                   log=lambda line: None)
+    ripe(s, clock)
     for _ in range(5):
         clock.sleep(s.step())
     assert not s.paused
@@ -292,6 +348,9 @@ def test_owner_edit_racing_a_session_is_not_a_failure(model: Path, state: Path):
 def test_logs_each_session_start_and_end(model: Path, state: Path):
     evidence(model, 4, ops=5)
     logs: list[str] = []
-    scheduler(model, state, Session("committed"), Clock(), logs).step()
-    assert logs[0] == "session starting: 20 operations waiting (trigger: 20 operations)"
+    clock = Clock()
+    s = scheduler(model, state, Session("committed"), clock, logs)
+    ripe(s, clock)
+    s.step()
+    assert logs[0] == "session starting: 20 operations waiting (trigger: idle)"
     assert logs[1].startswith("session ") and "committed" in logs[1]

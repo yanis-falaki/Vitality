@@ -36,7 +36,7 @@ def claude_command(message: str, playbook: str, config: ModelerConfig, *, captur
             "--setting-sources", "project", "--strict-mcp-config",
             "--permission-mode", "bypassPermissions",
             "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
-            "--disallowedTools", "EnterWorktree", "ExitWorktree"]
+            "--disallowedTools", "EnterWorktree", "ExitWorktree", "ScheduleWakeup", "CronCreate"]
     if captures is not None:
         argv += ["--add-dir", captures]
     if resume is not None:

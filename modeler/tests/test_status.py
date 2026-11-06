@@ -1,3 +1,4 @@
+import itertools
 import json
 from typing import Any
 from datetime import datetime, timedelta, timezone
@@ -142,7 +143,9 @@ def test_paused_service_keeps_the_lock(model: Path, state: Path, monkeypatch: py
 
     class Quick(scheduler_module.Scheduler):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, session=failing, sleep=lambda s: None, log=lambda line: None, **kwargs)
+            ticks = itertools.count(0, 10_000).__next__  # every check is long after the last: sessions are due
+            super().__init__(*args, session=failing, clock=lambda: float(ticks()), sleep=lambda s: None,
+                             log=lambda line: None, **kwargs)
 
     monkeypatch.setattr(main_module, "Scheduler", Quick)
     assert main_module._run(model, state, "/captures", sleep=sleep) == 1

@@ -21,13 +21,13 @@ def test_run_models_backlog_then_idles(dataset: Path, tmp_path: Path):
         if not repo.waiting(model):
             raise KeyboardInterrupt  # the backlog is done
 
-    clock = itertools.count(0, 1000).__next__  # every check is long after the last: the idle trigger fires
+    clock = itertools.count(0, 10_000).__next__  # every check is long after the last: the idle trigger fires
     s = Scheduler(model, state, ModelerConfig(max_operations=6), captures=None, session=session,
                   clock=lambda: float(clock()), sleep=sleep, log=lambda line: None)
     assert s.run() == 0
     log = subprocess.run(["git", "-C", str(model), "log", "--format=%s"], capture_output=True, text=True).stdout
     assert sum(line.startswith("modeler run ") for line in log.splitlines()) == 2
-    # 12 operations waiting, fewer than 20: both sessions start on the idle trigger.
+    # The first session starts after a quiet stretch; the second at once, on what the cap of 6 left.
     assert [json.loads(line)["trigger"] for line in (state / "sessions.jsonl").read_text().splitlines()] == \
-        ["idle", "idle"]
+        ["idle", "backlog"]
     assert json.loads((state / "status.json").read_text())["state"] == "idle"

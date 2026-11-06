@@ -8,7 +8,7 @@ Milestone 1 is the lab: the host prepares `<run>/model` with a dataset's whole e
 
 `docker compose up -d` runs it as the `modeler` service: `vitality-modeler run`, with the model at `/model` (`~/vitality-data/model`), its records at `/state` (`~/vitality-data/modeler`), the captures read-only at `/captures`, and the owner's login file. Every 30 seconds it looks at the evidence waiting (operations files not yet committed):
 
-- 20 or more operations waiting, or anything waiting and no new file for 5 minutes: one session on the oldest batch (up to `MODELER_MAX_OPERATIONS`); after a commit it looks again at once, so a backlog is worked through batch after batch.
+- Evidence waiting and no new file for 30 minutes (the end of a sitting), or evidence waiting for 2 hours (a long sitting): one session on the oldest batch (up to `MODELER_MAX_OPERATIONS`). If the batch cap left some of the waiting evidence, the next session starts at once, so a backlog is worked through batch after batch.
 - 3 sessions in a row without a commit: it pauses and stays paused (still running, doing nothing) until restarted: read `sessions.jsonl` and the transcripts, fix what is wrong, then `docker compose restart modeler`.
 - The usage limit of the Claude seat: it waits an hour, then tries again. A restart forgets the wait.
 - Uncommitted edits of yours in the model folder: it waits until you commit or discard them.

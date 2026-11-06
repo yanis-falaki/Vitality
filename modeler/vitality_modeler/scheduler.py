@@ -1,9 +1,10 @@
 """The modeler as a service: when to run a session (modeler service spec, section 4).
 
-`Scheduler.run` checks the model folder every `CHECK_SECONDS`. A session is due when
-`TRIGGER_OPERATIONS` or more operations are waiting (in untracked operations files), or when
-anything is waiting and no new operations file has appeared for `IDLE_SECONDS`. After a commit it
-checks again at once; after `MAX_FAILED_IN_A_ROW` sessions without a commit it pauses (returns 1)
+`Scheduler.run` checks the model folder every `CHECK_SECONDS`. A session is due when evidence is
+waiting (untracked operations files) and no new operations file has appeared for `IDLE_SECONDS`,
+so that a session sees a whole sitting, or when evidence has been waiting `MAX_WAIT_SECONDS`, so a
+long sitting is still modeled during the day. After a commit that left part of the waiting
+evidence (more than one batch), it runs again at once; after `MAX_FAILED_IN_A_ROW` sessions without a commit it pauses (returns 1)
 until restarted; a `limited` session makes it wait `LIMIT_WAIT_SECONDS`. While the owner has
 uncommitted edits in the model folder it waits. What it is doing is kept in `<state>/status.json`;
 `<state>/scheduler.lock` keeps a second scheduler from running on the same state. While a session
@@ -28,8 +29,8 @@ from vitality_modeler.playbook import PLAYBOOK, PLAYBOOK_VERSION
 from vitality_modeler.session import SessionRecord, run_session, session_line
 
 CHECK_SECONDS = 30
-TRIGGER_OPERATIONS = 20
-IDLE_SECONDS = 300
+IDLE_SECONDS = 1800
+MAX_WAIT_SECONDS = 7200
 LIMIT_WAIT_SECONDS = 3600
 MAX_FAILED_IN_A_ROW = 3
 
@@ -53,6 +54,8 @@ class Scheduler:
         self._session, self._clock, self._now, self._sleep, self._log = session, clock, now, sleep, log
         self._seen: set[str] = set()         # waiting files at the last check
         self._last_new = clock()             # when a new waiting file last appeared
+        self._waiting_since: float | None = None  # when evidence began waiting
+        self._carry = False                  # the last session committed; run on what it left at once
         self._failed = 0                     # sessions in a row without a commit
         self._limit_until: float | None = None
         self._edits_logged = False
@@ -107,17 +110,26 @@ class Scheduler:
         except ValueError as error:  # a malformed operations file: say so, and keep looking
             self._log(f"cannot read the waiting evidence: {error}")
             return CHECK_SECONDS
+        carried = self._carry and bool(set(waiting) & self._seen)  # left over from the last batch
+        self._carry = False
         if set(waiting) - self._seen:
             self._last_new = self._clock()
         self._seen = set(waiting)
         total = sum(waiting.values())
-        if total >= TRIGGER_OPERATIONS:
-            trigger = "20 operations"
+        if not total:
+            self._waiting_since = None
+        elif self._waiting_since is None:
+            self._waiting_since = self._clock()
+        if carried:
+            trigger = "backlog"
         elif total and self._clock() - self._last_new >= IDLE_SECONDS:
             trigger = "idle"
+        elif total and self._waiting_since is not None and self._clock() - self._waiting_since >= MAX_WAIT_SECONDS:
+            trigger = "max wait"
         else:
             self._write("idle")
             return CHECK_SECONDS
+        self._waiting_since = None  # what is still waiting after this session waits afresh
 
         self._write("running")
         self._log(f"session starting: {total} operations waiting (trigger: {trigger})")
@@ -147,6 +159,7 @@ class Scheduler:
             return CHECK_SECONDS
         if outcome == "committed":
             self._failed = 0
+            self._carry = True
             return 0
         if outcome == "limited":
             self._limit_until = self._clock() + LIMIT_WAIT_SECONDS

@@ -37,14 +37,18 @@ sources; changes to the session harness.
 
 A loop, checking every 30 seconds (file events through bind mounts are unreliable):
 
-1. **Trigger.** A session is due when 20 or more operations are waiting (operations in untracked
-   operations files), or when anything is waiting and no new operations file has appeared for
-   5 minutes (each new file restarts the 5 minutes).
+1. **Trigger.** A session is due when evidence is waiting (operations in untracked operations
+   files) and no new operations file has appeared for 30 minutes (each new file restarts the
+   30 minutes), so that a session sees a whole sitting; or when evidence has been waiting for
+   2 hours, so that a long sitting is still modeled during the day. (Revised after the backlog run:
+   the first version ran at 20 operations or 5 quiet minutes, which made live sessions a few
+   minutes of evidence each.)
 2. **Session.** `run_session(model, state, config, PLAYBOOK, PLAYBOOK_VERSION, trigger=…,
-   captures="/captures")`, `trigger` being `20 operations` or `idle`: the oldest waiting
+   captures="/captures")`, `trigger` being `idle`, `max wait` or `backlog`: the oldest waiting
    operations up to `MODELER_MAX_OPERATIONS` (500).
 3. **After it.**
-   - `committed`: check again at once (more may be waiting, as during catch-up).
+   - `committed`: if the cap left some of the evidence that was waiting, run again at once (as
+     during catch-up); evidence that arrived during the session waits for the triggers.
    - `reverted` or `failed`: count it; after 3 in a row without a commit, **pause**: no more
      sessions until the service restarts; logged as an error and shown by `status`. The offered
      evidence stays waiting.
@@ -118,5 +122,5 @@ fake `claude`: two batches modeled, then idle.
 
 ## 10. Done when
 
-The backlog is modeled; new evidence is modeled within about 10–30 minutes of arriving; `status`
+The backlog is modeled; new evidence is modeled within about 30 minutes of a sitting ending (2 hours at most during a long one); `status`
 and the logs say what the modeler is doing.
