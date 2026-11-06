@@ -1,4 +1,5 @@
-// Day: one day as lanes of activity (web spec, §6). Day tabs; a heading with one summary line;
+// Day: one day as lanes of activity (web spec, §6, §10). A heading between arrows to the previous and
+// next days with actions (also the ← and → keys), a calendar to jump to any day, and one summary line;
 // lanes, one per activity of the day, whose columns are the day's sittings (a gap over 30 minutes
 // starts a new one), sized by length so idle time is squeezed out; the selected action's
 // screenshots as a strip; activity filters (or a lane's name) that filter the list and dim the other
@@ -7,6 +8,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { shotUrl, useEvidenceOf, type Action } from "../api/client";
+import { CalendarButton } from "../components/Calendar";
 import { useLightbox } from "../components/Lightbox";
 import { WithModel } from "../components/Loading";
 import { ViewFrame } from "../components/Shell";
@@ -19,16 +21,26 @@ const GAP = 30;            // minutes without an action that end a sitting
 const NONE = "";           // the lane of actions with no activity yet
 const LANE_COLOURS = 8;
 
-/** The colour of an activity's lane (`--lane-1` … `--lane-8`, by its place in the model; none: grey). */
-function laneColour(model: Model, id: string): string {
-  const i = model.activities.findIndex((a) => a.id === id);
-  return i < 0 ? "var(--lane-none)" : `var(--lane-${(i % LANE_COLOURS) + 1})`;
+/** The colours of a day's lanes (`--lane-1` … `--lane-8`; none: grey). Each activity keeps the colour of
+ * its place in the model, so it is the same on most days; when two of the day's activities would share
+ * one (the model has more activities than colours), the later takes the next colour free that day. */
+function lanePalette(model: Model, lanes: string[]): Map<string, string> {
+  const out = new Map<string, string>([[NONE, "var(--lane-none)"]]);
+  const taken = new Set<number>();
+  for (const id of lanes.filter((l) => l !== NONE)) {
+    const i = Math.max(0, model.activities.findIndex((a) => a.id === id));
+    let c = i % LANE_COLOURS;
+    for (let k = 0; k < LANE_COLOURS && taken.has(c); k++) c = (c + 1) % LANE_COLOURS;
+    taken.add(c);
+    out.set(id, `var(--lane-${c + 1})`);
+  }
+  return out;
 }
 
 /** A small square in the lane's colour (dashed outline when the activity is tentative). */
-function Swatch({ model, id }: { model: Model; id: string }) {
+function Swatch({ model, id, palette }: { model: Model; id: string; palette: Map<string, string> }) {
   const tentative = !!id && model.activity(id)?.status === "tentative";
-  return <i className={`day-swatch${tentative ? " tentative" : ""}`} style={{ "--c": laneColour(model, id) } as CSSProperties} aria-hidden />;
+  return <i className={`day-swatch${tentative ? " tentative" : ""}`} style={{ "--c": palette.get(id) } as CSSProperties} aria-hidden />;
 }
 
 interface Sitting { start: string; end: string; actions: Action[] }
@@ -53,7 +65,7 @@ function DayView({ model }: { model: Model }) {
     }
   }, [selected, current, navigate]);
 
-  const actions = useMemo(() => model.actions.filter((a) => day(a.start) === current), [model, current]);
+  const actions = useMemo(() => (current ? model.actionsOn(current) : []), [model, current]);
   // The first action of the day is shown until something else is chosen.
   useEffect(() => {
     if (actions.length && !(selected && day(selected.start) === current) && !(sel && !selected)) select(actions[0].id, { quiet: true });
@@ -63,6 +75,7 @@ function DayView({ model }: { model: Model }) {
   const sits = sittings(actions);
   const lanes = [...new Set(actions.map((a) => a.part_of[0] ?? NONE))]
     .sort((a, b) => (a === NONE ? 1 : b === NONE ? -1 : 0));
+  const palette = lanePalette(model, lanes);
   const total = actions.reduce((n, a) => n + minutes(a.start, a.end), 0);
   const choose = (id: string | null) => {
     const next = only === id ? null : id;
@@ -74,48 +87,61 @@ function DayView({ model }: { model: Model }) {
   return (
     <ViewFrame model={model} empty="Select an action to see its evidence.">
       <div className="day-left">
-        <DayTabs days={model.days} current={current} />
         <div className="day-head">
-          <h1>{dayLong(current)}</h1>
+          <DayNav model={model} current={current} />
           <span className="day-sub">{plural(actions.length, "action")} · {hours(total)} across {plural(sits.length, "sitting")}</span>
         </div>
-        <Lanes model={model} sits={sits} lanes={lanes} only={only} sel={focus?.id ?? null} onChoose={choose} />
+        <Lanes model={model} palette={palette} sits={sits} lanes={lanes} only={only} sel={focus?.id ?? null} onChoose={choose} />
         <Strip model={model} action={focus} />
         <div className="day-filters" role="group" aria-label="Show the actions of">
           <button type="button" className={`chip${only === null ? " on" : ""}`} onClick={() => setOnly(null)}>All {actions.length} actions</button>
           {lanes.map((id) => (
             <button type="button" key={id || "none"} className={`chip${only === id ? " on" : ""}`} onClick={() => choose(id)}>
-              <Swatch model={model} id={id} />
+              <Swatch model={model} id={id} palette={palette} />
               <span className="chip-text">{id ? short(model.title(id), 34) : "No activity yet"} · {actions.filter((a) => (a.part_of[0] ?? NONE) === id).length}</span>
             </button>
           ))}
         </div>
-        <List model={model} sits={sits} only={only} sel={focus?.id ?? null} />
+        <List model={model} palette={palette} sits={sits} only={only} sel={focus?.id ?? null} />
       </div>
     </ViewFrame>
   );
 }
 
-function DayTabs({ days, current }: { days: string[]; current: string }) {
+/** "‹ Tuesday, November 3 ›": the days with actions before and after, and a calendar for any other. */
+function DayNav({ model, current }: { model: Model; current: string }) {
   const navigate = useNavigate();
-  const box = useRef<HTMLDivElement>(null);
+  const at = model.days.indexOf(current);
+  const prev = model.days[at - 1], next = model.days[at + 1];
+  const counts = useMemo(() => new Map(model.days.map((d) => [d, model.actionsOn(d).length])), [model]);
+  const go = (d: string | undefined) => { if (d) navigate(`/day/${d}`); };
   useEffect(() => {
-    box.current?.querySelector(".on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [current]);
+    const key = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || (e.target as HTMLElement).closest("input, textarea, [role=dialog]")) return;
+      if (e.key === "ArrowLeft") go(prev);
+      if (e.key === "ArrowRight") go(next);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  });
+  const year = current.slice(0, 4) !== model.lastDay?.slice(0, 4) ? `, ${current.slice(0, 4)}` : "";
   return (
-    <div className="day-tabs" ref={box} role="tablist">
-      {days.map((d) => (
-        <button type="button" role="tab" key={d} aria-selected={d === current} className={d === current ? "on" : ""}
-          onClick={() => navigate(`/day/${d}`)}>{dayLabel(d)}</button>
-      ))}
+    <div className="day-nav">
+      <button type="button" className="day-step" disabled={!prev} onClick={() => go(prev)}
+        aria-label={prev ? `Previous day: ${dayLabel(prev)}` : "No earlier day"} title={prev ? dayLabel(prev) : undefined}>‹</button>
+      <h1>{dayLong(current)}{year}</h1>
+      <button type="button" className="day-step" disabled={!next} onClick={() => go(next)}
+        aria-label={next ? `Next day: ${dayLabel(next)}` : "No later day"} title={next ? dayLabel(next) : undefined}>›</button>
+      <CalendarButton counts={counts} first={model.days[0]} last={model.days[model.days.length - 1]} current={current}
+        onPick={(d) => navigate(`/day/${d}`)} />
     </div>
   );
 }
 
-interface LanesProps { model: Model; sits: Sitting[]; lanes: string[]; only: string | null; sel: string | null; onChoose(id: string): void }
+interface LanesProps { model: Model; palette: Map<string, string>; sits: Sitting[]; lanes: string[]; only: string | null; sel: string | null; onChoose(id: string): void }
 
 /** A lane per activity; its columns are the sittings, each as wide as it is long (at least 14 minutes). */
-function Lanes({ model, sits, lanes, only, sel, onChoose }: LanesProps) {
+function Lanes({ model, palette, sits, lanes, only, sel, onChoose }: LanesProps) {
   const { select } = useSelection();
   const lengths = sits.map((s) => Math.max(14, minutes(s.start, s.end) + 2));
   const width = (i: number) => ({ flexGrow: lengths[i] });
@@ -136,7 +162,7 @@ function Lanes({ model, sits, lanes, only, sel, onChoose }: LanesProps) {
           <div className={`day-lane${only !== null && only !== id ? " dim" : ""}`} key={id || "none"}>
             <button type="button" className={`day-lane-name${only === id ? " on" : ""}`} onClick={() => onChoose(id)}
               title={id ? model.title(id) : "No activity yet"}>
-              <Swatch model={model} id={id} />
+              <Swatch model={model} id={id} palette={palette} />
               <span>{id ? model.title(id) : "No activity yet"}</span>
             </button>
             <div className="day-tracks">
@@ -146,7 +172,7 @@ function Lanes({ model, sits, lanes, only, sel, onChoose }: LanesProps) {
                   <div className="day-track" key={s.start} style={width(i)}>
                     {s.actions.filter((a) => (a.part_of[0] ?? NONE) === id).map((a) => (
                       <button type="button" key={a.id} className={`day-bar${sel === a.id ? " on" : ""}`}
-                        style={{ left: `${((Date.parse(a.start) - t0) / 60000 / lengths[i]) * 100}%`, width: `${(minutes(a.start, a.end) / lengths[i]) * 100}%`, "--c": laneColour(model, id) } as CSSProperties}
+                        style={{ left: `${((Date.parse(a.start) - t0) / 60000 / lengths[i]) * 100}%`, width: `${(minutes(a.start, a.end) / lengths[i]) * 100}%`, "--c": palette.get(id) } as CSSProperties}
                         title={`${clock(a.start)} · ${a.summary}`} aria-label={`${clock(a.start)} ${a.summary}`} onClick={() => select(a.id)} />
                     ))}
                   </div>
@@ -193,7 +219,7 @@ function localTime(iso: string, seconds: number): string {
   return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
-function List({ model, sits, only, sel }: { model: Model; sits: Sitting[]; only: string | null; sel: string | null }) {
+function List({ model, palette, sits, only, sel }: { model: Model; palette: Map<string, string>; sits: Sitting[]; only: string | null; sel: string | null }) {
   const { select } = useSelection();
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -208,7 +234,7 @@ function List({ model, sits, only, sel }: { model: Model; sits: Sitting[]; only:
           {s.actions.filter(shown).map((a) => (
             <button type="button" key={a.id} data-id={a.id} className={`day-row${sel === a.id ? " on" : ""}`} onClick={() => select(a.id)}>
               <span className="time">{clock(a.start)}</span>
-              <Swatch model={model} id={a.part_of[0] ?? NONE} />
+              <Swatch model={model} id={a.part_of[0] ?? NONE} palette={palette} />
               <span className="day-row-text">
                 {a.summary}
                 <span className="day-row-activity">{a.part_of[0] ? model.title(a.part_of[0]) : "No activity yet"}</span>

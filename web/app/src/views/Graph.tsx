@@ -67,20 +67,21 @@ function GraphPage({ model }: { model: Model }) {
     if (withEvidence) layouts.want(evidenceKey, () => buildGraph(model, actions, {}, null));
   }, [layouts, model, actions, modelKey, evidenceKey, withEvidence]);
   const evidenceLayout = withEvidence && summaries ? layouts.get(evidenceKey) : null;
+  // While a range is first arranged, the graph shown before it stays, with a note.
+  const shown = useRef<Graph<NodeAttrs, EdgeAttrs> | null>(null);
   const modelLayout = layouts.get(modelKey);
   const graph = useMemo(() => {
     if (evidenceLayout) return buildGraph(model, actions, summaries!, evidenceLayout);
-    if (!modelLayout) return null;
+    // With evidence asked for, the graph on screen stays until its evidence is placed (one swap, not two).
+    if (!modelLayout || (withEvidence && shown.current)) return null;
     const g = buildGraph(model, actions, null, modelLayout);
     if (picked && own) around(g, picked, own);
     return g;
-  }, [model, actions, summaries, evidenceLayout, modelLayout, picked, own]);
-  // While a range is first arranged, the graph shown before it stays, with a note.
-  const shown = useRef<Graph<NodeAttrs, EdgeAttrs> | null>(null);
+  }, [model, actions, summaries, evidenceLayout, modelLayout, picked, own, withEvidence]);
   if (graph) shown.current = graph;
   const onScreen = graph ?? shown.current;
-  const arranging = !modelLayout ? (onScreen ? "Arranging the range…" : "Arranging the graph…")
-    : withEvidence && !evidenceLayout ? "Arranging the evidence…" : null;
+  const arranging = withEvidence && !evidenceLayout ? "Arranging the evidence…"
+    : !modelLayout ? (onScreen ? "Arranging the range…" : "Arranging the graph…") : null;
 
   return (
     <ViewFrame model={model} empty="Click a node to see what the model believes, and why.">
@@ -254,9 +255,18 @@ function useLayouts(model: Model): Layouts {
           worker.terminate();
           setVersion((v) => v + 1);
         };
-        const g = graph();
-        const request: LayoutRequest = { graph: g.export(), scalingRatio: key.endsWith("|evidence") ? 6 : 14 };
-        worker.postMessage(request);
+        // Built and sent in a task of its own, so a frame never holds two of them; only ids and
+        // edges cross to the worker (cheaper to copy than a serialized graph).
+        setTimeout(() => {
+          if (!workers.current.has(worker)) return;
+          const g = graph();
+          const index = new Map(g.nodes().map((n, i) => [n, i]));
+          const request: LayoutRequest = {
+            nodes: g.nodes(), edges: g.mapEdges((_, __, a, b) => [index.get(a)!, index.get(b)!] as [number, number]),
+            scalingRatio: key.endsWith("|evidence") ? 6 : 14,
+          };
+          worker.postMessage(request);
+        }, 0);
       },
     };
   }, [model]);
@@ -268,8 +278,11 @@ function buildGraph(model: Model, actions: Action[], summaries: Interactions | n
   const p = tokens();
   const colour: Record<Kind, string> = { striving: p.striving, activity: p.activity, action: p.action, interaction: p.evidence };
   const graph = new Graph<NodeAttrs, EdgeAttrs>({ type: "undirected", multi: false });
+  // Many small dots read better smaller: actions and evidence shrink once there are hundreds of them.
+  const crowd = actions.length > 600 ? 0.7 : 1;
+  const sized = (kind: Kind) => (kind === "action" || kind === "interaction" ? SIZE[kind] * crowd : SIZE[kind]);
   const add = (id: string, kind: Kind, label: string, tentative = false) =>
-    graph.addNode(id, { key: id, kind, label, size: SIZE[kind], color: colour[kind], x: 0, y: 0, tentative });
+    graph.addNode(id, { key: id, kind, label, size: sized(kind), color: colour[kind], x: 0, y: 0, tentative });
   const edge = (a: string, b: string, size: number, color: string) => {
     if (graph.hasNode(a) && graph.hasNode(b) && a !== b && !graph.hasEdge(a, b)) graph.addEdge(a, b, { size, color });
   };

@@ -1,5 +1,5 @@
 // The graph's layout, off the main thread: ForceAtlas2 from a circle, the same for the same graph.
-// Receives a graph exported by graphology (`graph.export()`) and the scaling to use; replies with
+// Receives the graph as node ids and edges (pairs of indexes into the ids) and the scaling to use; replies with
 // each node's position, so the page stays responsive while the nodes are placed.
 //
 // Up to 1,000 nodes, 600 exact iterations (as on the first week of a model). Larger graphs (months of
@@ -9,13 +9,14 @@
 import Graph from "graphology";
 import { circular } from "graphology-layout";
 import forceAtlas2 from "graphology-layout-forceatlas2";
-import type { SerializedGraph } from "graphology-types";
-
-export interface LayoutRequest { graph: SerializedGraph; scalingRatio: number }
+export interface LayoutRequest { nodes: string[]; edges: [number, number][]; scalingRatio: number }
 export type LayoutReply = Record<string, { x: number; y: number }>;
 
 self.onmessage = (event: MessageEvent<LayoutRequest>) => {
-  const graph = Graph.from(event.data.graph);
+  const { nodes, edges } = event.data;
+  const graph = new Graph({ type: "undirected" });
+  nodes.forEach((n) => graph.addNode(n));
+  edges.forEach(([a, b]) => graph.addEdge(nodes[a], nodes[b]));
   circular.assign(graph, { scale: 100 });
   const settings = forceAtlas2.inferSettings(graph);
   const large = graph.order > 1000;

@@ -4,17 +4,17 @@
 .frame-tablet .day-left { padding: var(--s4) var(--s5) var(--s5); }
 .frame-phone .day-left { padding: var(--s2) var(--s3) var(--s3); }
 
-.day-tabs { flex: none; display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--line); margin-bottom: var(--s3); scrollbar-width: none; }
-.day-tabs button {
-  flex: none; border: 0; background: none; padding: 8px 12px 10px; font-size: 13px; font-weight: 500; color: var(--ink-3);
-  border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap;
-}
-.day-tabs button:hover { color: var(--ink); }
-.day-tabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
-
-.day-head { flex: none; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-bottom: var(--s3); }
-.day-head h1 { font: 600 19px var(--sans); letter-spacing: -0.01em; margin: 0; }
+.day-head { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; margin-bottom: var(--s3); }
+.day-head h1 { font: 600 19px var(--sans); letter-spacing: -0.01em; margin: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .frame-phone .day-head h1 { font-size: 17px; }
+.day-nav { position: relative; display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+.day-step {
+  flex: none; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel);
+  color: var(--ink-2); font-size: 17px; line-height: 1; cursor: pointer; padding: 0 0 2px;
+}
+.day-step:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.day-step:disabled { color: var(--line-2); cursor: default; }
+.day-nav .calendar-anchor { margin-left: 6px; }
 .day-sub { color: var(--ink-3); font-size: 13px; }
 
 .day-lanes {
@@ -89,7 +89,8 @@
 .frame-phone .day-row-len { display: none; }
 
 @media (pointer: coarse) {
-  .day-tabs button, .day-lane-name, .day-row { min-height: var(--touch); }
+  .day-lane-name, .day-row { min-height: var(--touch); }
+  .day-step { width: var(--touch); height: var(--touch); }
   .day-lane, .day-tracks { min-height: var(--touch); height: var(--touch); }
   .day-axis, .day-axis .day-tracks { min-height: 22px; height: 22px; }
   .day-track { height: 26px; }

@@ -1,17 +1,28 @@
-"""Smoke run of the built app in Chromium, against vitality-web serving the fixture model (web spec, §8).
+"""Smoke run of the built app in Chromium, against vitality-web serving the fixture model (web spec, §8, §10).
 
     uv run python tests/serve_fixture.py /tmp/fx --port 4100 &     # in one shell
     <playwright python> tests/smoke.py --url http://127.0.0.1:4100 --shots <folder>
+
+    uv run python tests/serve_fixture.py /tmp/fx-large --port 4101 --large &
+    <playwright python> tests/smoke.py --url http://127.0.0.1:4101 --shots <folder> --large
 
 Needs a Python with Playwright and its Chromium (not a dependency of the package). For each view, at
 desktop (1366x768), tablet (820x1180) and phone (390x844) sizes: the view renders without console
 errors, selecting an item fills the inspector, and the page never scrolls sideways; at desktop size
 the Day view does not scroll at all. A screenshot of each view and size (and of the inspector open
 on tablet and phone) is saved in `--shots`. Exits 1 on the first failed check.
+
+With `--large` (the large fixture, about four months), also: the Day view's arrows and calendar move
+between days (at every size); the Reader's heatmap renders and opens a day; the Graph's time range
+switches; and "+ Evidence" over all of it keeps the page responsive (the worst gap between frames
+while arranging stays under 100 ms) and either finishes or says there is too much evidence. Times
+are printed.
 """
 
 import argparse
+import re
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -44,6 +55,94 @@ def pick_day(page: Page) -> None:
     page.locator(".day-row").nth(2).click()
 
 
+# -- the large fixture's checks -----------------------------------------------------------------
+
+def check_day_navigation(page: Page, label: str) -> None:
+    # The arrows step between days with actions; the calendar jumps to a day of an earlier month.
+    start = page.url
+    page.locator(".day-step").first.click()
+    page.wait_for_function("u => location.href !== u", arg=start)
+    stepped = page.url
+    page.locator(".calendar-button").click()
+    page.locator(".calendar").wait_for()
+    page.get_by_role("button", name="Previous month").click()
+    page.get_by_role("button", name="Previous month").click()
+    target = page.locator("button.calendar-day").first
+    picked = target.get_attribute("data-day")
+    target.click()
+    page.wait_for_function("d => location.pathname === '/day/' + d", arg=picked)
+    if page.locator(".calendar").count():
+        fail(f"{label}: the calendar stayed open after a pick")
+    heading = page.locator(".day-head h1").inner_text()
+    print(f"ok   {label}: arrows to {stepped.rsplit('/', 1)[-1][:10]}, calendar to {picked} ({heading})")
+
+
+def check_heatmap(page: Page, label: str) -> None:
+    cells = page.locator(".heat button.heat-cell")
+    if cells.count() < 20:
+        fail(f"{label}: the heatmap shows {cells.count()} days with actions")
+    box = page.locator(".heat-scroll").evaluate("e => [e.scrollWidth, e.clientWidth, e.getBoundingClientRect().right]")
+    if box[2] > page.viewport_size["width"]:  # type: ignore[index]
+        fail(f"{label}: the heatmap overflows the page")
+    count, first = cells.count(), cells.last
+    day = re.search(r"\w+, (\w+ \d+)", first.get_attribute("title") or "")
+    first.click()
+    page.wait_for_url(re.compile(r"/day/\d{4}-\d\d-\d\d"))
+    print(f"ok   {label}: heatmap of {count} days ({box[0]}/{box[1]} px wide), opens {day and day.group(1)}")
+    page.go_back()
+
+
+# Frame gaps until the "Arranging" note goes or the "too much evidence" note comes (the frame that then
+# mounts the new graph is not counted: that is drawing, not arranging).
+FRAMES = """() => { window.__gaps = []; let last = performance.now(); window.__done = false;
+  const note = () => document.querySelector('.graph-arranging:not(.graph-note)');
+  const watch = new MutationObserver(() => {
+    if ((window.__seen && !note()) || document.querySelector('.graph-note')) { window.__done = true; watch.disconnect(); }
+    if (note()) window.__seen = true; });
+  window.__seen = false; watch.observe(document.body, { subtree: true, childList: true });
+  const tick = (t) => { if (!window.__done) window.__gaps.push(t - last); last = t; if (!window.__stop) requestAnimationFrame(tick); };
+  window.__stop = false; requestAnimationFrame(tick); }"""
+
+
+def arrange(page: Page, click: Callable[[], None]) -> tuple[float, float, str]:
+    # Seconds until arranged (or the note), the worst frame gap meanwhile (ms), and how it ended.
+    page.evaluate(FRAMES)
+    start = time.perf_counter()
+    click()
+    page.wait_for_timeout(50)
+    page.wait_for_function("() => !document.querySelector('.graph-arranging:not(.graph-note)') || document.querySelector('.graph-note')",
+                           timeout=60000)
+    seconds = time.perf_counter() - start
+    worst = page.evaluate("() => { window.__stop = true; return Math.max(0, ...window.__gaps.slice(1)); }")
+    ended = "note" if page.locator(".graph-note").count() else "arranged"
+    return seconds, worst, ended
+
+
+def check_graph(page: Page, label: str) -> None:
+    legend = lambda: page.locator(".graph-legend").inner_text().replace("\n", ", ")  # noqa: E731
+    page.wait_for_function("() => !document.querySelector('.graph-arranging')", timeout=60000)
+    print(f"ok   {label}: all: {legend()}")
+    seconds, worst, _ = arrange(page, lambda: page.get_by_role("button", name=re.compile("7 days")).click())
+    print(f"ok   {label}: last 7 days arranged in {seconds:.1f} s (worst frame gap {worst:.0f} ms): {legend()}")
+    seconds, worst, ended = arrange(page, lambda: page.get_by_role("button", name="+ Evidence").click())
+    print(f"ok   {label}: + evidence, 7 days: {ended} in {seconds:.1f} s (worst frame gap {worst:.0f} ms): {legend()}")
+    seconds, worst, ended = arrange(page, lambda: page.get_by_role("button", name=re.compile("30 days")).click())
+    if worst > 100:
+        fail(f"{label}: + evidence, 30 days: a frame took {worst:.0f} ms while arranging")
+    print(f"ok   {label}: + evidence, 30 days: {ended} in {seconds:.1f} s (worst frame gap {worst:.0f} ms): {legend()}")
+    page.screenshot(path=str(SHOTS / f"graph-{label.split('/')[1]}-evidence-30.png"))
+    seconds, worst, ended = arrange(page, lambda: page.get_by_role("button", name="All").click())
+    if worst > 100:
+        fail(f"{label}: + evidence, all: a frame took {worst:.0f} ms while arranging")
+    if ended == "note":
+        page.locator(".graph-note").wait_for()
+    print(f"ok   {label}: + evidence, all: {ended} in {seconds:.1f} s (worst frame gap {worst:.0f} ms): {legend()}")
+    page.screenshot(path=str(SHOTS / f"graph-{label.split('/')[1]}-evidence-all.png"))
+
+
+SHOTS = Path(".")
+
+
 VIEWS: list[tuple[str, str, str, Callable[[Page], None]]] = [
     # name, path, a selector that shows the view rendered, how to select something in it
     ("reader", "/", ".page-title", pick_reader),
@@ -63,8 +162,11 @@ def main() -> None:
     parser.add_argument("--url", default="http://127.0.0.1:4100")
     parser.add_argument("--shots", type=Path, required=True)
     parser.add_argument("--only", help="comma-separated view names")
+    parser.add_argument("--large", action="store_true", help="the large fixture: also its checks (see above)")
     args = parser.parse_args()
     args.shots.mkdir(parents=True, exist_ok=True)
+    global SHOTS
+    SHOTS = args.shots
     only = set(args.only.split(",")) if args.only else None
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -80,6 +182,8 @@ def main() -> None:
                 page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
                 page.on("pageerror", lambda e: errors.append(str(e)))
                 label = f"{name}/{size}"
+                if args.large and name == "day":
+                    path = "/day"
                 page.goto(args.url + path)
                 try:
                     page.wait_for_selector(ready, timeout=15000)
@@ -90,6 +194,16 @@ def main() -> None:
                 if name == "day" and size == "desktop":
                     no_page_scroll(page, label)
                 page.screenshot(path=str(args.shots / f"{name}-{size}.png"))
+                if args.large:
+                    if name == "day":
+                        check_day_navigation(page, label)
+                        page.screenshot(path=str(args.shots / f"{name}-{size}-earlier.png"))
+                        page.locator(".calendar-button").click()
+                        page.screenshot(path=str(args.shots / f"{name}-{size}-calendar.png"))
+                        page.keyboard.press("Escape")
+                    if name == "graph" and size == "desktop":
+                        check_graph(page, label)
+                        page.get_by_role("button", name="Model").click()
                 (pick_reader_phone if name == "reader" and size == "phone" else pick)(page)
                 page.wait_for_timeout(900)
                 title = page.locator("[data-testid=inspector] .inspector-title")
@@ -102,6 +216,11 @@ def main() -> None:
                 if errors:
                     fail(f"{label}: console errors: {errors}")
                 print(f"ok   {label}: renders, selects '{title.first.inner_text().strip()[:50]}'")
+                if args.large and name == "reader":
+                    close = page.locator(".inspector-close button")
+                    if close.count() and close.first.is_visible():
+                        close.first.click()
+                    check_heatmap(page, label)
                 page.close()
             context.close()
         browser.close()
