@@ -68,8 +68,8 @@ names a captures folder, pass the captures folder to every sub-agent too.
    delegate to a strivings sub-agent with the activities that changed and why.
 
 5. **Review.** Read what the sub-agents wrote, and check:
-   - every change rests on evidence you can point to, and its reasons are written in the file's
-     body;
+   - every change rests on evidence you can point to, and each body states the current belief
+     (see "Bodies are the current belief");
    - no evidence file, locked file or `user-context.md` was touched, and nothing was written outside
      `actions/`, `activities/`, `strivings/` and `modeler-notes.md`;
    - links point to files that exist, and every offered operation is in exactly one action.
@@ -129,7 +129,7 @@ and the current activities (`activities/`).
 - `first_seen` and `last_seen` are the local `start` of its earliest action and `end` of its latest.
 - Leave `part_of` and `hinders` (striving links) as they are unless an existing striving plainly
   applies to a new activity.
-- Write the reasons in the body: what the actions have in common, why you merged or promoted.
+- Each activity's body says what the pattern is and what its actions have in common.
 - Run `vitality-usermodel check` after writing files and fix what it reports.
 
 Return: activities created, revised, merged (which into which) and promoted, each with one line of
@@ -153,8 +153,9 @@ strivings (`strivings/`).
   other) and `serves` (one is a means to the other) where they hold.
 - Link activities up to the strivings they serve (`part_of`) or work against (`hinders`).
 - New strivings take an ID from `vitality-usermodel next-id striving`.
-- Write the body: the reasoning, a summary of the evidence, and the identity link (the hoped-for self
-  it serves; the feared self it moves away from).
+- Each striving's body says what the person is pursuing, why the model believes it (a few pointers
+  to activities or actions), and the identity link (the hoped-for self it serves; the feared self
+  it moves away from).
 - Run `vitality-usermodel check` after writing files and fix what it reports.
 
 Return: strivings created, revised, merged or dropped, and activity links changed, each with one
@@ -170,9 +171,15 @@ line of why.
   in place: never use worktree isolation (no worktree, no sub-agent started with `isolation: "worktree"`).
 - **Locked files are the owner's.** A file with `locked: true` is not edited, merged, deleted or
   relinked. Other files may link to it.
-- **Change only with evidence**, and write the reason in the file's body. A belief with thin evidence
-  gets a low confidence rather than no file; a hunch too thin even for that goes in
-  `modeler-notes.md`.
+- **Change only with evidence.** A belief with thin evidence gets a low confidence rather than no
+  file; a hunch too thin even for that goes in `modeler-notes.md`.
+- **Bodies are the current belief.** A body says what the belief is now and why the model holds it,
+  in a few short paragraphs, and what would change it if that is worth saying. When the belief
+  changes, rewrite the body to say the new belief; do not append to it. Keep no history in a body
+  (no "revised in session 2", no "up from 3"): git keeps every earlier version and each session's
+  change. Do not list the files that link to this one; the links in the frontmatter are the
+  record, and a search finds them. Cite evidence with a few action or activity IDs, quoting only
+  what tipped the belief.
 - **IDs never change and are never reused.** Activities (`act-NNNN`) and strivings (`str-NNNN`) take
   their ID only from `vitality-usermodel next-id activity` or `vitality-usermodel next-id striving`,
   which prints the next one and records it; never pick a number yourself or edit `.next-ids`. An
@@ -244,7 +251,8 @@ next operation turns to unrelated email.
 
 Fields: `id`, `title`, `part_of` (striving IDs it serves), `hinders` (striving IDs it works
 against), `confidence`, `status` (`tentative` or `established`), `first_seen` and `last_seen`
-(local times), `locked` (`false` for files you create). Body: description and reasoning.
+(local times), `locked` (`false` for files you create). Body: the pattern and what its actions
+share.
 
 ```markdown
 ---
@@ -273,7 +281,7 @@ something wanted; `avoidance`: away from something feared; `mixed`), `aspiration
 (`ideal`: own standard; `ought`: expected by others; `mixed`), `autonomy` (`autonomous`: wanted;
 `controlled`: pressure, guilt, reward; `mixed`), `relations` with `conflicts_with` (competes for time
 or values), `facilitates` (helps) and `serves` (is a means to), each a list of striving IDs, and
-`locked`. Body: reasoning, evidence summary, identity link.
+`locked`. Body: the pursuit, why it is believed, identity link.
 
 ```markdown
 ---
@@ -297,5 +305,5 @@ Evidence: act-0042 (applications, established), act-0017 (reading papers in the 
 (training small models on weekends).
 
 Identity link: the hoped-for self is a researcher whose work matters; the feared self is stuck in
-work that does not use what he has learned.
+work that does not use what they have learned.
 ```

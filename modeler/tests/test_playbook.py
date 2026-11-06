@@ -21,6 +21,12 @@ def test_playbook_mentions():
                  "conflicts_with", "established", "tentative"):
         assert word in PLAYBOOK, word
     assert "24 hours" not in PLAYBOOK
+    # Bodies hold the current belief, rewritten in place: no history, no copies of links.
+    for phrase in ("Bodies are the current belief", "rewrite the body", "no history", "git"):
+        assert phrase in " ".join(PLAYBOOK.split()), phrase
+    for invites_logs in ("why you merged or promoted", "write the reason in the file's body",
+                         "its reasons are written in the file's body", "a summary of the evidence"):
+        assert invites_logs not in " ".join(PLAYBOOK.split()), invites_logs
     # Screenshots: where they are, how to find the right ones, and that they are used sparingly.
     flat_text = " ".join(PLAYBOOK.split())
     for phrase in ("<captures>/<interaction>/", "sparingly", "observations can be searched",
