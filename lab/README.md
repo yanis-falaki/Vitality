@@ -62,8 +62,10 @@ run that went through, 1 for one that was refused or stopped early.
 
 Runs on the VM, with the Claude login in `~/.claude/.credentials.json` (not the API key). The lab
 records the run (`run.yaml` with `stage: modeler`, `playbook.md`, `changes.diff`), builds the image
-(`docker build`), prints the `docker run` command and runs ONE container: the dataset read-only at
-`/dataset`, the run folder at `/run`, the login file, the `MODELER_*` settings. The container writes
+(`docker build`), prepares the run's `model/` (the dataset's whole evidence copied in, waiting, plus its
+`user-context.md`), prints the `docker run` command and runs ONE container: the run folder at `/run`,
+the login file, the `MODELER_*` settings. The dataset itself is not mounted. Each session is offered
+the oldest evidence not yet committed, up to the cap, and may read the rest. The container writes
 `model/`, `sessions.jsonl`, `transcripts/` and `replay.json` into the run folder; the lab then
 finishes `run.yaml` (`result.sessions`, `cost_usd`, `stopped`, `not_offered`). Exit 0 if not stopped.
 It refuses a captures dataset, a dataset without `user-context.md`, a missing login file and

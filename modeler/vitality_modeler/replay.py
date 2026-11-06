@@ -1,8 +1,9 @@
 """The lab's replay of the scheduler over a dataset (modeler spec, section 7, steps 1-3).
 
-`replay` starts a fresh model in `<run>/model`, then copies the dataset's evidence in batch after
-batch and runs one session on each, as the scheduler will on live evidence. A batch that is not
-committed stays in the model, untracked, and is offered again to the next session. The replay stops
+`prepare` starts a fresh model in `<run>/model` holding the dataset's whole evidence, untracked, as
+the service's model folder holds a backlog. `replay` then runs session after session on it: each
+session is offered the oldest evidence not yet committed (up to the cap) and may read the rest. A
+batch that is not committed stays untracked and is offered again to the next session. The replay stops
 when every operations file is committed, after `MAX_FAILED_IN_A_ROW` sessions in a row without a
 commit, when the usage limit is reached, or on KeyboardInterrupt. Its summary is `<run>/replay.json`;
 the sessions' records are `<run>/sessions.jsonl` and `<run>/transcripts/`. Progress goes to stderr: a line
@@ -47,18 +48,17 @@ class ReplaySummary:
 
 @dataclass(frozen=True)
 class _Evidence:
-    path: str           # relative to the dataset, "operations/<interaction>.md"
+    path: str           # relative to the folder, "operations/<interaction>.md"
     interaction: str
     count: int          # operations in the file
 
 
-def replay(dataset: Path, run: Path, config: ModelerConfig, *, claude: str = "claude",
-           environ: Mapping[str, str] = os.environ) -> ReplaySummary:
-    """Replay `dataset` into `run`, writing `<run>/replay.json`, and return the summary.
+def prepare(dataset: Path, run: Path) -> None:
+    """Start `<run>/model`: the templates, the dataset's `user-context.md` (committed) and all its evidence.
 
-    Raises ValueError, before anything is written, when the dataset has no `user-context.md` or
-    `<run>/model` already exists. KeyboardInterrupt stops the replay (`stopped: "interrupted"`) and
-    is not raised again; any other error is written as the stop reason and raised again.
+    The evidence (`observations/`, `operations/`) is copied untracked, waiting to be offered. Raises
+    ValueError, before anything is written, when the dataset has no `user-context.md` or
+    `<run>/model` already exists.
     """
     context = dataset / "user-context.md"
     if not context.is_file():
@@ -66,21 +66,32 @@ def replay(dataset: Path, run: Path, config: ModelerConfig, *, claude: str = "cl
     model = run / "model"
     if model.exists():
         raise ValueError(f"{model} already exists")
-    pending = _operations_files(dataset)
     model.mkdir(parents=True)
     repo.init_model(model, context.read_text(encoding="utf-8"), MODELER_NOTES_TEMPLATE)
+    for kind in ("observations", "operations"):
+        if (dataset / kind).is_dir():
+            shutil.copytree(dataset / kind, model / kind)
 
+
+def replay(run: Path, config: ModelerConfig, *, claude: str = "claude",
+           environ: Mapping[str, str] = os.environ) -> ReplaySummary:
+    """Run sessions on `<run>/model` until nothing waits, writing `<run>/replay.json`; return the summary.
+
+    Raises ValueError, before anything is written, when `<run>/model` does not exist (see `prepare`).
+    KeyboardInterrupt stops the replay (`stopped: "interrupted"`) and is not raised again; any other
+    error is written as the stop reason and raised again.
+    """
+    model = run / "model"
+    if not (model / ".git").is_dir():
+        raise ValueError(f"no model in {run}; prepare it first")
     records = run / "sessions.jsonl"
     earlier = _read_outcomes(records)  # a run folder is fresh, but count only this replay's sessions
     stopped: str | None = None
     without_commit = 0
-    _progress(f"{len(pending)} operations files to offer, batches of up to {config.max_operations} operations")
+    _progress(f"{len(_operations_files(model))} operations files to offer, "
+              f"batches of up to {config.max_operations} operations")
     try:
         while True:
-            if repo.choose_batch(model, config.max_operations) is None:
-                if not pending:
-                    break
-                _copy_batch(dataset, model, pending, config.max_operations)
             record = run_session(model, run, config, PLAYBOOK, PLAYBOOK_VERSION, trigger="replay",
                                  claude=claude, environ=environ)
             if record is None:
@@ -96,9 +107,9 @@ def replay(dataset: Path, run: Path, config: ModelerConfig, *, claude: str = "cl
     except KeyboardInterrupt:
         stopped = "interrupted"  # run_session has reverted and recorded the session it was in
     except BaseException as error:
-        _finish(run, model, dataset, earlier, f"{type(error).__name__}: {error}")
+        _finish(run, model, earlier, f"{type(error).__name__}: {error}")
         raise
-    return _finish(run, model, dataset, earlier, stopped)
+    return _finish(run, model, earlier, stopped)
 
 
 def _progress(line: str) -> None:
@@ -113,30 +124,16 @@ def _session_line(record: SessionRecord) -> str:
             f"{record.outcome}, {record.duration_ms / 1000:.0f}s, {cost}")
 
 
-def _operations_files(dataset: Path) -> list[_Evidence]:
-    # The dataset's operations files, oldest first by `start` (then path).
+def _operations_files(folder: Path) -> list[_Evidence]:
+    # The operations files under `folder`, oldest first by `start` (then path).
     found: list[tuple[object, _Evidence]] = []
-    for path in sorted((dataset / "operations").rglob("*.md")):
+    for path in sorted((folder / "operations").rglob("*.md")):
         meta, _ = read_file(path, "operations")
         assert isinstance(meta, OperationsMeta)
-        found.append((meta.start, _Evidence(path.relative_to(dataset).as_posix(), meta.interaction,
+        found.append((meta.start, _Evidence(path.relative_to(folder).as_posix(), meta.interaction,
                                             len(meta.operations))))
     found.sort(key=lambda f: (f[0], f[1].path))  # pyright: ignore[reportOperatorIssue]  # all datetimes
     return [evidence for _, evidence in found]
-
-
-def _copy_batch(dataset: Path, model: Path, pending: list[_Evidence], max_operations: int) -> None:
-    # Move the next whole files, up to `max_operations` operations (the first always), from `pending`
-    # into the model, each with its observation when the dataset has one.
-    count = 0
-    while pending and not (count and count + pending[0].count > max_operations):
-        evidence = pending.pop(0)
-        count += evidence.count
-        observation = "observations/" + evidence.path.removeprefix("operations/")
-        for path in (evidence.path, observation):
-            if (dataset / path).is_file():
-                (model / path).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(dataset / path, model / path)
 
 
 def _read_outcomes(records: Path) -> list[str]:
@@ -145,14 +142,14 @@ def _read_outcomes(records: Path) -> list[str]:
     return [json.loads(line)["outcome"] for line in records.read_text(encoding="utf-8").splitlines() if line]
 
 
-def _finish(run: Path, model: Path, dataset: Path, earlier: list[str], stopped: str | None) -> ReplaySummary:
+def _finish(run: Path, model: Path, earlier: list[str], stopped: str | None) -> ReplaySummary:
     # Build the summary from this replay's session records and what the model committed; write it.
     sessions: dict[str, int] = {}
     for outcome in _read_outcomes(run / "sessions.jsonl")[len(earlier):]:
         sessions[outcome] = sessions.get(outcome, 0) + 1
     committed = set(repo.tracked(model, "operations"))
     summary = ReplaySummary(sessions, stopped,
-                            [e.interaction for e in _operations_files(dataset) if e.path not in committed])
+                            [e.interaction for e in _operations_files(model) if e.path not in committed])
     run.mkdir(parents=True, exist_ok=True)
     (run / "replay.json").write_text(json.dumps(summary.to_json(), indent=2) + "\n", encoding="utf-8")
     _progress("done: " + (", ".join(f"{k} {n}" for k, n in sorted(sessions.items())) or "no sessions"))

@@ -14,7 +14,7 @@ from vitality_modeler import replay as replay_module
 from vitality_modeler.config import ModelerConfig
 from vitality_modeler.main import main
 from vitality_modeler.playbook import PLAYBOOK, PLAYBOOK_VERSION
-from vitality_modeler.replay import MODELER_NOTES_TEMPLATE, replay
+from vitality_modeler.replay import MODELER_NOTES_TEMPLATE, prepare, replay
 from vitality_usermodel.formats import ActionMeta, render
 
 FAKE = Path(__file__).parent / "fake_claude.py"
@@ -64,6 +64,11 @@ def offered(call: dict[str, Any]) -> list[str]:
     return [line.split(" ")[1] for line in message.splitlines() if line.startswith("- operations/")]
 
 
+def prepared(dataset: Path, run: Path) -> Path:
+    prepare(dataset, run)
+    return run
+
+
 def outcomes(run: Path) -> list[tuple[str, str]]:
     return [(r["outcome"], r["detail"]) for r in
             map(json.loads, (run / "sessions.jsonl").read_text().splitlines())]
@@ -72,7 +77,7 @@ def outcomes(run: Path) -> list[tuple[str, str]]:
 def test_replay_two_batches(dataset: Path, tmp_path: Path):
     run = tmp_path / "run"
     environ = script(tmp_path, [{"write": action(*FILES[:2])}, {"write": action(*FILES[2:])}])
-    summary = replay(dataset, run, CONFIG, claude=str(FAKE), environ=environ)
+    summary = replay(prepared(dataset, run), CONFIG, claude=str(FAKE), environ=environ)
     assert summary.sessions == {"committed": 2}
     assert summary.stopped is None
     assert summary.not_offered == []
@@ -99,7 +104,7 @@ def test_replay_two_batches(dataset: Path, tmp_path: Path):
 def test_replay_progress_lines(dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     run = tmp_path / "run"
     environ = script(tmp_path, [FAILING, {"write": action(*FILES[:2])}, {"write": action(*FILES[2:])}])
-    replay(dataset, run, CONFIG, claude=str(FAKE), environ=environ)
+    replay(prepared(dataset, run), CONFIG, claude=str(FAKE), environ=environ)
     err = capsys.readouterr().err.splitlines()
     records = [json.loads(line) for line in (run / "sessions.jsonl").read_text().splitlines()]
     assert len(err) == 2 + len(records) == 5
@@ -117,14 +122,14 @@ def test_replay_retries_then_commits(dataset: Path, tmp_path: Path):
     run = tmp_path / "run"
     environ = script(tmp_path, [FAILING, {"write": action(*FILES[:2])}, FAILING, FAILING,
                                 {"write": action(*FILES[2:])}])
-    summary = replay(dataset, run, CONFIG, claude=str(FAKE), environ=environ)
+    summary = replay(prepared(dataset, run), CONFIG, claude=str(FAKE), environ=environ)
     assert summary.sessions == {"failed": 3, "committed": 2}
     assert summary.stopped is None
 
 
 def test_replay_retries_then_stops(dataset: Path, tmp_path: Path):
     run = tmp_path / "run"
-    summary = replay(dataset, run, CONFIG, claude=str(FAKE), environ=script(tmp_path, [FAILING]))
+    summary = replay(prepared(dataset, run), CONFIG, claude=str(FAKE), environ=script(tmp_path, [FAILING]))
     assert summary.sessions == {"failed": 3}
     assert summary.stopped == "3 sessions in a row without a commit"
     assert [offered(c) for c in calls(tmp_path)] == [[f"operations/{n}.md" for n in FILES[:2]]] * 3
@@ -137,7 +142,7 @@ def test_replay_limited_stops(dataset: Path, tmp_path: Path):
     run = tmp_path / "run"
     environ = script(tmp_path, [{"write": action(*FILES[:2])},
                                 {"is_error": True, "result": "You've hit your weekly limit \u00b7 resets Nov 7"}])
-    summary = replay(dataset, run, CONFIG, claude=str(FAKE), environ=environ)
+    summary = replay(prepared(dataset, run), CONFIG, claude=str(FAKE), environ=environ)
     assert summary.sessions == {"committed": 1, "limited": 1}
     assert summary.stopped == "usage limit reached"
     assert summary.not_offered == FILES[2:]
@@ -154,7 +159,7 @@ def test_replay_interrupt(dataset: Path, tmp_path: Path, monkeypatch: pytest.Mon
         return real_wait(self, timeout)
 
     monkeypatch.setattr(subprocess.Popen, "wait", wait)
-    summary = replay(dataset, run, CONFIG, claude=str(FAKE),
+    summary = replay(prepared(dataset, run), CONFIG, claude=str(FAKE),
                      environ=script(tmp_path, [{"sleep": 2, "write": action(*FILES[:2])}]))
     assert summary.sessions == {"failed": 1}
     assert summary.stopped == "interrupted"
@@ -171,22 +176,37 @@ def test_replay_error_is_recorded_and_raised(dataset: Path, tmp_path: Path, monk
 
     monkeypatch.setattr(replay_module, "run_session", run_session)
     with pytest.raises(RuntimeError, match="boom"):
-        replay(dataset, run, CONFIG, claude=str(FAKE), environ=script(tmp_path, [{}]))
+        replay(prepared(dataset, run), CONFIG, claude=str(FAKE), environ=script(tmp_path, [{}]))
     assert json.loads((run / "replay.json").read_text()) == \
         {"sessions": {}, "stopped": "RuntimeError: boom", "not_offered": FILES}
 
 
-def test_replay_refuses_existing_model(dataset: Path, tmp_path: Path):
+def test_prepare_copies_the_whole_dataset(dataset: Path, tmp_path: Path):
+    model = prepared(dataset, tmp_path / "run") / "model"
+    for kind in ("observations", "operations"):
+        for name in FILES:
+            assert (model / kind / f"{name}.md").read_bytes() == (dataset / kind / f"{name}.md").read_bytes()
+    assert git(model, "log", "--format=%s").splitlines() == ["model: start"]
+    untracked = git(model, "status", "--porcelain", "--untracked-files=all").splitlines()
+    assert sorted(untracked) == sorted(f"?? {k}/{n}.md" for k in ("observations", "operations") for n in FILES)
+
+
+def test_prepare_refuses_existing_model(dataset: Path, tmp_path: Path):
     (tmp_path / "run" / "model").mkdir(parents=True)
     with pytest.raises(ValueError, match="already exists"):
-        replay(dataset, tmp_path / "run", CONFIG, claude=str(FAKE), environ=script(tmp_path, [{}]))
+        prepare(dataset, tmp_path / "run")
 
 
-def test_replay_needs_user_context(dataset: Path, tmp_path: Path):
+def test_prepare_needs_user_context(dataset: Path, tmp_path: Path):
     (dataset / "user-context.md").unlink()
     with pytest.raises(ValueError, match="user-context.md"):
-        replay(dataset, tmp_path / "run", CONFIG, claude=str(FAKE), environ=script(tmp_path, [{}]))
+        prepare(dataset, tmp_path / "run")
     assert not (tmp_path / "run" / "model").exists()
+
+
+def test_replay_needs_a_prepared_model(tmp_path: Path):
+    with pytest.raises(ValueError, match="no model"):
+        replay(tmp_path / "run", CONFIG, claude=str(FAKE), environ=script(tmp_path, [{}]))
 
 
 def fake_on_path(tmp_path: Path) -> str:
@@ -199,14 +219,14 @@ def fake_on_path(tmp_path: Path) -> str:
 def test_main_usage_and_exit_codes(dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                    capsys: pytest.CaptureFixture[str]):
     assert main([]) == 2
-    assert main(["replay", str(dataset)]) == 2
-    assert main(["other", str(dataset), str(tmp_path / "x")]) == 2
+    assert main(["replay"]) == 2
+    assert main(["other", str(tmp_path / "x")]) == 2
     monkeypatch.setenv("MODELER_EFFORT", "huge")
-    assert main(["replay", str(dataset), str(tmp_path / "x")]) == 2
+    assert main(["replay", str(prepared(dataset, tmp_path / "x"))]) == 2
     assert "MODELER_EFFORT" in capsys.readouterr().err
     monkeypatch.delenv("MODELER_EFFORT")
-    assert main(["replay", str(tmp_path / "missing"), str(tmp_path / "x")]) == 2
-    assert "user-context.md" in capsys.readouterr().err
+    assert main(["replay", str(tmp_path / "missing")]) == 2
+    assert "no model" in capsys.readouterr().err
 
     monkeypatch.setenv("MODELER_MAX_OPERATIONS", "6")
     monkeypatch.setenv("PATH", fake_on_path(tmp_path))
@@ -214,13 +234,13 @@ def test_main_usage_and_exit_codes(dataset: Path, tmp_path: Path, monkeypatch: p
         if key != "PATH":
             monkeypatch.setenv(key, value)
     before = signal.getsignal(signal.SIGTERM)
-    assert main(["replay", str(dataset), str(tmp_path / "ok")]) == 0
+    assert main(["replay", str(prepared(dataset, tmp_path / "ok"))]) == 0
     assert signal.getsignal(signal.SIGTERM) == before
     assert json.loads((tmp_path / "ok" / "replay.json").read_text())["sessions"] == {"committed": 2}
 
     (tmp_path / "script.json").write_text(json.dumps([FAILING]))
     (tmp_path / "script.json.state").unlink()
-    assert main(["replay", str(dataset), str(tmp_path / "stopped")]) == 1
+    assert main(["replay", str(prepared(dataset, tmp_path / "stopped"))]) == 1
 
 
 def test_main_prints_traceback(dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -229,7 +249,7 @@ def test_main_prints_traceback(dataset: Path, tmp_path: Path, monkeypatch: pytes
         raise RuntimeError("boom")
 
     monkeypatch.setattr("vitality_modeler.main.replay", broken)
-    assert main(["replay", str(dataset), str(tmp_path / "x")]) == 1
+    assert main(["replay", str(prepared(dataset, tmp_path / "x"))]) == 1
     err = capsys.readouterr().err
     assert "vitality-modeler: RuntimeError: boom" in err
     assert "Traceback (most recent call last)" in err and "in broken" in err
@@ -238,8 +258,8 @@ def test_main_prints_traceback(dataset: Path, tmp_path: Path, monkeypatch: pytes
 def test_sigterm_stops_replay(dataset: Path, tmp_path: Path):
     environ = {**os.environ, **script(tmp_path, [{"sleep": 30, "write": action(*FILES[:2])}]),
                "PATH": fake_on_path(tmp_path), "MODELER_MAX_OPERATIONS": "6"}
-    run = tmp_path / "run"
-    process = subprocess.Popen([str(COMMAND), "replay", str(dataset), str(run)], env=environ,
+    run = prepared(dataset, tmp_path / "run")
+    process = subprocess.Popen([str(COMMAND), "replay", str(run)], env=environ,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         deadline = time.monotonic() + 20
@@ -259,4 +279,4 @@ def test_sigterm_stops_replay(dataset: Path, tmp_path: Path):
         {"sessions": {"failed": 1}, "stopped": "interrupted", "not_offered": FILES}
     assert outcomes(run) == [("failed", "interrupted")]
     assert git(run / "model", "status", "--porcelain", "--untracked-files=all").splitlines() == sorted(
-        f"?? {d}/{n}.md" for d in ("observations", "operations") for n in FILES[:2])
+        f"?? {d}/{n}.md" for d in ("observations", "operations") for n in FILES)  # all still waiting, unchanged

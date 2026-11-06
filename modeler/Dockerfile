@@ -1,9 +1,9 @@
 # The Vitality modeler image. Build from the repository root:
 #   docker build -f modeler/Dockerfile -t vitality-modeler .
 # The lab runs it without Compose (see README.md):
-#   docker run --rm --user <uid>:<gid> -v <dataset>:/dataset:ro -v <run>:/run \
+#   docker run --rm --user <uid>:<gid> -v <run>:/run \
 #     -v ~/.claude/.credentials.json:/home/modeler/.claude/.credentials.json \
-#     -e MODELER_... vitality-modeler vitality-modeler replay /dataset /run
+#     -e MODELER_<SETTING>=... vitality-modeler vitality-modeler replay /run
 # Any uid:gid works: HOME and its .claude are world-writable, and git trusts every folder.
 
 ARG UV_VERSION=0.11.2
@@ -47,7 +47,7 @@ ENV DISABLE_AUTOUPDATER=1 \
     PATH="/opt/venv/bin:${PATH}"
 # The lab runs as the host's uid:gid, so the home and the mount points must not depend on one,
 # and the mounted model repository (owned by that user) must not be refused as "dubious ownership".
-RUN mkdir -p /home/modeler/.claude /dataset /run \
+RUN mkdir -p /home/modeler/.claude /run \
     && chmod 1777 /home/modeler /home/modeler/.claude \
     && git config --system --add safe.directory '*'
 CMD ["vitality-modeler", "--help"]

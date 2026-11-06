@@ -81,6 +81,10 @@ def test_modeler_run_writes_record(repo: Path, lab: Path, home: Path):
     assert run(repo, lab, home, "ev", runner=runner, environ=environ) == 0
     [folder] = runs(lab)
     assert (folder / "playbook.md").read_text() == PLAYBOOK
+    # The host prepared the model: the whole dataset's evidence waits in it, and its user context.
+    assert (folder / "model" / "operations" / "laptop" / "2026-11-01.jsonl").read_text() == "{}\n"
+    assert (folder / "model" / "user-context.md").read_text() == "context"
+    assert (folder / "model" / ".git").is_dir()
     record = read_run_yaml(folder / "run.yaml")
     assert record["stage"] == "modeler"
     assert record["input"] == "datasets/ev"
@@ -92,7 +96,7 @@ def test_modeler_run_writes_record(repo: Path, lab: Path, home: Path):
     build, launch = runner.commands
     assert build == docker_build_command(repo)
     config = modeler_settings(environ, [])
-    expected = docker_run_command(lab / "datasets" / "ev", folder, home / ".claude" / ".credentials.json",
+    expected = docker_run_command(folder, home / ".claude" / ".credentials.json",
                                   config, os.getuid(), os.getgid())
     assert launch == expected
     assert f"{os.getuid()}:{os.getgid()}" in launch
@@ -103,12 +107,12 @@ def test_commands():
     config = ModelerConfig()
     assert docker_build_command(Path("/r")) == [
         "docker", "build", "-f", "/r/modeler/Dockerfile", "-t", "vitality-modeler", "/r"]
-    assert docker_run_command(Path("/d"), Path("/u"), Path("/c"), config, 1000, 1001) == [
+    assert docker_run_command(Path("/u"), Path("/c"), config, 1000, 1001) == [
         "docker", "run", "--rm", "--user", "1000:1001",
-        "-v", "/d:/dataset:ro", "-v", "/u:/run", "-v", "/c:/home/modeler/.claude/.credentials.json",
+        "-v", "/u:/run", "-v", "/c:/home/modeler/.claude/.credentials.json",
         "-e", "MODELER_MODEL=claude-opus-5-5", "-e", "MODELER_EFFORT=high",
         "-e", "MODELER_MAX_OPERATIONS=500", "-e", "MODELER_RUN_TIMEOUT_SECONDS=3600",
-        "vitality-modeler", "vitality-modeler", "replay", "/dataset", "/run"]
+        "vitality-modeler", "vitality-modeler", "replay", "/run"]
 
 
 def test_build_failure_recorded(repo: Path, lab: Path, home: Path):
@@ -236,7 +240,7 @@ def test_relative_lab_dir_gives_absolute_mounts(repo: Path, lab: Path, home: Pat
     runner = Runner()
     assert run(repo, Path("lab"), home, "ev", runner=runner) == 0
     mounts = [a for a in runner.commands[1] if ":/" in a and a.startswith("/")]
-    assert len(mounts) == 3 and all(m.startswith("/") for m in mounts)
+    assert len(mounts) == 2 and all(m.startswith("/") for m in mounts)
 
 
 def test_container_exit_recorded(repo: Path, lab: Path, home: Path):

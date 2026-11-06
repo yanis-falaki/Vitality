@@ -166,21 +166,24 @@ run itself happens in **one container**:
 
 - **On the host** (`vitality-lab`): check git and the dataset, create the run folder, write
   `run.yaml` and `changes.diff`, build the modeler image from the current code (cached when nothing
-  changed: `docker build -f modeler/Dockerfile -t vitality-modeler .`), then start one container
+  changed: `docker build -f modeler/Dockerfile -t vitality-modeler .`), prepare the run's model
+  (step 1), then start one container
   with plain Docker (no Compose: Compose describes the running application, and the lab is apart
   from it):
-  `docker run --rm --user <VITALITY_UID>:<VITALITY_GID> -v <dataset>:/dataset:ro -v <run folder>:/run
+  `docker run --rm --user <VITALITY_UID>:<VITALITY_GID> -v <run folder>:/run
   -v ~/.claude/.credentials.json:<the login path in the container> vitality-modeler
-  vitality-modeler replay /dataset /run`. Every mount and setting the container gets is in that one
+  vitality-modeler replay /run`. The dataset itself is never mounted. Every mount and setting the container gets is in that one
   command, which `vitality-lab` prints before running it. When it exits, fill in
   `run.yaml`'s result from `sessions.jsonl` and the replay's summary.
-- **In the container** (`vitality-modeler replay`), steps 1–3 below, then exit.
+- **In the container** (`vitality-modeler replay`), steps 2–3 below, then exit.
 
-1. **Setup:** the run folder gets `model/`, a fresh git repo with the templates and the dataset's
-   `user-context.md`, committed; `playbook.md` is copied beside `run.yaml`.
-2. **Replay:** copy into `model/` the dataset's evidence for the next batch (oldest operations files
-   not yet copied, up to `max_operations` operations), then run one session (§5). Repeat until all of
-   the dataset's evidence has been offered.
+1. **Setup (host):** the run folder gets `model/`, a fresh git repo with the templates and the
+   dataset's `user-context.md`, committed, plus the dataset's whole `observations/` and `operations/`,
+   untracked, as the service's model folder holds a backlog; `playbook.md` is copied beside `run.yaml`.
+2. **Replay (container):** run one session (§5) after another; each is offered the oldest evidence not
+   yet committed, up to `max_operations` operations, and may read all the rest. Repeat until all of
+   the dataset's evidence is committed. (So a session can see evidence later than its batch, as when
+   the service works through a backlog; live arrival is not simulated.)
 3. **Stop early** after 3 sessions in a row without a commit, on `limited`, or on Ctrl-C; `run.yaml`
    records the reason and which evidence was not offered.
 4. **Settings:** `MODELER_MODEL`, `MODELER_EFFORT`, `MODELER_MAX_OPERATIONS`,
@@ -202,8 +205,8 @@ modeler/
     session.py             §5: prepare, run, check/resume, commit/revert, record (Contract first)
     claude.py              building the claude command and run message; reading the stream
     repo.py                clean test, staging, commit, revert, change counts (git)
-    replay.py              §7 steps 1–3: setup, batch after batch, stopping early, summary
-    main.py                vitality-modeler replay <dataset> <run>  (milestone 2 adds `run`, `status`)
+    replay.py              §7: prepare (host), then session after session, stopping early, summary
+    main.py                vitality-modeler replay <run>  (milestone 2 adds `run`, `status`)
     playbook.md            shipped inside the package, read with importlib.resources
   tests/                   with a fake `claude` executable
 lab/vitality_lab/

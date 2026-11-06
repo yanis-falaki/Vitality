@@ -2,7 +2,7 @@
 
 The modeler turns the observer's evidence (operations and observations) into the user model: actions, activities and strivings, written as Markdown files in a git repository. The writing is done by a Claude Code agent. This package is the harness around it: it stages a batch of evidence, runs one session, checks the result with `vitality-usermodel check`, and commits it or reverts it. The design is in `docs/superpowers/specs/2026-11-04-modeler-design.md`.
 
-Milestone 1 is the lab: `vitality-modeler replay <dataset> <run>` replays a dataset batch by batch, as the scheduler later will on live evidence.
+Milestone 1 is the lab: the host prepares `<run>/model` with a dataset's whole evidence (`vitality_modeler.replay.prepare`), and `vitality-modeler replay <run>` works through it batch by batch, as the service will through a backlog.
 
 ## The image
 
@@ -15,21 +15,20 @@ The image holds Python 3.14, the `vitality-modeler` and `vitality-usermodel` com
 It runs as any `--user uid:gid` (`/home/modeler` and `/home/modeler/.claude` are mode 1777; git trusts every folder). The lab runs it without Compose:
 
     docker run --rm --user "$(id -u):$(id -g)" \
-      -v <dataset>:/dataset:ro \
       -v <run>:/run \
       -v ~/.claude/.credentials.json:/home/modeler/.claude/.credentials.json \
       -e MODELER_MODEL=... -e MODELER_EFFORT=... \
-      vitality-modeler vitality-modeler replay /dataset /run
+      vitality-modeler vitality-modeler replay /run
 
 The credentials file is the only thing of the owner's that is mounted. Claude Code may refresh the token in it.
 
-A dataset is a folder with `operations/`, `observations/` (both `<device>/<date>/<time>.md`) and `user-context.md` (who the owner is; it seeds the model). `<run>` must be a folder without a `model/` in it.
+A dataset is a folder with `operations/`, `observations/` (both `<device>/<date>/<time>.md`) and `user-context.md` (who the owner is; it seeds the model). `prepare(dataset, run)` copies all of it into `<run>/model`; the container sees only `<run>`, never the dataset.
 
 ## What a session does
 
-`replay` creates `<run>/model` (a git repository with `user-context.md` and `modeler-notes.md`), then repeats until all operations are committed:
+`prepare` has created `<run>/model`: a git repository with `user-context.md` and `modeler-notes.md` committed, and the dataset's whole evidence untracked. `replay` then repeats until all operations are committed:
 
-1. Copy the oldest whole operations files (with their observations), up to `MODELER_MAX_OPERATIONS` operations, into the model, untracked.
+1. Stage the oldest whole operations files not yet committed (with their observations), up to `MODELER_MAX_OPERATIONS` operations: that is the session's batch. The rest of the evidence stays readable.
 2. Run Claude Code in the model folder, with the playbook appended to its system prompt and only project settings. Its tools are the files, `vitality-usermodel check` and `next-id`, and git. The worktree tools are disallowed (`--disallowedTools EnterWorktree ExitWorktree`) and the playbook forbids worktree isolation, so all work happens in the model folder; a revert also removes nested repositories and prunes worktrees. Sub-agents' text is forwarded into the stream (`--forward-subagent-text`), so the transcript holds it.
 3. Check the model. If there are problems, resume the same session once with them.
 4. Commit when the check passes and every offered operation is covered; otherwise revert the session's changes. The evidence stays in the model and is offered to the next session.

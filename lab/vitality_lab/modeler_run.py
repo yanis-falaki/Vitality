@@ -1,8 +1,10 @@
 """The modeler stage of a lab run: its settings, the docker commands, and finishing the record.
 
-The host side only records the run and starts ONE container (`docker run`); the replay itself is
-the modeler's own (`vitality-modeler replay /dataset /run`). What the container wrote in the run
-folder (`replay.json`, `sessions.jsonl`) is what `run.yaml` is finished from.
+The host side records the run, prepares its model (the dataset's whole evidence copied in, waiting,
+as the service's model folder holds a backlog), and starts ONE container (`docker run`) that sees
+only the run folder; the replay itself is the modeler's own (`vitality-modeler replay /run`). What
+the container wrote in the run folder (`replay.json`, `sessions.jsonl`) is what `run.yaml` is
+finished from.
 """
 
 import json
@@ -16,6 +18,7 @@ from typing import Literal
 
 from vitality_modeler.config import SETTINGS, ModelerConfig, load_modeler_config
 from vitality_modeler.playbook import PLAYBOOK, PLAYBOOK_VERSION
+from vitality_modeler.replay import prepare
 
 from vitality_lab.record import WATCHED, Refused, git_state, run_folder_name, write_run_yaml
 
@@ -58,17 +61,16 @@ def docker_build_command(repo: Path) -> list[str]:
     return ["docker", "build", "-f", str(repo / "modeler/Dockerfile"), "-t", IMAGE, str(repo)]
 
 
-def docker_run_command(dataset: Path, run: Path, credentials: Path, config: ModelerConfig,
-                       uid: int, gid: int) -> list[str]:
-    """The one container: dataset read-only, the run folder writable, the login file, the settings.
+def docker_run_command(run: Path, credentials: Path, config: ModelerConfig, uid: int, gid: int) -> list[str]:
+    """The one container: the run folder (holding the prepared model), the login file, the settings.
 
     No API key is passed: the session uses the owner's Claude login.
     """
     env = [arg for name in SETTINGS for arg in ("-e", f"MODELER_{name.upper()}={getattr(config, name)}")]
     return ["docker", "run", "--rm", "--user", f"{uid}:{gid}",
-            "-v", f"{dataset}:/dataset:ro", "-v", f"{run}:/run",
+            "-v", f"{run}:/run",
             "-v", f"{credentials}:{CREDENTIALS_IN_CONTAINER}",
-            *env, IMAGE, "vitality-modeler", "replay", "/dataset", "/run"]
+            *env, IMAGE, "vitality-modeler", "replay", "/run"]
 
 
 def run_command(command: list[str]) -> int:
@@ -150,8 +152,11 @@ def run_modeler_stage(lab: Path, dataset: str, label: str | None, overrides: Seq
     if built != 0:
         return give_up("image build failed")
     try:
-        exit_code = runner(docker_run_command(folder_in_lab.resolve(), folder.resolve(), credentials, config,
-                                              os.getuid(), os.getgid()))
+        prepare(folder_in_lab, folder)
+    except (ValueError, OSError) as e:
+        return give_up(f"could not prepare the model: {e}")
+    try:
+        exit_code = runner(docker_run_command(folder.resolve(), credentials, config, os.getuid(), os.getgid()))
     except OSError as e:
         return give_up(f"docker could not be run: {e}")
     record["container_exit"] = exit_code
