@@ -111,3 +111,49 @@ services:
         bind: {create_host_path: false}
       # Timestamps in the host's time zone.
       - /etc/localtime:/etc/localtime:ro
+
+  modeler:
+    <<: *common
+    image: vitality-modeler
+    build:
+      context: .
+      dockerfile: modeler/Dockerfile
+    command: ["vitality-modeler", "run"]
+    # A small init as process 1, to reap Claude Code's sub-processes.
+    init: true
+    # Claude Code keeps its own state under HOME: a throwaway folder, emptied on restart (the root is
+    # read-only). The login is the one file mounted into it below.
+    tmpfs:
+      - /tmp
+      - /home/modeler:mode=1777
+    environment:
+      # Never an API key: the sessions use the owner's Claude login (the Team seat).
+      MODELER_MODEL: ${MODELER_MODEL:-claude-opus-5-5}
+      MODELER_EFFORT: ${MODELER_EFFORT:-high}
+      MODELER_MAX_OPERATIONS: ${MODELER_MAX_OPERATIONS:-500}
+      MODELER_RUN_TIMEOUT_SECONDS: ${MODELER_RUN_TIMEOUT_SECONDS:-3600}
+    # As for the others: a missing source folder is an error, never created by Docker.
+    volumes:
+      # The model repo: the modeler commits its sessions here; the observer adds evidence beside them.
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/model
+        target: /model
+        bind: {create_host_path: false}
+      # The modeler's own record: sessions.jsonl, transcripts/, status.json, the lock.
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/modeler
+        target: /state
+        bind: {create_host_path: false}
+      # The screenshots, read-only: the sessions may look at a few.
+      - type: bind
+        source: ${VITALITY_DATA:-${HOME}/vitality-data}/server/captures
+        target: /captures
+        read_only: true
+        bind: {create_host_path: false}
+      # The owner's Claude login (writable, so a refreshed token is saved).
+      - type: bind
+        source: ${HOME}/.claude/.credentials.json
+        target: /home/modeler/.claude/.credentials.json
+        bind: {create_host_path: false}
+      # Timestamps in the host's time zone.
+      - /etc/localtime:/etc/localtime:ro

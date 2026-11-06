@@ -72,3 +72,25 @@ def test_status_command(model: Path, state: Path, capsys: pytest.CaptureFixture[
 
 def test_playbook_small_batches():
     assert "under about 100 operations" in " ".join(PLAYBOOK.split())
+
+
+def test_paused_service_stays_up(model: Path, state: Path, monkeypatch: pytest.MonkeyPatch):
+    from vitality_modeler import main as main_module
+
+    class Paused:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def run(self) -> int:
+            return 1
+
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        if len(slept) == 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(main_module, "Scheduler", Paused)
+    assert main_module._run(model, state, "/captures", sleep=sleep) == 1
+    assert slept == [3600, 3600, 3600]  # it waited to be stopped instead of exiting

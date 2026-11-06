@@ -4,13 +4,15 @@ Vitality watches how you use your computer and builds a model of you from it. A 
 your laptop captures screenshots around your keyboard and mouse activity; a server on a VM
 stores them, and an observer sends each interaction's screenshots to Claude through the Anthropic API
 and writes down what it saw: a verbatim transcript and a list of the operations the person did.
+A modeler then turns those into actions, activities and strivings, with Claude Code sessions on
+your Claude login.
 
 ## The two parts
 
 | Part | Where | What it is | How it runs |
 |---|---|---|---|
 | [`client/`](client/README.md) | the laptop | captures interactions and uploads them | its own `install.sh` and a systemd user service |
-| `server/`, `observer/` | the VM | [`server/`](server/README.md) stores uploads; [`observer/`](observer/README.md) turns them into observations and operations | Docker Compose, from this checkout |
+| `server/`, `observer/`, `modeler/` | the VM | [`server/`](server/README.md) stores uploads; [`observer/`](observer/README.md) turns them into observations and operations; [`modeler/`](modeler/README.md) turns those into the user model | Docker Compose, from this checkout |
 
 `protocol/` is the small package the client and server share. The laptop is set up from
 [`client/README.md`](client/README.md); everything below is about the VM.
@@ -26,8 +28,8 @@ You need:
   `sudo tailscale set --hostname=vitality-librarian`).
 - An Anthropic API key for the observer (see [The observer's API key](#the-observers-api-key)).
 - Claude Code, logged in as the user who will own the data: run `claude`, then `/login` inside it.
-  The observer does not use this login; the modeler of a later phase will, and `./vitality setup`
-  already checks for it. Claude Code keeps it in `~/.claude/.credentials.json` on a server; on a
+  The observer does not use this login; the modeler does (mounting only the login file), and
+  `./vitality setup` checks for it. Claude Code keeps it in `~/.claude/.credentials.json` on a server; on a
   desktop with a keyring it is kept in the keyring instead, which a container cannot use, so run
   the VM side on a server.
 
@@ -59,8 +61,8 @@ Each one prints the `docker compose` or `git` commands it runs.
 | Command | What it does |
 |---|---|
 | `./vitality setup` | creates `.env`, the data folders and the `model/` git repo if missing; checks the Claude login and the API key. Safe to rerun |
-| `./vitality status` | `docker compose ps`, then the server's and the observer's status, then the data folder |
-| `./vitality logs [service]` | follows the logs; `service` is `server` or `observer` (default: both) |
+| `./vitality status` | `docker compose ps`, then the server's, the observer's and the modeler's status, then the data folder |
+| `./vitality logs [service]` | follows the logs; `service` is `server`, `observer` or `modeler` (default: all) |
 | `./vitality upgrade` | fast-forwards to the newest `main` (only from a clean `main`), then `docker compose up -d --build` |
 | `./vitality lab <args>` | runs `vitality-lab` (a stage on a fixed dataset, outside `vitality-data`) with the key and settings from `.env`; see [`lab/README.md`](lab/README.md); `lab run modeler <dataset>` replays an evidence dataset through the modeler in its container |
 
@@ -70,6 +72,7 @@ Each one prints the `docker compose` or `git` commands it runs.
 laptop: 595 interactions · 1835 shots · 201.0 MB · last received 21:30:37
 disk: 19.7 GB free
 observer: 560 / 595 observed · 2 skipped · last call 21:28:26 EDT ok (40 s)
+modeler: 12 operations waiting · last session 21:20 committed (9 actions, 2 activities) · idle
 ```
 
 To stop everything: `docker compose down`. The data stays.
@@ -106,16 +109,19 @@ Everything is plain files under one folder, `~/vitality-data` by default, owned 
   model/       a git repo (started by ./vitality setup, commit "model: start")
     observations/<device>/<day>/<time>.md   transcript of each interaction (the observer)
     operations/<device>/<day>/<time>.md     the operations in it, each with a confidence (the observer)
-    actions/, activities/, strivings/       built from the operations by the modeler (a later phase)
+    actions/, activities/, strivings/       built from the operations by the modeler
     user-context.md                         about you, written by you; the modeler reads it, never edits it
     modeler-notes.md                        the modeler's notes to its next run
   observer/    calls.jsonl, skipped.txt
-  modeler/     the modeler's run logs (a later phase)
+  modeler/     sessions.jsonl, transcripts/, status.json (the modeler's record)
 ~/vitality-archive/observations-v1/   the old observations, moved out of the data folder by the migration
 ```
 
 The observer reads `server/captures` read-only and writes only `model/observations` and
-`model/operations`; the rest of `model/` is not mounted into it.
+`model/operations`; the rest of `model/` is not mounted into it. The modeler commits each session
+to `model/` (its batch of evidence and what it built from it) and reads the captures read-only.
+Evidence not yet committed is waiting for the modeler. Commit your own edits to `model/` (for
+example to `user-context.md`): the modeler waits while the folder has uncommitted changes.
 `user-context.md` is yours to fill in when you like (roles, routines, priorities, stresses,
 the people who matter); the model works without it. The formats are in
 [`usermodel/README.md`](usermodel/README.md).
@@ -127,8 +133,10 @@ for now the laptop is the backup.
 
 The observer no longer mounts `~/.claude`, so a screenshot containing text meant to steer it (a
 prompt injection) cannot reach your Claude Code settings through it: the observer has no tools
-and no files but its own two output folders. The modeler of phase 2 will use your Claude Code
-login and will mount `~/.claude`; the risks of that are discussed when it arrives.
+and no files but its own two output folders. The modeler uses your Claude Code login but mounts
+only the login file (`~/.claude/.credentials.json`), not the rest of `~/.claude`: its sessions see
+none of your settings, memory or plugins (checked by the isolation probe in
+[`modeler/README.md`](modeler/README.md)).
 
 ## Changing settings
 

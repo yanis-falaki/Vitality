@@ -4,6 +4,18 @@ The modeler turns the observer's evidence (operations and observations) into the
 
 Milestone 1 is the lab: the host prepares `<run>/model` with a dataset's whole evidence (`vitality_modeler.replay.prepare`), and `vitality-modeler replay /model /state` works through it batch by batch in the container, as the service will through a backlog. The container sees the model at `/model` and the records at `/state`, the paths the service will use.
 
+## The service
+
+`docker compose up -d` runs it as the `modeler` service: `vitality-modeler run`, with the model at `/model` (`~/vitality-data/model`), its records at `/state` (`~/vitality-data/modeler`), the captures read-only at `/captures`, and the owner's login file. Every 30 seconds it looks at the evidence waiting (operations files not yet committed):
+
+- 20 or more operations waiting, or anything waiting and no new file for 5 minutes: one session on the oldest batch (up to `MODELER_MAX_OPERATIONS`); after a commit it looks again at once, so a backlog is worked through batch after batch.
+- 3 sessions in a row without a commit: it pauses and stays paused (still running, doing nothing) until restarted: read `sessions.jsonl` and the transcripts, fix what is wrong, then `docker compose restart modeler`.
+- The usage limit of the Claude seat: it waits an hour, then tries again. A restart forgets the wait.
+- Uncommitted edits of yours in the model folder: it waits until you commit or discard them.
+- `docker compose stop modeler` stops it; a session in progress is reverted.
+
+`vitality-modeler status` (part of `./vitality status`) prints one line: the operations waiting, the last session, and the state (`idle`, `running`, `paused (3 failed)`, `waiting (usage limit until HH:MM)`, `waiting (uncommitted edits in the model folder)`, or `not running`). The state is kept in `/state/status.json`; `/state/scheduler.lock` keeps a second modeler from running on the same data. Its log (`./vitality logs modeler`) has one line per session, and every pause and wait.
+
 ## The image
 
 Build from the repository root:

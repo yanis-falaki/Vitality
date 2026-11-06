@@ -17,11 +17,12 @@ unexpected error is printed with its traceback. SIGTERM
 
 import argparse
 import os
+import time
 from datetime import datetime
 import signal
 import sys
 import traceback
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from types import FrameType
 
@@ -83,11 +84,19 @@ def _status(model: Path, state: Path) -> int:
     return 0
 
 
-def _run(model: Path, state: Path, captures: str) -> int:
+def _run(model: Path, state: Path, captures: str, sleep: Callable[[float], object] = time.sleep) -> int:
+    # When paused, stay up doing nothing until stopped: Compose restarts a service that exits, which
+    # would run three more failing sessions, pause, exit, and so on.
     previous = signal.signal(signal.SIGTERM, _interrupt)
     try:
         config = load_modeler_config(os.environ)
-        return Scheduler(model, state, config, captures=captures).run()
+        if Scheduler(model, state, config, captures=captures).run() == 0:
+            return 0
+        try:
+            while True:
+                sleep(3600)
+        except KeyboardInterrupt:
+            return 1
     except (ValueError, RuntimeError) as error:
         print(f"vitality-modeler: {error}", file=sys.stderr)
         return 2

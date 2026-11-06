@@ -3,8 +3,8 @@
 # the folder it lives in.
 #
 #   ./vitality setup            create .env, the data folders and the model repo; check the logins
-#   ./vitality status           containers, then the server's and the observer's status
-#   ./vitality logs [service]   follow the logs (service: server or observer; default: both)
+#   ./vitality status           containers, then the server's, the observer's and the modeler's status
+#   ./vitality logs [service]   follow the logs (service: server, observer or modeler; default: all)
 #   ./vitality upgrade          fast-forward to the newest main, then rebuild and restart
 #   ./vitality lab <args>       run vitality-lab (lab/README.md) with the settings from .env
 #
@@ -99,8 +99,8 @@ cmd_setup() {
 
     setup_model_repo "$data/model"
 
-    # The login is the file ~/.claude/.credentials.json. The observer no longer uses it (it calls the
-    # API with a key); the modeler of a later phase will, through a ~/.claude mount.
+    # The login is the file ~/.claude/.credentials.json. The observer does not use it (it calls the
+    # API with a key); the modeler does, mounting only that file.
     # On a desktop with a keyring (gnome-keyring, KWallet) Claude Code keeps the login there instead,
     # and the container cannot use it: run the VM side on a server.
     if [[ ! -f $HOME/.claude/.credentials.json ]]; then
@@ -132,6 +132,7 @@ cmd_status() {
     run docker compose ps || failed=1
     run docker compose run --rm --no-deps server vitality-server status || failed=1
     run docker compose run --rm --no-deps observer vitality-observer status || failed=1
+    run docker compose run --rm --no-deps modeler vitality-modeler status || failed=1
     echo "data: $(data_dir)"
     return "$failed"
 }
@@ -190,8 +191,8 @@ usage() {
 usage: ./vitality <command>
 
   setup             create .env, the data folders and the model repo; check the logins
-  status            containers, then the server's and the observer's status
-  logs [service]    follow the logs (service: server or observer; default: both)
+  status            containers, then the server's, the observer's and the modeler's status
+  logs [service]    follow the logs (service: server, observer or modeler; default: all)
   upgrade           fast-forward to the newest main, then rebuild and restart
   lab <args>        run vitality-lab with the settings from .env (see lab/README.md)
 EOF

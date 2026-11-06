@@ -240,3 +240,10 @@ def test_keyboard_interrupt_writes_idle(model: Path, state: Path):
                   sleep=clock.sleep, log=lambda line: None)
     assert s.run() == 0
     assert status(state)["state"] == "idle"
+
+
+def test_status_idle_after_a_failed_session(model: Path, state: Path):
+    evidence(model, 4, ops=5)
+    session, clock = Session("failed"), Clock()
+    scheduler(model, state, session, clock).step()
+    assert status(state)["state"] == "idle"

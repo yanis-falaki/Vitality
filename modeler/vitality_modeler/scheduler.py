@@ -140,6 +140,7 @@ class Scheduler:
             self._write("paused")
             self.paused = True
             return 0
+        self._write("idle")
         return CHECK_SECONDS
 
     def _write(self, state: str, *, until: datetime | None = None, force: bool = False) -> None:
