@@ -30,7 +30,7 @@ class FakeRunner:
 
 
 def run_dir(command: list[str]) -> Path:
-    """The records folder the container writes to (mounted at /state)."""
+    """The state folder the container writes its records to (mounted at /state)."""
     mounts = [command[i + 1] for i, a in enumerate(command) if a == "-v"]
     return Path(next(m for m in mounts if m.endswith(":/state")).removesuffix(":/state"))
 
@@ -97,8 +97,8 @@ def test_modeler_run_writes_record(repo: Path, lab: Path, home: Path):
     build, launch = runner.commands
     assert build == docker_build_command(repo)
     config = modeler_settings(environ, [])
-    assert (folder / "records").is_dir() and not (folder / "sessions.jsonl").exists()
-    expected = docker_run_command(folder / "model", folder / "records", home / ".claude" / ".credentials.json",
+    assert (folder / "state").is_dir() and not (folder / "sessions.jsonl").exists()
+    expected = docker_run_command(folder / "model", folder / "state", home / ".claude" / ".credentials.json",
                                   config, os.getuid(), os.getgid())
     assert launch == expected
     assert f"{os.getuid()}:{os.getgid()}" in launch
@@ -109,9 +109,9 @@ def test_commands():
     config = ModelerConfig()
     assert docker_build_command(Path("/r")) == [
         "docker", "build", "-f", "/r/modeler/Dockerfile", "-t", "vitality-modeler", "/r"]
-    assert docker_run_command(Path("/u/model"), Path("/u/records"), Path("/c"), config, 1000, 1001) == [
+    assert docker_run_command(Path("/u/model"), Path("/u/state"), Path("/c"), config, 1000, 1001) == [
         "docker", "run", "--rm", "--user", "1000:1001",
-        "-v", "/u/model:/model", "-v", "/u/records:/state", "-v", "/c:/home/modeler/.claude/.credentials.json",
+        "-v", "/u/model:/model", "-v", "/u/state:/state", "-v", "/c:/home/modeler/.claude/.credentials.json",
         "-e", "MODELER_MODEL=claude-opus-5-5", "-e", "MODELER_EFFORT=high",
         "-e", "MODELER_MAX_OPERATIONS=500", "-e", "MODELER_RUN_TIMEOUT_SECONDS=3600",
         "vitality-modeler", "vitality-modeler", "replay", "/model", "/state"]

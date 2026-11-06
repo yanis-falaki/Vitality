@@ -5,9 +5,9 @@ service's model folder holds a backlog. `replay` then runs session after session
 session is offered the oldest evidence not yet committed (up to the cap) and may read the rest. A
 batch that is not committed stays untracked and is offered again to the next session. The replay stops
 when every operations file is committed, after `MAX_FAILED_IN_A_ROW` sessions in a row without a
-commit, when the usage limit is reached, or on KeyboardInterrupt. The records go to a separate folder,
-as the service keeps them apart from the model: `<records>/sessions.jsonl`, `<records>/transcripts/`
-and the summary `<records>/replay.json`. In the lab's container these are `/model` and `/state`, the
+commit, when the usage limit is reached, or on KeyboardInterrupt. The records go to a separate state
+folder, as the service keeps them apart from the model: `<state>/sessions.jsonl`, `<state>/transcripts/`
+and the summary `<state>/replay.json`. In the lab's container these are `/model` and `/state`, the
 paths the service will use. Progress goes to stderr: a line
 at the start, one as each session ends, and one at the end.
 """
@@ -74,9 +74,9 @@ def prepare(dataset: Path, model: Path) -> None:
             shutil.copytree(dataset / kind, model / kind)
 
 
-def replay(model: Path, records: Path, config: ModelerConfig, *, claude: str = "claude",
+def replay(model: Path, state: Path, config: ModelerConfig, *, claude: str = "claude",
            environ: Mapping[str, str] = os.environ) -> ReplaySummary:
-    """Run sessions on `model` until nothing waits, writing `<records>/replay.json`; return the summary.
+    """Run sessions on `model` until nothing waits, writing `<state>/replay.json`; return the summary.
 
     Raises ValueError, before anything is written, when `model` is not a prepared model (see `prepare`).
     KeyboardInterrupt stops the replay (`stopped: "interrupted"`) and is not raised again; any other
@@ -84,15 +84,15 @@ def replay(model: Path, records: Path, config: ModelerConfig, *, claude: str = "
     """
     if not (model / ".git").is_dir():
         raise ValueError(f"no model in {model}; prepare it first")
-    records.mkdir(parents=True, exist_ok=True)
-    earlier = _read_outcomes(records / "sessions.jsonl")  # a run folder is fresh, but count only this replay's sessions
+    state.mkdir(parents=True, exist_ok=True)
+    earlier = _read_outcomes(state / "sessions.jsonl")  # a run folder is fresh, but count only this replay's sessions
     stopped: str | None = None
     without_commit = 0
     _progress(f"{len(_operations_files(model))} operations files to offer, "
               f"batches of up to {config.max_operations} operations")
     try:
         while True:
-            record = run_session(model, records, config, PLAYBOOK, PLAYBOOK_VERSION, trigger="replay",
+            record = run_session(model, state, config, PLAYBOOK, PLAYBOOK_VERSION, trigger="replay",
                                  claude=claude, environ=environ)
             if record is None:
                 break
@@ -107,9 +107,9 @@ def replay(model: Path, records: Path, config: ModelerConfig, *, claude: str = "
     except KeyboardInterrupt:
         stopped = "interrupted"  # run_session has reverted and recorded the session it was in
     except BaseException as error:
-        _finish(records, model, earlier, f"{type(error).__name__}: {error}")
+        _finish(state, model, earlier, f"{type(error).__name__}: {error}")
         raise
-    return _finish(records, model, earlier, stopped)
+    return _finish(state, model, earlier, stopped)
 
 
 def _progress(line: str) -> None:
@@ -142,15 +142,15 @@ def _read_outcomes(records: Path) -> list[str]:
     return [json.loads(line)["outcome"] for line in records.read_text(encoding="utf-8").splitlines() if line]
 
 
-def _finish(records: Path, model: Path, earlier: list[str], stopped: str | None) -> ReplaySummary:
+def _finish(state: Path, model: Path, earlier: list[str], stopped: str | None) -> ReplaySummary:
     # Build the summary from this replay's session records and what the model committed; write it.
     sessions: dict[str, int] = {}
-    for outcome in _read_outcomes(records / "sessions.jsonl")[len(earlier):]:
+    for outcome in _read_outcomes(state / "sessions.jsonl")[len(earlier):]:
         sessions[outcome] = sessions.get(outcome, 0) + 1
     committed = set(repo.tracked(model, "operations"))
     summary = ReplaySummary(sessions, stopped,
                             [e.interaction for e in _operations_files(model) if e.path not in committed])
-    records.mkdir(parents=True, exist_ok=True)
-    (records / "replay.json").write_text(json.dumps(summary.to_json(), indent=2) + "\n", encoding="utf-8")
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "replay.json").write_text(json.dumps(summary.to_json(), indent=2) + "\n", encoding="utf-8")
     _progress("done: " + (", ".join(f"{k} {n}" for k, n in sorted(sessions.items())) or "no sessions"))
     return summary

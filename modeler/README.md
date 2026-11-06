@@ -15,7 +15,7 @@ The image holds Python 3.14, the `vitality-modeler` and `vitality-usermodel` com
 It runs as any `--user uid:gid` (`/home/modeler` and `/home/modeler/.claude` are mode 1777; git trusts every folder). The lab runs it without Compose:
 
     docker run --rm --user "$(id -u):$(id -g)" \
-      -v <run>/model:/model -v <run>/records:/state \
+      -v <run>/model:/model -v <run>/state:/state \
       -v ~/.claude/.credentials.json:/home/modeler/.claude/.credentials.json \
       -e MODELER_MODEL=... -e MODELER_EFFORT=... \
       vitality-modeler vitality-modeler replay /model /state
@@ -50,7 +50,7 @@ Environment variables; unset or empty keeps the default.
 
 ## Records
 
-The model folder (`/model`) holds the user model, one commit per successful session. In the records folder (`/state`):
+The model folder (`/model`) holds the user model, one commit per successful session. In the state folder (`/state`, the run's `state/` on the host; in the service, `~/vitality-data/modeler/`):
 
 - `sessions.jsonl`: one JSON line per session: outcome (`committed`, `reverted`, `failed`, `limited`), operations offered, model, playbook version, attempts, check errors, commit, changes, duration, tokens, cost. Tokens and cost come from the last result's `modelUsage` (all models, sub-agents included; input tokens count cache reads and writes) and `total_cost_usd`. A resumed attempt's result is taken to carry the earlier attempt's totals already, as Claude Code 2.1.309 documents, so the last attempt's totals are recorded, not a sum: to be confirmed on the first real run.
 - `transcripts/<run>.jsonl`: the session's full stream.

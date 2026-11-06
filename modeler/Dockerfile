@@ -1,7 +1,7 @@
 # The Vitality modeler image. Build from the repository root:
 #   docker build -f modeler/Dockerfile -t vitality-modeler .
 # The lab runs it without Compose (see README.md):
-#   docker run --rm --user <uid>:<gid> -v <run>/model:/model -v <run>/records:/state \
+#   docker run --rm --user <uid>:<gid> -v <run>/model:/model -v <run>/state:/state \
 #     -v ~/.claude/.credentials.json:/home/modeler/.claude/.credentials.json \
 #     -e MODELER_<SETTING>=... vitality-modeler vitality-modeler replay /model /state
 # Any uid:gid works: HOME and its .claude are world-writable, and git trusts every folder.

@@ -65,14 +65,14 @@ def offered(call: dict[str, Any]) -> list[str]:
 
 
 def prepared(dataset: Path, run: Path) -> tuple[Path, Path]:
-    """Prepare `<run>/model` from the dataset; return it and `<run>/records`, as the lab lays them out."""
+    """Prepare `<run>/model` from the dataset; return it and `<run>/state`, as the lab lays them out."""
     prepare(dataset, run / "model")
-    return run / "model", run / "records"
+    return run / "model", run / "state"
 
 
 def outcomes(run: Path) -> list[tuple[str, str]]:
     return [(r["outcome"], r["detail"]) for r in
-            map(json.loads, (run / "records" / "sessions.jsonl").read_text().splitlines())]
+            map(json.loads, (run / "state" / "sessions.jsonl").read_text().splitlines())]
 
 
 def test_replay_two_batches(dataset: Path, tmp_path: Path):
@@ -96,9 +96,9 @@ def test_replay_two_batches(dataset: Path, tmp_path: Path):
                                                     [f"operations/{n}.md" for n in FILES[2:]]]
     argv = calls(tmp_path)[0]["argv"]
     assert argv[argv.index("--append-system-prompt") + 1] == PLAYBOOK
-    assert {json.loads(line)["playbook"] for line in (run / "records" / "sessions.jsonl").read_text().splitlines()} == \
+    assert {json.loads(line)["playbook"] for line in (run / "state" / "sessions.jsonl").read_text().splitlines()} == \
         {PLAYBOOK_VERSION}
-    assert json.loads((run / "records" / "replay.json").read_text()) == summary.to_json() == \
+    assert json.loads((run / "state" / "replay.json").read_text()) == summary.to_json() == \
         {"sessions": {"committed": 2}, "stopped": None, "not_offered": []}
 
 
@@ -107,7 +107,7 @@ def test_replay_progress_lines(dataset: Path, tmp_path: Path, capsys: pytest.Cap
     environ = script(tmp_path, [FAILING, {"write": action(*FILES[:2])}, {"write": action(*FILES[2:])}])
     replay(*prepared(dataset, run), CONFIG, claude=str(FAKE), environ=environ)
     err = capsys.readouterr().err.splitlines()
-    records = [json.loads(line) for line in (run / "records" / "sessions.jsonl").read_text().splitlines()]
+    records = [json.loads(line) for line in (run / "state" / "sessions.jsonl").read_text().splitlines()]
     assert len(err) == 2 + len(records) == 5
     assert err[0] == "vitality-modeler: 4 operations files to offer, batches of up to 6 operations"
     for line, record in zip(err[1:-1], records):
@@ -136,7 +136,7 @@ def test_replay_retries_then_stops(dataset: Path, tmp_path: Path):
     assert [offered(c) for c in calls(tmp_path)] == [[f"operations/{n}.md" for n in FILES[:2]]] * 3
     assert summary.not_offered == FILES
     assert git(run / "model", "log", "--format=%s").splitlines() == ["model: start"]
-    assert json.loads((run / "records" / "replay.json").read_text())["stopped"] == "3 sessions in a row without a commit"
+    assert json.loads((run / "state" / "replay.json").read_text())["stopped"] == "3 sessions in a row without a commit"
 
 
 def test_replay_limited_stops(dataset: Path, tmp_path: Path):
@@ -166,7 +166,7 @@ def test_replay_interrupt(dataset: Path, tmp_path: Path, monkeypatch: pytest.Mon
     assert summary.stopped == "interrupted"
     assert summary.not_offered == FILES
     assert outcomes(run) == [("failed", "interrupted")]
-    assert json.loads((run / "records" / "replay.json").read_text())["stopped"] == "interrupted"
+    assert json.loads((run / "state" / "replay.json").read_text())["stopped"] == "interrupted"
 
 
 def test_replay_error_is_recorded_and_raised(dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -178,7 +178,7 @@ def test_replay_error_is_recorded_and_raised(dataset: Path, tmp_path: Path, monk
     monkeypatch.setattr(replay_module, "run_session", run_session)
     with pytest.raises(RuntimeError, match="boom"):
         replay(*prepared(dataset, run), CONFIG, claude=str(FAKE), environ=script(tmp_path, [{}]))
-    assert json.loads((run / "records" / "replay.json").read_text()) == \
+    assert json.loads((run / "state" / "replay.json").read_text()) == \
         {"sessions": {}, "stopped": "RuntimeError: boom", "not_offered": FILES}
 
 
@@ -207,7 +207,7 @@ def test_prepare_needs_user_context(dataset: Path, tmp_path: Path):
 
 def test_replay_needs_a_prepared_model(tmp_path: Path):
     with pytest.raises(ValueError, match="no model"):
-        replay(tmp_path / "model", tmp_path / "records", CONFIG, claude=str(FAKE), environ=script(tmp_path, [{}]))
+        replay(tmp_path / "model", tmp_path / "state", CONFIG, claude=str(FAKE), environ=script(tmp_path, [{}]))
 
 
 def fake_on_path(tmp_path: Path) -> str:
@@ -227,7 +227,7 @@ def test_main_usage_and_exit_codes(dataset: Path, tmp_path: Path, monkeypatch: p
     assert main(["replay", *map(str, prepared(dataset, tmp_path / "x"))]) == 2
     assert "MODELER_EFFORT" in capsys.readouterr().err
     monkeypatch.delenv("MODELER_EFFORT")
-    assert main(["replay", str(tmp_path / "missing"), str(tmp_path / "records")]) == 2
+    assert main(["replay", str(tmp_path / "missing"), str(tmp_path / "state")]) == 2
     assert "no model" in capsys.readouterr().err
 
     monkeypatch.setenv("MODELER_MAX_OPERATIONS", "6")
@@ -238,7 +238,7 @@ def test_main_usage_and_exit_codes(dataset: Path, tmp_path: Path, monkeypatch: p
     before = signal.getsignal(signal.SIGTERM)
     assert main(["replay", *map(str, prepared(dataset, tmp_path / "ok"))]) == 0
     assert signal.getsignal(signal.SIGTERM) == before
-    assert json.loads((tmp_path / "ok" / "records" / "replay.json").read_text())["sessions"] == {"committed": 2}
+    assert json.loads((tmp_path / "ok" / "state" / "replay.json").read_text())["sessions"] == {"committed": 2}
 
     (tmp_path / "script.json").write_text(json.dumps([FAILING]))
     (tmp_path / "script.json.state").unlink()
@@ -277,7 +277,7 @@ def test_sigterm_stops_replay(dataset: Path, tmp_path: Path):
             process.kill()
     assert process.returncode == 1, stderr
     assert time.monotonic() - started < 10  # the sleeping session was killed, not waited out
-    assert json.loads((run / "records" / "replay.json").read_text()) == \
+    assert json.loads((run / "state" / "replay.json").read_text()) == \
         {"sessions": {"failed": 1}, "stopped": "interrupted", "not_offered": FILES}
     assert outcomes(run) == [("failed", "interrupted")]
     assert git(run / "model", "status", "--porcelain", "--untracked-files=all").splitlines() == sorted(

@@ -169,7 +169,7 @@ run itself happens in **one container**:
   (step 1), then start one container
   with plain Docker (no Compose: Compose describes the running application, and the lab is apart
   from it):
-  `docker run --rm --user <VITALITY_UID>:<VITALITY_GID> -v <run>/model:/model -v <run>/records:/state
+  `docker run --rm --user <VITALITY_UID>:<VITALITY_GID> -v <run>/model:/model -v <run>/state:/state
   -v ~/.claude/.credentials.json:<the login path in the container> vitality-modeler
   vitality-modeler replay /model /state`: the model and the records at the paths the service will
   use (`/model`, `/state`). The dataset, `run.yaml`, `playbook.md` and `changes.diff` are never mounted. Every mount and setting the container gets is in that one
@@ -179,7 +179,7 @@ run itself happens in **one container**:
 
 1. **Setup (host):** the run folder gets `model/`, a fresh git repo with the templates and the
    dataset's `user-context.md`, committed, plus the dataset's whole `observations/` and `operations/`,
-   untracked, as the service's model folder holds a backlog; `records/` is created empty; `playbook.md`
+   untracked, as the service's model folder holds a backlog; `state/` is created empty; `playbook.md`
    is copied beside `run.yaml`.
 2. **Replay (container):** run one session (§5) after another; each is offered the oldest evidence not
    yet committed, up to `max_operations` operations, and may read all the rest. Repeat until all of
@@ -191,7 +191,7 @@ run itself happens in **one container**:
    `MODELER_RUN_TIMEOUT_SECONDS` from `.env`; `--set` short names `model`, `effort`,
    `max_operations`, `run_timeout_seconds`.
 5. **Records:** `run.yaml` (stage `modeler`, input `datasets/<name>`, playbook hash, sessions by
-   outcome, stop reason), and in `records/`: `sessions.jsonl`, `transcripts/`, `replay.json`.
+   outcome, stop reason), and in `state/`: `sessions.jsonl`, `transcripts/`, `replay.json`.
 
 Reading a run: its `model/` folder, and `git -C model log --stat` for how it grew session by session.
 
@@ -207,7 +207,7 @@ modeler/
     claude.py              building the claude command and run message; reading the stream
     repo.py                clean test, staging, commit, revert, change counts (git)
     replay.py              §7: prepare (host), then session after session, stopping early, summary
-    main.py                vitality-modeler replay <model> <records>  (milestone 2 adds `run`, `status`)
+    main.py                vitality-modeler replay <model> <state>  (milestone 2 adds `run`, `status`)
     playbook.md            shipped inside the package, read with importlib.resources
   tests/                   with a fake `claude` executable
 lab/vitality_lab/

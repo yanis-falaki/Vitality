@@ -1,11 +1,11 @@
 """The `vitality-modeler` command.
 
-    vitality-modeler replay <model> <records>
+    vitality-modeler replay <model> <state>
 
 Runs sessions on the model folder `<model>` (made by `vitality_modeler.replay.prepare`, on the host)
-until all its evidence is committed, writing records to `<records>`, with the settings of `config.py`
+until all its evidence is committed, writing its records to `<state>`, with the settings of `config.py`
 from the environment. In the lab's container these are `/model` and `/state`. Exits 0 when all the
-evidence was committed, 1 when the replay stopped early (see `<records>/replay.json`) or failed, and 2
+evidence was committed, 1 when the replay stopped early (see `<state>/replay.json`) or failed, and 2
 on a usage error: bad arguments or settings, or a folder that is not a prepared model; an
 unexpected error is printed with its traceback. SIGTERM
 (as from `docker stop`) stops the replay as Ctrl-C does.
@@ -29,7 +29,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     replay_parser = commands.add_parser("replay", help="run sessions on <model> until nothing waits")
     replay_parser.add_argument("model", type=Path, help="the prepared model folder (a git repo with evidence waiting)")
-    replay_parser.add_argument("records", type=Path, help="gets sessions.jsonl, transcripts/, replay.json")
+    replay_parser.add_argument("state", type=Path, help="gets sessions.jsonl, transcripts/, replay.json")
     try:
         args = parser.parse_args(argv)
     except SystemExit as stop:
@@ -39,7 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         try:
             config = load_modeler_config(os.environ)
-            summary = replay(args.model, args.records, config)
+            summary = replay(args.model, args.state, config)
         except ValueError as error:
             print(f"vitality-modeler: {error}", file=sys.stderr)
             return 2
