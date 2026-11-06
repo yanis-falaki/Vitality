@@ -1,0 +1,95 @@
+/* The one theme of the app: every colour, font, size, radius and space is a token here (web spec, §5).
+   Views and components use these variables only; they define no colours or fonts of their own.
+   Calm: warm off-white page, white panels, hairline borders, almost no shadow.
+
+   The four level colours were checked with the dataviz skill's validator (all pairs, light mode,
+   on --bg and on --panel): lightness band, CVD separation (worst ΔE 11.0, protan), normal-vision
+   floor (worst ΔE 16.6) and contrast (all >= 3:1) pass. Evidence is grey on purpose, so it alone
+   is below the chroma floor: it is the neutral level. */
+
+@import "@fontsource-variable/inter/index.css";
+@import "@fontsource-variable/source-serif-4/opsz.css";
+@import "@fontsource-variable/source-serif-4/opsz-italic.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
+
+:root {
+  /* Surfaces and ink */
+  --bg: #f7f5f0;
+  --panel: #ffffff;
+  --panel-2: #fbfaf7;       /* a quieter panel: the outline, tracks */
+  --ink: #23211d;
+  --ink-2: #57524b;
+  --ink-3: #7a746b;
+  --line: #e7e2d9;
+  --line-2: #d6cfc2;
+  --hover: #f2eee7;
+  --select: #ece6db;
+  --scrim: rgba(35, 33, 29, 0.28);
+  --lightbox: rgba(20, 19, 17, 0.9);
+
+  /* Colour means level */
+  --striving: #bf7428;
+  --activity: #009282;
+  --action: #5266b8;
+  --evidence: #58544e;
+  --striving-soft: #f5e9da;
+  --activity-soft: #dcefeb;
+  --action-soft: #e5e8f4;
+  --evidence-soft: #ebe8e3;
+
+  /* Status (the modeler's state only) */
+  --ok: #3d7f55;
+  --warn: #a8701c;
+  --bad: #a6473c;
+
+  /* Edges of the graph: structure is quiet; working against is the one strong line */
+  --edge: #ddd6ca;
+  --edge-strong: #a9a090;
+  --edge-against: #9a5b4b;
+
+  /* Type */
+  --sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --serif: "Source Serif 4 Variable", Georgia, serif;
+  --mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text: 14px;
+  --text-lg: 16px;
+  --prose: 17px;
+  --prose-sm: 14.5px;
+
+  /* Shape and space */
+  --r-sm: 6px;
+  --r: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --shadow: 0 1px 2px rgba(40, 30, 10, 0.05);
+  --shadow-lift: 0 2px 6px rgba(40, 30, 10, 0.06), 0 12px 32px rgba(40, 30, 10, 0.08);
+
+  /* Layout */
+  --topbar: 52px;
+  --tabbar: 58px;
+  --inspector: 440px;
+  --touch: 40px;            /* smallest touch target */
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--text)/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  overflow: hidden;         /* each view scrolls inside itself */
+}
+a { color: inherit; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
