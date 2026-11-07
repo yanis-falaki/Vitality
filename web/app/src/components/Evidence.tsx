@@ -1,10 +1,11 @@
 // One interaction's evidence, as a card: its time, its operations (those `cited` by the action in
-// view emphasised, the others dimmed), thumbnails that open the lightbox, and the observation
-// behind a disclosure. Fetched when the card is shown.
+// view emphasised, the others dimmed), thumbnails that open the lightbox (each marked with its screen
+// when there are several), and the observation behind a disclosure. Fetched when the card is shown.
 import { useState } from "react";
-import { shotUrl, useEvidence } from "../api/client";
+import { shotUrl, useEvidence, type Shot } from "../api/client";
 import { clock, minutes, plural } from "../lib/format";
 import type { Model } from "../lib/model";
+import { shotLabel } from "../lib/shots";
 import { RichText } from "./RichText";
 import { useLightbox } from "./Lightbox";
 
@@ -21,7 +22,9 @@ export function EvidenceCard({ model, interaction, cited, showObservation = fals
   const [observation, setObservation] = useState(showObservation);
   const start = data?.start ?? model.interactionStart(interaction);
   const end = data?.end;
-  const urls = (data?.screenshots ?? []).map((f) => shotUrl(interaction, f));
+  const shots = data?.shots ?? [];
+  const urls = shots.map((s) => shotUrl(interaction, s.file));
+  const captions = shots.map(shotLabel);
   return (
     <div className="evidence">
       <div className="evidence-head">
@@ -42,8 +45,10 @@ export function EvidenceCard({ model, interaction, cited, showObservation = fals
           {urls.length > 0 && (
             <div className="thumbs">
               {urls.map((url, i) => (
-                <button type="button" key={url} className="thumb" onClick={() => show(urls, i)} aria-label={`Screenshot ${i + 1}`}>
+                <button type="button" key={url} className="thumb" onClick={() => show(urls, i, captions)}
+                  aria-label={`Screenshot ${i + 1}${captions[i] ? `, ${captions[i]}` : ""}`}>
                   <img src={url} alt="" loading="lazy" />
+                  <ShotBadge shot={shots[i]} />
                 </button>
               ))}
             </div>
@@ -60,5 +65,15 @@ export function EvidenceCard({ model, interaction, cited, showObservation = fals
         </>
       )}
     </div>
+  );
+}
+
+/** A shot's screen number in a corner of its thumbnail, with "focused" (none for a single screen). */
+export function ShotBadge({ shot, brief = false }: { shot: Shot; brief?: boolean }) {
+  if (shot.screen == null) return null;
+  return (
+    <span className={`shot-badge${shot.focused ? " focused" : ""}`} title={shotLabel(shot)}>
+      {shot.screen}{shot.focused && !brief ? " · focused" : ""}
+    </span>
   );
 }

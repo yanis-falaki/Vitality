@@ -10,6 +10,9 @@ import { useApiModel, type Action, type Activity, type ApiModel, type Striving }
 import { addDays } from "./calendar";
 import { day } from "./format";
 
+/** Whether `id` names an interaction (`laptop/2026-11-03/14-22-05`), cited by an action or not. */
+export const isInteraction = (id: string) => /^[A-Za-z0-9][A-Za-z0-9._-]*\/\d{4}-\d\d-\d\d\/\d\d-\d\d-\d\d(-\d+)?$/.test(id);
+
 /** Activities not seen for longer than this (before the model's last day) are "older". */
 export const STALE_DAYS = 30;
 

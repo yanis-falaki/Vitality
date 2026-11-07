@@ -1,6 +1,8 @@
 // "What changed in the model": the modeler's commits, newest first, each under its session's time, in
 // plain words: per belief one line (its title, which opens it in the Reader, and what happened to it),
-// then "+N actions". Sessions newer than the owner's last visit to Home carry a quiet "new".
+// then "+N actions". Sessions newer than the owner's last visit to Home carry a quiet "new". The feed
+// scrolls inside its own box ("Show more" loads into it): beside the day and the week on a desktop, as
+// tall as they are; on a tablet or phone, at most about 60% of the window.
 import { Link } from "react-router-dom";
 import { useChanges, type ChangeItem, type ModelerCommit } from "../../api/client";
 import { Dot } from "../../components/bits";
@@ -15,20 +17,22 @@ export function Changes({ model, lastVisit }: { model: Model; lastVisit: number 
       <div className="home-section-head">
         <h2 className="eyebrow" id="home-changes">What changed in the model</h2>
       </div>
-      {query.isLoading && <p className="home-quiet">Reading the modeler's history…</p>}
-      {query.isError && <p className="home-quiet">The model's history could not be read.</p>}
-      {query.isSuccess && commits.length === 0 && <p className="home-quiet">The modeler has not changed the model yet.</p>}
-      <ol className="home-feed" data-testid="home-changes">
-        {commits.map((c) => (
-          <Session key={c.commit} model={model} commit={c} fresh={lastVisit !== null && Date.parse(c.time) > lastVisit} />
-        ))}
-      </ol>
-      {query.hasNextPage && (
-        <button type="button" className="button home-show-more" disabled={query.isFetchingNextPage}
-          onClick={() => query.fetchNextPage()}>
-          {query.isFetchingNextPage ? "Reading…" : "Show more"}
-        </button>
-      )}
+      <div className="home-feed-box" data-testid="home-feed-box">
+        {query.isLoading && <p className="home-quiet">Reading the modeler's history…</p>}
+        {query.isError && <p className="home-quiet">The model's history could not be read.</p>}
+        {query.isSuccess && commits.length === 0 && <p className="home-quiet">The modeler has not changed the model yet.</p>}
+        <ol className="home-feed" data-testid="home-changes">
+          {commits.map((c) => (
+            <Session key={c.commit} model={model} commit={c} fresh={lastVisit !== null && Date.parse(c.time) > lastVisit} />
+          ))}
+        </ol>
+        {query.hasNextPage && (
+          <button type="button" className="button home-show-more" disabled={query.isFetchingNextPage}
+            onClick={() => query.fetchNextPage()}>
+            {query.isFetchingNextPage ? "Reading…" : "Show more"}
+          </button>
+        )}
+      </div>
     </section>
   );
 }

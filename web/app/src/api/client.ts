@@ -12,6 +12,9 @@ export type ActionDetail = S["ActionDetail"];
 export type InteractionSummary = S["InteractionSummary"];
 export type Interactions = Record<string, InteractionSummary>;
 export type Evidence = S["Evidence"];
+export type Shot = S["Shot"];
+export type DayInteraction = S["DayInteraction"];
+export type DayInteractions = S["DayInteractions"];
 export type Modeler = S["Modeler"];
 export type Session = S["Session"];
 export type Pipeline = S["Pipeline"];
@@ -79,6 +82,22 @@ export function useEvidence(interaction: string | null) {
 /** The evidence of several interactions, in their order (an entry is undefined while it loads). */
 export function useEvidenceOf(interactions: string[]): (Evidence | null | undefined)[] {
   return useQueries({ queries: interactions.map(evidenceQuery) }).map((q) => q.data);
+}
+
+/** How many interactions were observed each local day (Day's Evidence mode steps between these days). */
+export function useInteractionDays(enabled = true) {
+  return useQuery({
+    queryKey: ["interaction-days"], enabled, refetchInterval: 60_000,
+    queryFn: () => get<Record<string, number>>("/api/interaction-days"),
+  });
+}
+
+/** Every interaction observed on a local day, cited by an action or not, by start; re-read every minute. */
+export function useDayInteractions(day: string | null) {
+  return useQuery({
+    queryKey: ["day-interactions", day], enabled: day !== null, refetchInterval: 60_000,
+    queryFn: () => get<DayInteractions>(`/api/days/${day}/interactions`),
+  });
 }
 
 /** The modeler's state, polled every 30 seconds. */
