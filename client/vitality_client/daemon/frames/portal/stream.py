@@ -79,9 +79,12 @@ def pipeline_description(fd: int, node_id: int, max_fps: int) -> str:
     # producer (a downstream videorate stalled on the compositor's variable-rate
     # stream). Frames stay in the producer's format; they are converted to RGB only
     # when a snapshot asks for one, not on every frame.
+    # always-copy returns each buffer to the portal at once: keeping the newest frame of
+    # every stream pinned the portal's buffers, and with two sessions Hyprland's portal ran
+    # out ("Out of buffers") and one screen stopped updating.
     formats = ",".join(_RAW_MODES)
     return (
-        f"pipewiresrc fd={fd} path={node_id} keepalive-time=1000 ! "
+        f"pipewiresrc fd={fd} path={node_id} keepalive-time=1000 always-copy=true ! "
         f"video/x-raw,format=(string){{{formats}}},max-framerate={max_fps}/1 ! "
         "appsink name=sink max-buffers=1 drop=true sync=false emit-signals=true"
     )

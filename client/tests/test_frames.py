@@ -57,8 +57,10 @@ def test_rgb_image_padded_rows_skip_padding():
 def test_pipeline_description():
     # The rate cap is negotiated with the producer via caps; a videorate element
     # downstream stalled on Hyprland's variable-rate stream (stuck on the first frame).
+    # always-copy hands every buffer straight back to the portal: holding them starved
+    # Hyprland's portal with two sessions ("Out of buffers") and froze one screen.
     assert pipeline_description(17, 42, 5) == (
-        "pipewiresrc fd=17 path=42 keepalive-time=1000 ! "
+        "pipewiresrc fd=17 path=42 keepalive-time=1000 always-copy=true ! "
         "video/x-raw,format=(string){BGRx,RGBx,xRGB,xBGR,BGRA,RGBA,ARGB,ABGR,BGR,RGB},"
         "max-framerate=5/1 ! "
         "appsink name=sink max-buffers=1 drop=true sync=false emit-signals=true"
