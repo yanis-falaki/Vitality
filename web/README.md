@@ -4,11 +4,13 @@ A private, read-only web app for reading the user model: what it believes about 
 evidence behind it. It never writes to the model. The design is in
 `docs/superpowers/specs/2026-11-06-web-design.md`.
 
-Four views share one inspector (the panel that shows whatever is selected):
+Home is the page to open each day; four views share one inspector (the panel that shows whatever is
+selected):
 
 | View | Route | What it is |
 |---|---|---|
-| Reader | `/` | an outline of strivings and activities; each as a page to read, with a heatmap of when its actions happened |
+| Home | `/` | today's date and whether the pipeline is working, a search across the model (`/`), today so far as Day's lanes, where the week's time went by striving, and what the modeler changed, session by session |
+| Reader | `/reader` (old `/?page=` links redirect) | an outline of strivings and activities; each as a page to read, with a heatmap of when its actions happened |
 | Graph | `/graph` | the model as a network, all of it or its last 30 or 7 days; "+ Evidence" adds the interactions; search jumps to a node |
 | Cards | `/cards` | strivings, their activities and actions as a tree of cards; drag, pinch or wheel to move around |
 | Day | `/day/<date>` | one day (arrows to the next and previous, a calendar for any other): a lane per activity across the day's sittings, the selected action's screenshots, its actions by sitting |
@@ -41,6 +43,8 @@ listed in `problems`, never an error.
 | `GET /api/interactions?from=&to=` | a summary of each cited interaction started on those local days (both optional, included): start, end, operation and screenshot counts, first operation |
 | `GET /api/evidence/<interaction>` | its observation, operations, screenshot file names and the actions citing it; 404 if unknown |
 | `GET /api/modeler` | the scheduler's state (`status.json`, or `not running` when no modeler holds its lock), the operations waiting (untracked operations files, by git), the session records |
+| `GET /api/pipeline` | the server's time (`now`), the newest capture and observation (UTC, from folder and file names) |
+| `GET /api/changes?limit=&before=` | the modeler's commits (`modeler run ...`), newest first, each with its session, time, action files added and changed, and what changed in its strivings and activities (created, retitled, status, confidence, serves, no longer serves, removed or merged); read with git, each commit once |
 | `GET /api/health` | `{"ok": true}` (the container's healthcheck) |
 | `GET /captures/<path>` | a screenshot (`.webp`, `.png`, `.jpg` only, never outside `/captures`), cached for a year |
 
@@ -49,11 +53,12 @@ files hold them (local time with its offset) and shown as that wall-clock time.
 
 ## Code
 
-- `vitality_web/`: the API (`schema.py` is the contract; `model.py`, `modeler.py`, `captures.py` read
-  the files; `app.py` serves; `main.py` is the command).
+- `vitality_web/`: the API (`schema.py` is the contract; `model.py`, `modeler.py`, `captures.py`,
+  `pipeline.py` read the files, `changes.py` the model's git history; `app.py` serves; `main.py` is
+  the command).
 - `app/`: React + TypeScript + Vite. `src/theme.css` holds every colour, font and size; `src/components/`
-  the shell, inspector and shared pieces; `src/views/` one file (and stylesheet) per view;
-  `src/api/schema.ts` is generated from the API. Fonts (Inter, Source Serif 4, JetBrains Mono) are
+  the shell, inspector and shared pieces; `src/views/` one file (and stylesheet) per view (Home's
+  sections in `src/views/home/`); `src/api/schema.ts` is generated from the API. Fonts (Inter, Source Serif 4, JetBrains Mono) are
   bundled; the app makes no request outside its own server.
 - `tests/`: the API tests, `fixture.py` (a small fictional model: never the owner's data),
   `fixture_large.py` (about four months of fictional model; `test_large.py` times the API on it),
@@ -78,8 +83,10 @@ After changing the API's models, regenerate the schema and the app's types (a te
 To look at the app, serve the fixture model and either the build or Vite's dev server (which sends
 `/api` and `/captures` to port 4000):
 
-    uv run python tests/serve_fixture.py /tmp/vitality-fixture --port 4000
+    uv run python tests/serve_fixture.py /tmp/vitality-fixture --port 4000 [--now 2026-11-04T23:00:00-05:00]
     (cd app && npm run dev)
+
+`--now` sets the present the API reports, so Home reads as on that day (the fixtures end on Nov 4).
 
 The smoke run drives Chromium through every view at desktop, tablet and phone sizes (Playwright is
 not a dependency; use a Python that has it):
@@ -92,8 +99,10 @@ months of model and also checks Day's arrows and calendar, the Reader's heatmap,
 range, and that arranging the evidence never holds a frame over 100 ms.
 
 It checks that each view renders without console errors, that selecting fills the inspector, that
-no page scrolls sideways, and that the Day view fits a 1366×768 window; it saves a screenshot of
-each view and size.
+no page scrolls sideways, and that the Day view fits a 1366×768 window; on Home, that `/` focuses the
+search, that a search jumps to a Reader page and to an action's day, that a change in the feed opens
+its belief, and that old Reader links redirect; in the Graph, that selecting a node after zooming
+keeps the camera's place. It saves a screenshot of each view and size.
 
 The image, from the repository root:
 

@@ -10,7 +10,8 @@ import { useSelection } from "../lib/selection";
 import { Inspector } from "./Inspector";
 
 const VIEWS = [
-  { to: "/", label: "Reader", end: true },
+  { to: "/", label: "Home", end: true },
+  { to: "/reader", label: "Reader", end: false },
   { to: "/graph", label: "Graph", end: false },
   { to: "/cards", label: "Cards", end: false },
   { to: "/day", label: "Day", end: false },
@@ -33,14 +34,14 @@ export function Shell() {
 }
 
 function ViewTabs({ className }: { className: string }) {
-  // The selection goes along to the next view.
+  // The selection goes along to the next view (not to Home, which has none).
   const [params] = useSearchParams();
   const sel = params.get("sel");
   const search = sel ? `?sel=${encodeURIComponent(sel)}` : "";
   return (
     <nav className={className} aria-label="Views">
       {VIEWS.map((v) => (
-        <NavLink key={v.to} to={{ pathname: v.to, search }} end={v.end}
+        <NavLink key={v.to} to={{ pathname: v.to, search: v.to === "/" ? "" : search }} end={v.end}
           className={({ isActive }) => (isActive ? "on" : "")}>{v.label}</NavLink>
       ))}
     </nav>

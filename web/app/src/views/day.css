@@ -48,9 +48,7 @@
 .day-bar:hover { opacity: 1; }
 .day-bar.on { opacity: 1; box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--c, var(--action)); z-index: 1; }
 
-.day-swatch { flex: none; display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--c); }
-.day-row .day-swatch { align-self: center; }
-.day-swatch.tentative { background: transparent; border: 1.5px dashed var(--c); }
+.day-row .swatch { align-self: center; }
 
 .dot-none { background: transparent; border: 1.5px solid var(--line-2); }
 

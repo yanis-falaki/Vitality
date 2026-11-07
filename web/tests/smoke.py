@@ -6,7 +6,10 @@
     uv run python tests/serve_fixture.py /tmp/fx-large --port 4101 --large &
     <playwright python> tests/smoke.py --url http://127.0.0.1:4101 --shots <folder> --large
 
-Needs a Python with Playwright and its Chromium (not a dependency of the package). For each view, at
+Needs a Python with Playwright and its Chromium (not a dependency of the package). Home, at each size:
+it renders without console errors or sideways scroll, "/" focuses its search, a search jumps to a
+Reader page and to an action's day, a change in its feed opens that belief in the Reader, and an old
+Reader link (`/?page=`) redirects. For each view, at
 desktop (1366x768), tablet (820x1180) and phone (390x844) sizes: the view renders without console
 errors, selecting an item fills the inspector, and the page never scrolls sideways; at desktop size
 the Day view does not scroll at all, and in the Graph, after zooming and panning, clicking a node
@@ -198,11 +201,51 @@ SHOTS = Path(".")
 
 VIEWS: list[tuple[str, str, str, Callable[[Page], None]]] = [
     # name, path, a selector that shows the view rendered, how to select something in it
-    ("reader", "/", ".page-title", pick_reader),
+    ("reader", "/reader", ".page-title", pick_reader),
     ("graph", "/graph", ".graph-stage canvas", pick_graph),
     ("cards", "/cards", ".card-striving", pick_cards),
     ("day", "/day/2026-11-03", ".day-lanes", pick_day),
 ]
+
+
+def check_home(page: Page, url: str, label: str) -> None:
+    # Home renders its sections; "/" focuses the search; a striving or activity found jumps to its Reader
+    # page, an action to its day, selected; a change in the feed opens its belief; old Reader links redirect.
+    for part in ("home-status", "home-week", "home-changes"):
+        page.locator(f"[data-testid={part}]").wait_for()
+    page.locator("[data-testid=home-changes] li").first.wait_for()
+    page.locator("body").press("/")
+    if not page.evaluate("() => document.activeElement?.matches('.home-search input')"):
+        fail(f"{label}: '/' did not focus the search")
+    search = page.locator(".home-search input")
+    search.fill("key-value")
+    page.locator("[data-testid=home-hits] .home-hit").first.wait_for()
+    search.press("Enter")
+    page.wait_for_url(re.compile(r"/reader\?page=act-"))
+    found = page.locator(".page-title").inner_text()
+    page.go_back()
+    search = page.locator(".home-search input")
+    search.fill("weather")
+    hit = page.locator("[data-testid=home-hits] .home-hit").first
+    hit.wait_for()
+    hit.click()
+    page.wait_for_url(re.compile(r"/day/\d{4}-\d\d-\d\d\?sel="))
+    title = page.locator("[data-testid=inspector] .inspector-title")
+    title.wait_for()
+    if not title.is_visible() or "weather" not in title.inner_text().lower():
+        fail(f"{label}: the action found is not the one selected in the inspector")
+    page.go_back()
+    item = page.locator("[data-testid=home-changes] a.home-item").first
+    item.wait_for()
+    belief, words = item.get_attribute("data-id"), item.locator(".home-item-title").inner_text()
+    item.click()
+    page.wait_for_url(re.compile(rf"/reader\?page={belief}"))
+    page.locator(".page-title").wait_for()
+    if page.locator(".page-title").inner_text().strip() != words.strip():
+        fail(f"{label}: the change of '{words}' opened '{page.locator('.page-title').inner_text()}'")
+    page.goto(url + "/?page=str-0001")
+    page.wait_for_url(re.compile(r"/reader\?page=str-0001"))
+    print(f"ok   {label}: search jumps to '{found}' and to an action's day; a change opens '{words}'; old links redirect")
 
 
 def fail(message: str) -> None:
@@ -227,6 +270,24 @@ def main() -> None:
             touch = size != "desktop"
             context = browser.new_context(viewport={"width": width, "height": height}, device_scale_factor=2 if touch else 1,
                                           has_touch=touch, is_mobile=touch)
+            if not only or "home" in only:
+                page = context.new_page()
+                errors: list[str] = []
+                page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                label = f"home/{size}"
+                page.goto(args.url + "/")
+                try:
+                    page.wait_for_selector("[data-testid=home-changes] li", timeout=20000)
+                except Exception:
+                    fail(f"{label}: did not render; errors: {errors}")
+                page.wait_for_timeout(600)
+                overflow(page, label)
+                page.screenshot(path=str(args.shots / f"home-{size}.png"))
+                check_home(page, args.url, label)
+                if errors:
+                    fail(f"{label}: console errors: {errors}")
+                page.close()
             for name, path, ready, pick in VIEWS:
                 if only and name not in only:
                     continue

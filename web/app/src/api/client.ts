@@ -1,6 +1,6 @@
 // The API, as typed queries. The types come from schema.ts, generated from the API's OpenAPI schema
 // (`npm run api`; see README.md), so a change to the API shows up here as a type error.
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import type { components } from "./schema";
 
 type S = components["schemas"];
@@ -14,6 +14,10 @@ export type Interactions = Record<string, InteractionSummary>;
 export type Evidence = S["Evidence"];
 export type Modeler = S["Modeler"];
 export type Session = S["Session"];
+export type Pipeline = S["Pipeline"];
+export type Changes = S["Changes"];
+export type ModelerCommit = S["ModelerCommit"];
+export type ChangeItem = S["ChangeItem"];
 
 async function get<T>(path: string): Promise<T> {
   const reply = await fetch(path, { headers: { Accept: "application/json" } });
@@ -80,6 +84,23 @@ export function useEvidenceOf(interactions: string[]): (Evidence | null | undefi
 /** The modeler's state, polled every 30 seconds. */
 export function useModeler() {
   return useQuery({ queryKey: ["modeler"], queryFn: () => get<Modeler>("/api/modeler"), refetchInterval: 30_000 });
+}
+
+/** The clock and how far the evidence has come (the newest capture and observation), every minute. */
+export function usePipeline() {
+  return useQuery({ queryKey: ["pipeline"], queryFn: () => get<Pipeline>("/api/pipeline"), refetchInterval: 60_000 });
+}
+
+/** The modeler's commits, newest first, `limit` a page; `fetchNextPage` reads the next older ones. */
+export function useChanges(limit = 10) {
+  return useInfiniteQuery({
+    queryKey: ["changes", limit],
+    initialPageParam: null as string | null,
+    refetchInterval: 60_000,
+    queryFn: ({ pageParam }) =>
+      get<Changes>(`/api/changes?limit=${limit}${pageParam ? `&before=${pageParam}` : ""}`),
+    getNextPageParam: (last) => (last.more && last.commits.length ? last.commits[last.commits.length - 1].commit : null),
+  });
 }
 
 /** Where a screenshot is served. */

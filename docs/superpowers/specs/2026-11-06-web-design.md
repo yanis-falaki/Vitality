@@ -70,7 +70,7 @@ shared components; no view defines its own colours or fonts.
 
 ## 6. The views
 
-Routes: `/` (Reader), `/graph`, `/cards`, `/day/:date?`; the selected item is in the URL
+Routes: `/` (Home, §11; the Reader was here until then), `/reader`, `/graph`, `/cards`, `/day/:date?`; the selected item is in the URL
 (`?sel=<id>`) so a view can be shared and reloaded. A top bar switches views and shows the modeler's
 state (`idle` / `running` / waiting, operations waiting, last session). The inspector (right panel,
 ~440 px) is the same component in every view.
@@ -176,3 +176,43 @@ actions over ~90 days, ~12,000 interactions) every view stays calm and the look 
   sent gzipped with an ETag (a refetch of an unchanged model is a 304), and read once in the
   background on start. At four months: 96 KB gzipped (730 KB plain), ~0.1 s per check, cold start
   ~12 s (parsing YAML; `vitality_usermodel.formats` with libyaml's `CSafeLoader` would be ~7× faster).
+
+## 11. Home
+
+The app is opened daily, so `/` is now **Home**, the first tab (top bar and phone tab bar); the Reader
+moved to `/reader`, and an old link to `/` with `?page=` or `?sel=` redirects there. Home is a page to
+look at, not a tour: no explanatory text. It has no inspector; what it shows links into the views.
+Top to bottom (on a desktop the changes are a column beside the day and the week):
+
+- **Header:** the day's date (serif) and one status line: last capture, latest observation, model
+  last updated (the latest committed session), operations waiting, the modeler's state. Stuck reads in
+  the muted warn tone: no capture for over an hour though there were captures earlier today, the
+  observer over an hour behind the captures, the modeler paused, waiting or not running. Beside it, a
+  **search** (the `/` key focuses it): every word must appear in a striving's or activity's title or an
+  action's summary, over the loaded model; Enter or a click jumps (striving or activity → its Reader
+  page, action → its day, selected, the inspector open).
+- **Today so far:** Day's lanes, compact (a sitting per column, Day's colours; the 8 activities with the
+  most time, 5 on a phone, the rest counted), opening Day; "Probably now: <action>" when the latest
+  action ended under 30 minutes ago. With no actions today: "Nothing captured yet today — last evidence
+  <day>" (or "Nothing modeled yet" when there were captures today) and that day's lanes, labelled.
+- **Where your time went this week:** per striving, folded open to its activities, the minutes of
+  actions in the last 7 days (solid bar in the level colour) and the 7 before (a thin ghost bar, and
+  the difference); activities serving none under "Not yet serving a striving". Time is the actions'
+  spans; an action serving two activities counts for each (once for a striving both serve). With no
+  actions in the last 7 days, the 7 days up to the last day with evidence, said so.
+- **What changed in the model:** the modeler's commits, newest first, 6 at a time ("Show more"), under
+  "<day>, <time> · session": per belief one line (title, opening its Reader page; in plain words: new,
+  retitled from "A", became established, confidence 5 → 7, now serves / no longer serves "S", removed or
+  merged into "B"), then "+N actions". Sessions newer than the previous visit (kept in localStorage,
+  read and written in try/catch) carry a quiet "new".
+- Room is left above "Today so far" for opportunities from an ambient agent; nothing stands in for it.
+
+**API.** `GET /api/changes?limit=&before=<commit>`: `git log` in the model, commits whose subject starts
+`modeler run `, each with its time, session (run id), the action files it added and changed, and items
+from comparing the frontmatter of its changed `strivings/` and `activities/` files with its parent's
+(`git diff-tree`, `git cat-file --batch`, parsed with `vitality_usermodel.formats.parse`); an activity
+deleted while actions moved from it to another is "merged into" that one. Read-only git only; each
+commit is read once, kept by its hash. `GET /api/pipeline`: `now` (the server's local time, or
+`serve_fixture.py --now`), the newest capture (`<device>/<day>/<time>` folder names, UTC) and the newest
+observation file, from directory listings only. Both fixtures have a history of modeler commits to
+match their session records.

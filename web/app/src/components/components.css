@@ -21,7 +21,7 @@
 .views a.on { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
 
 .tabbar {
-  display: grid; grid-template-columns: repeat(4, 1fr); background: var(--panel);
+  display: grid; grid-template-columns: repeat(5, 1fr); background: var(--panel);
   border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom);
 }
 .tabbar a {
@@ -90,6 +90,10 @@
 .dot-activity { background: var(--activity); }
 .dot-action { background: var(--action); }
 .dot-interaction { background: var(--evidence); }
+/* An activity's lane colour (Day, Home) */
+.swatch { flex: none; display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--c); }
+.swatch.tentative { background: transparent; border: 1.5px dashed var(--c); }
+
 .dot.tentative { background: transparent; border: 1.5px dashed var(--activity); width: 9px; height: 9px; }
 
 .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: var(--text-sm); color: var(--ink-2); margin-bottom: var(--s3); }

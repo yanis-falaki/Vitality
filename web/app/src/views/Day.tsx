@@ -12,38 +12,13 @@ import { CalendarButton } from "../components/Calendar";
 import { useLightbox } from "../components/Lightbox";
 import { WithModel } from "../components/Loading";
 import { ViewFrame } from "../components/Shell";
+import { Swatch } from "../components/Swatch";
 import { clock, day, dayLabel, dayLong, hours, minutes, partOfDay, plural, short } from "../lib/format";
+import { lanePalette, lanesOf, NONE, sittings, type Sitting } from "../lib/lanes";
 import type { Model } from "../lib/model";
 import { useSelection } from "../lib/selection";
 import "./day.css";
 
-const GAP = 30;            // minutes without an action that end a sitting
-const NONE = "";           // the lane of actions with no activity yet
-const LANE_COLOURS = 8;
-
-/** The colours of a day's lanes (`--lane-1` … `--lane-8`; none: grey). Each activity keeps the colour of
- * its place in the model, so it is the same on most days; when two of the day's activities would share
- * one (the model has more activities than colours), the later takes the next colour free that day. */
-function lanePalette(model: Model, lanes: string[]): Map<string, string> {
-  const out = new Map<string, string>([[NONE, "var(--lane-none)"]]);
-  const taken = new Set<number>();
-  for (const id of lanes.filter((l) => l !== NONE)) {
-    const i = Math.max(0, model.activities.findIndex((a) => a.id === id));
-    let c = i % LANE_COLOURS;
-    for (let k = 0; k < LANE_COLOURS && taken.has(c); k++) c = (c + 1) % LANE_COLOURS;
-    taken.add(c);
-    out.set(id, `var(--lane-${c + 1})`);
-  }
-  return out;
-}
-
-/** A small square in the lane's colour (dashed outline when the activity is tentative). */
-function Swatch({ model, id, palette }: { model: Model; id: string; palette: Map<string, string> }) {
-  const tentative = !!id && model.activity(id)?.status === "tentative";
-  return <i className={`day-swatch${tentative ? " tentative" : ""}`} style={{ "--c": palette.get(id) } as CSSProperties} aria-hidden />;
-}
-
-interface Sitting { start: string; end: string; actions: Action[] }
 
 export function Day() {
   return <WithModel>{(model) => <DayView model={model} />}</WithModel>;
@@ -73,8 +48,7 @@ function DayView({ model }: { model: Model }) {
 
   if (!current) return <ViewFrame model={model}><div className="notice">No actions yet.</div></ViewFrame>;
   const sits = sittings(actions);
-  const lanes = [...new Set(actions.map((a) => a.part_of[0] ?? NONE))]
-    .sort((a, b) => (a === NONE ? 1 : b === NONE ? -1 : 0));
+  const lanes = lanesOf(actions);
   const palette = lanePalette(model, lanes);
   const total = actions.reduce((n, a) => n + minutes(a.start, a.end), 0);
   const choose = (id: string | null) => {
@@ -246,16 +220,4 @@ function List({ model, palette, sits, only, sel }: { model: Model; palette: Map<
       ))}
     </div>
   );
-}
-
-function sittings(actions: Action[]): Sitting[] {
-  const out: Sitting[] = [];
-  for (const a of actions) {
-    const last = out[out.length - 1];
-    if (last && (Date.parse(a.start) - Date.parse(last.end)) / 60000 <= GAP) {
-      last.actions.push(a);
-      if (Date.parse(a.end) > Date.parse(last.end)) last.end = a.end;
-    } else out.push({ start: a.start, end: a.end, actions: [a] });
-  }
-  return out;
 }
