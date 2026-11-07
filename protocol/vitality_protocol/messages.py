@@ -41,6 +41,12 @@ class Shot(_Message):
     width: int
     height: int
     bytes: int
+    # Which monitor, on a machine whose client captures several: "left", "middle", "right"
+    # or "screen-<n>" (left to right). None (left out) when the client captures one screen.
+    screen: Annotated[str, Field(pattern=r"^(left|middle|right|screen-[1-9]\d*)$")] | None = None
+    # Whether `screen` had the keyboard focus (the one being worked on). None (left out)
+    # when the client could not tell, or captures one screen.
+    focused: bool | None = None
 
 
 class Interaction(_Message):

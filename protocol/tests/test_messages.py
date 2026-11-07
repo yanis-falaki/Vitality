@@ -60,3 +60,19 @@ def test_utc_written_as_z_from_any_zone():
 
 def test_python_dump_keeps_datetimes():
     assert isinstance(Interaction.model_validate(INTERACTION).model_dump()["start"], datetime)
+
+
+def test_shot_screen_and_focus_are_optional():
+    old = Shot.model_validate(SHOT)                      # written before several screens
+    assert (old.screen, old.focused) == (None, None)
+    assert "screen" not in json.loads(old.model_dump_json(exclude_none=True))
+    new = Shot.model_validate({**SHOT, "screen": "left", "focused": True})
+    assert (new.screen, new.focused) == ("left", True)
+    assert Shot.model_validate_json(new.model_dump_json()) == new
+    assert Shot.model_validate({**SHOT, "screen": "screen-4"}).focused is None
+
+
+@pytest.mark.parametrize("screen", ["", "top", "../x", "screen-0", "Left"])
+def test_unknown_screen_names_rejected(screen):
+    with pytest.raises(ValidationError):
+        Shot.model_validate({**SHOT, "screen": screen})
