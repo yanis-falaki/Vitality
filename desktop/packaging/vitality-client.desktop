@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Vitality
+Comment=Capture your screens as evidence for Vitality
+Exec=vitality-client
+Icon=vitality-client
+Terminal=false
+Categories=Utility;
+StartupNotify=false

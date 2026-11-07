@@ -1,0 +1,24 @@
+[package]
+name = "vitality-client"
+version = "0.1.0"
+description = "Vitality's desktop capture client: screens, capture policy, storage and upload"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "vitality-client"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[features]
+# Set by `tauri build`: serve the built interface from inside the binary.
+custom-protocol = ["tauri/custom-protocol"]

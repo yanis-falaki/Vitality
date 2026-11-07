@@ -1,0 +1,13 @@
+# Vitality's desktop capture client, started with the graphical session (systemd user unit).
+[Unit]
+Description=Vitality desktop capture client
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/vitality-client
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

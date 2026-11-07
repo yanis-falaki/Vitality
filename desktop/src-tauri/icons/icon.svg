@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Vitality's mark: a ring in the theme's ink around a dot in its activity colour. -->
+  <circle cx="256" cy="256" r="236" fill="#f7f5f0"/>
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#23211d" stroke-width="40"/>
+  <circle cx="256" cy="256" r="104" fill="#009282"/>
+</svg>
