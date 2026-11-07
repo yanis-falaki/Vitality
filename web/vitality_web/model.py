@@ -1,10 +1,12 @@
-"""Reading the user model for the API: the model, one action, interaction summaries, one interaction's evidence.
+"""Reading the user model for the API: the model, one action, interaction summaries, one interaction's
+evidence, and every observed interaction of a day (cited or not).
 
 `ModelReader(model, captures)` reads the files through `vitality_usermodel.formats` and never writes.
 Three caches keep repeated requests cheap as the model grows:
 
 - each parsed file, by its path, modification time and size: an unchanged file is parsed once;
 - each interaction's screenshot count, by its captures folder's modification time;
+- each observations folder's interactions per local day, by the folder's modification time;
 - the assembled `Snapshot` (the model, the summaries, the indexes, and the model's JSON, plain and
   gzipped), by the (path, mtime, size) of every file it was built from and the captures folders'
   times. It is checked at most once every `fresh` seconds (a view's burst of requests shares one
@@ -16,10 +18,12 @@ A malformed file is skipped and reported as a `Problem`, never raised.
 import gzip
 import hashlib
 import os
+import re
 import threading
 import time
+from collections import Counter
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -85,6 +89,7 @@ class ModelReader:
         self.fresh = fresh
         self._files: dict[Path, tuple[_Key, _Parsed]] = {}
         self._shots: dict[str, tuple[_Key, int]] = {}
+        self._days: dict[str, tuple[_Key, Counter[str]]] = {}
         self._snapshot: Snapshot | None = None
         self._checked = 0.0
         self._lock = threading.Lock()
@@ -146,7 +151,55 @@ class ModelReader:
             observation=observation,
             operations=[schema.Operation(id=op.id, text=op.text, confidence=op.confidence) for op in meta.operations],
             screenshots=captures.screenshots(self.captures, interaction),
+            shots=captures.shots(self.captures, interaction),
             actions=self.snapshot().citing.get(interaction, []))
+
+    def interaction_days(self) -> dict[str, int]:
+        """How many interactions were observed on each local day, by day.
+
+        From the observations' file names (`<device>/<UTC day>/<UTC time>.md`), at the offset of one
+        observation per folder, so only one file per folder is read; counted again when a folder changes.
+        """
+        counts: Counter[str] = Counter()
+        root = self.model / "observations"
+        for device in _names(root):
+            for folder in _names(root / device):
+                if not _DAY.fullmatch(folder):
+                    continue
+                relative = f"{device}/{folder}"
+                key = _stat(root / relative)
+                cached = self._days.get(relative)
+                if cached is None or cached[0] != key:
+                    cached = (key, self._local_days(device, folder))
+                    self._days[relative] = cached
+                counts.update(cached[1])
+        return dict(sorted(counts.items()))
+
+    def day_interactions(self, day: date) -> schema.DayInteractions:
+        """Every interaction observed on the local day `day`, on every device, by start, with the actions citing it."""
+        citing = self.snapshot().citing
+        found: list[tuple[datetime, schema.DayInteraction]] = []
+        root = self.model / "observations"
+        for device in _names(root):
+            for folder in (day - timedelta(days=1), day, day + timedelta(days=1)):  # names are UTC
+                for file in sorted(_names(root / device / folder.isoformat())):
+                    name = f"{device}/{folder.isoformat()}/{file.removesuffix('.md')}"
+                    if not file.endswith(".md") or not INTERACTION.fullmatch(name):
+                        continue
+                    obs = self._parsed(root / f"{name}.md", "observation")
+                    if not isinstance(obs, tuple):
+                        continue
+                    o = cast(ObservationMeta, obs[0])
+                    if o.start.date() != day:
+                        continue
+                    ops = self._parsed(self.model / "operations" / f"{name}.md", "operations")
+                    operations = cast(OperationsMeta, ops[0]).operations if isinstance(ops, tuple) else []
+                    found.append((o.start, schema.DayInteraction(
+                        interaction=name, device=o.device, start=o.start.isoformat(), end=o.end.isoformat(),
+                        operations=len(operations), first_operation=operations[0].text if operations else None,
+                        shots=captures.shots(self.captures, name), actions=citing.get(name, []))))
+        found.sort(key=lambda f: (f[0], f[1].interaction))
+        return schema.DayInteractions(day=day.isoformat(), interactions=[i for _, i in found])
 
     def operation_counts(self, relatives: list[str]) -> dict[str, int]:
         """How many operations each operations file holds (paths relative to the model); unreadable files are left out."""
@@ -249,6 +302,22 @@ class ModelReader:
         self._files[path] = (key, result)
         return result
 
+    def _local_days(self, device: str, folder: str) -> Counter[str]:
+        # The local days of the observations in `observations/<device>/<folder>`, at the offset of the
+        # first of them that parses (UTC if none does).
+        names = sorted(n for n in _names(self.model / "observations" / device / folder) if _OBSERVATION.fullmatch(n))
+        offset = timedelta(0)
+        for name in names:
+            parsed = self._parsed(self.model / "observations" / device / folder / name, "observation")
+            if isinstance(parsed, tuple):
+                offset = cast(ObservationMeta, parsed[0]).start.utcoffset() or timedelta(0)
+                break
+        days: Counter[str] = Counter()
+        for name in names:
+            utc = datetime.strptime(f"{folder} {name[:8]}", "%Y-%m-%d %H-%M-%S").replace(tzinfo=timezone.utc)
+            days[(utc + offset).date().isoformat()] += 1
+        return days
+
     def _relative(self, path: Path) -> str:
         return path.relative_to(self.model).as_posix()
 
@@ -270,6 +339,17 @@ def _tree(folder: Path) -> list[tuple[Path, _Key]]:
         except OSError:
             continue
     return out
+
+
+_DAY = re.compile(r"\d{4}-\d\d-\d\d")
+_OBSERVATION = re.compile(r"\d\d-\d\d-\d\d(?:-[2-9]|-[1-9]\d+)?\.md")
+
+
+def _names(folder: Path) -> list[str]:
+    try:
+        return [entry.name for entry in os.scandir(folder)]
+    except OSError:
+        return []
 
 
 def _stat(path: Path | str) -> _Key:

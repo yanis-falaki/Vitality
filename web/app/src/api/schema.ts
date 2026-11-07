@@ -72,6 +72,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interaction-days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Interaction Days */
+        get: operations["get_interaction_days_api_interaction_days_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/days/{day}/interactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Day Interactions */
+        get: operations["get_day_interactions_api_days__day__interactions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/modeler": {
         parameters: {
             query?: never;
@@ -241,6 +275,35 @@ export interface components {
             /** More */
             more: boolean;
         };
+        /**
+         * DayInteraction
+         * @description One observed interaction of a day, cited by an action or not (Day's Evidence mode).
+         */
+        DayInteraction: {
+            /** Interaction */
+            interaction: string;
+            /** Device */
+            device: string;
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /** Operations */
+            operations: number;
+            /** First Operation */
+            first_operation: string | null;
+            /** Shots */
+            shots: components["schemas"]["Shot"][];
+            /** Actions */
+            actions: string[];
+        };
+        /** DayInteractions */
+        DayInteractions: {
+            /** Day */
+            day: string;
+            /** Interactions */
+            interactions: components["schemas"]["DayInteraction"][];
+        };
         /** Evidence */
         Evidence: {
             /** Interaction */
@@ -254,6 +317,8 @@ export interface components {
             operations: components["schemas"]["Operation"][];
             /** Screenshots */
             screenshots: string[];
+            /** Shots */
+            shots: components["schemas"]["Shot"][];
             /** Actions */
             actions: string[];
         };
@@ -261,6 +326,13 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * InteractionDays
+         * @description How many interactions were observed on each local day (`GET /api/interaction-days`).
+         */
+        InteractionDays: {
+            [key: string]: number;
         };
         /**
          * InteractionSummary
@@ -408,6 +480,20 @@ export interface components {
             cost?: number | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * Shot
+         * @description One screenshot of an interaction, with the screen it shows when the client captured several.
+         */
+        Shot: {
+            /** File */
+            file: string;
+            /** Screen */
+            screen?: number | null;
+            /** Screen Position */
+            screen_position?: number[] | null;
+            /** Focused */
+            focused?: boolean | null;
         };
         /** Striving */
         Striving: {
@@ -569,6 +655,57 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_interaction_days_api_interaction_days_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionDays"];
+                };
+            };
+        };
+    };
+    get_day_interactions_api_days__day__interactions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                day: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayInteractions"];
+                };
             };
             /** @description Validation Error */
             422: {
