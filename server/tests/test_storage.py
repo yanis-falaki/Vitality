@@ -239,3 +239,22 @@ INSERT INTO shots VALUES ('laptop','2026-10-24/10-00-00','0000.webp','a','activi
     assert _rows(tmp_path, "SELECT client, file, trigger, screen_name FROM shots ORDER BY client, file") == [
         ("desktop", "0000-2.webp", "passive", "Side"), ("desktop", "0000.webp", "passive", "Main"),
         ("laptop", "0000.webp", "activity", None)]
+
+
+def test_an_interrupted_upgrade_is_finished_with_its_rows(tmp_path):
+    # An older upgrade stopped after renaming: the rows wait in shots_before_passive and an
+    # empty new-style shots table exists.
+    import sqlite3
+    FileStore(tmp_path).close()
+    conn = sqlite3.connect(tmp_path / "index.sqlite")
+    conn.executescript("""
+CREATE TABLE shots_before_passive (client TEXT NOT NULL, interaction TEXT NOT NULL, file TEXT NOT NULL,
+    ts TEXT NOT NULL, trigger TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
+    bytes INTEGER NOT NULL);
+INSERT INTO interactions VALUES ('laptop','2026-10-24/10-00-00','screen','a','b','c','UTC','d');
+INSERT INTO shots_before_passive VALUES ('laptop','2026-10-24/10-00-00','0000.webp','a','activity',1,1,1);
+""")
+    conn.close()
+    FileStore(tmp_path).close()
+    assert _rows(tmp_path, "SELECT client, file, trigger FROM shots") == [("laptop", "0000.webp", "activity")]
+    assert _rows(tmp_path, "SELECT name FROM sqlite_master WHERE name='shots_before_passive'") == []

@@ -23,18 +23,7 @@ from vitality_protocol.messages import Interaction
 
 from vitality_server.shared.storage.interface import ConflictingUpload, InteractionStore, InvalidUpload
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS interactions (
-    client       TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    source       TEXT NOT NULL,
-    start        TEXT NOT NULL,
-    end          TEXT NOT NULL,
-    local_start  TEXT NOT NULL,
-    tz           TEXT NOT NULL,
-    received_at  TEXT NOT NULL,
-    PRIMARY KEY (client, name)
-);
+_SHOTS_TABLE = """
 CREATE TABLE IF NOT EXISTS shots (
     client      TEXT NOT NULL,
     interaction TEXT NOT NULL,
@@ -47,7 +36,21 @@ CREATE TABLE IF NOT EXISTS shots (
     screen_name TEXT,
     PRIMARY KEY (client, interaction, file),
     FOREIGN KEY (client, interaction) REFERENCES interactions(client, name)
+)"""
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS interactions (
+    client       TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    start        TEXT NOT NULL,
+    end          TEXT NOT NULL,
+    local_start  TEXT NOT NULL,
+    tz           TEXT NOT NULL,
+    received_at  TEXT NOT NULL,
+    PRIMARY KEY (client, name)
 );
+""" + _SHOTS_TABLE + """;
 CREATE INDEX IF NOT EXISTS idx_shots_ts ON shots(ts);
 """
 
@@ -153,19 +156,37 @@ class FileStore(InteractionStore):
 def _upgrade_shots_table(conn: sqlite3.Connection) -> None:
     """Rebuild a `shots` table made before passive shots and screen names, keeping its rows.
 
-    Its CHECK would refuse `passive`, and SQLite cannot change a CHECK in place.
+    Its CHECK would refuse `passive`, and SQLite cannot change a CHECK in place. All in one
+    transaction; rows left in `shots_before_passive` by an older, interrupted upgrade are moved
+    over too.
     """
-    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='shots'").fetchone()
-    if row is None or "'passive'" in row[0]:
+    def table_sql(name: str) -> str | None:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        return None if row is None else row[0]
+
+    shots = table_sql("shots")
+    leftover = table_sql("shots_before_passive") is not None
+    if not leftover and (shots is None or "'passive'" in shots):
         return
-    with conn:
-        conn.execute("ALTER TABLE shots RENAME TO shots_before_passive")
-        conn.executescript(_SCHEMA)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if shots is not None and "'passive'" not in shots:
+            if leftover:
+                conn.execute("INSERT INTO shots_before_passive SELECT client, interaction, file, ts, "
+                             "trigger, width, height, bytes FROM shots")
+                conn.execute("DROP TABLE shots")
+            else:
+                conn.execute("ALTER TABLE shots RENAME TO shots_before_passive")
+        conn.execute(_SHOTS_TABLE)
         conn.execute(
-            "INSERT INTO shots (client, interaction, file, ts, trigger, width, height, bytes) "
+            "INSERT OR IGNORE INTO shots (client, interaction, file, ts, trigger, width, height, bytes) "
             "SELECT client, interaction, file, ts, trigger, width, height, bytes "
             "FROM shots_before_passive")
         conn.execute("DROP TABLE shots_before_passive")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _validate(client: str, interaction: Interaction, files: Mapping[str, bytes]) -> None:
