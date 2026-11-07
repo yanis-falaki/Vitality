@@ -4,9 +4,33 @@
 // Never shipped: only mock.html loads it.
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { ScreensView, StatusView } from "../core";
-import { statusActive, statusIdle, statusPage, statusPaused } from "../fixtures";
+import { freed, rules, settings as defaultSettings, statusActive, statusIdle, statusPage, statusPaused } from "../fixtures";
+import type { Check, Settings } from "../core";
 
-type Scenario = "two" | "duplicate" | "needs-pick" | "empty" | "paused" | "stopped" | "idle" | "offline" | "rejected";
+type Scenario = "two" | "duplicate" | "needs-pick" | "empty" | "paused" | "stopped" | "idle" | "offline" | "rejected" | "setup" | "setup-done" | "health-fail";
+
+const ck = (id: string, ok: boolean, essential: boolean, title: string, detail: string, fix: string | null = null): Check => ({ id, ok, essential, title, detail, fix: ok ? null : fix });
+
+/** The full list of checks for a scenario (Setup and Status read them). */
+function allChecks(s: Scenario, screens: number): Check[] {
+  const input = s === "setup" || s === "health-fail"
+    ? ck("input_access", false, true, "Keyboard and mouse", "not allowed to read /dev/input: you are not in the input group", "Run `sudo usermod -aG input $USER`, then log out and in again.")
+    : ck("input_access", true, true, "Keyboard and mouse", "input devices are readable");
+  const accepted = s === "setup"
+    ? ck("device_accepted", false, false, "This device accepted", "the server does not accept \"desktop\"", "On the server, add \"desktop\" to allowed_clients.")
+    : ck("device_accepted", true, false, "This device accepted", "the server accepts \"desktop\"");
+  return [
+    input,
+    ck("desktop_session", true, true, "Desktop session", "wayland session (WAYLAND_DISPLAY=wayland-1)"),
+    ck("portal_available", true, true, "Screen-share portal", "ScreenCast portal, version 5"),
+    screens > 0 ? ck("screens_open", true, true, "Screens", screens === 1 ? "1 screen, live" : `${screens} screens, all live`) : ck("screens_open", false, true, "Screens", "no screen set up", "Open Screens and add a screen."),
+    ck("tailscale", true, false, "Tailscale", "running as \"desktop\""),
+    ck("server_health", true, false, "Server answers", "http://vitality-librarian:8100 is up"),
+    accepted,
+    ck("disk_space", true, false, "Disk space", "96.0 GB free"),
+    s === "setup" ? ck("start_at_login", false, false, "Start at login", "the service is off but the setting says on", "Save Settings again to apply it.") : ck("start_at_login", true, false, "Start at login", "on"),
+  ];
+}
 
 /** The checks a scenario shows: only the failing ones matter to Status. */
 function scenarioChecks(s: Scenario) {
@@ -39,7 +63,10 @@ function screensFor(s: Scenario): ScreensView {
   const live = (id: string, name: string, age = 0.4) => ({ id, name, state: "live" as const, last_frame_age_s: age });
   switch (s) {
     case "empty":
+    case "setup":
       return { screens: [], duplicates: [] };
+    case "setup-done":
+      return { screens: [live("s1", "Main")], duplicates: [] };
     case "duplicate":
       return { screens: [live("s1", "Main"), live("s2", "Screen 2", 0.6)], duplicates: [["s1", "s2"]] };
     case "stopped":
@@ -56,6 +83,7 @@ function screensFor(s: Scenario): ScreensView {
 
 export function installFakeCore(scenario: Scenario) {
   let screens = screensFor(scenario);
+  let settings: Settings = { ...defaultSettings };
   const attention = screens.screens.filter((s) => s.state === "needs_pick" || s.state === "stopped").map((s) => s.name);
   const base = { ...statusActive, screens: screens.screens.length, screens_live: screens.screens.length - attention.length, screens_attention: attention };
   const soon = (s: number) => new Date(Date.now() + s * 1000).toISOString();
@@ -81,7 +109,22 @@ export function installFakeCore(scenario: Scenario) {
         case "status":
           return status;
         case "status_page":
-          return { ...statusPage, status, checks: scenarioChecks(scenario) };
+          return { ...statusPage, status, checks: scenario === "two" ? allChecks(scenario, 2) : scenarioChecks(scenario) };
+        case "checks":
+        case "checks_run":
+          return allChecks(scenario, screens.screens.filter((x) => x.state === "live").length);
+        case "settings_get":
+          return settings;
+        case "settings_save": {
+          const next = a.settings as Settings;
+          if (next.settle_s <= 0) return { errors: [{ field: "settle_s", message: "must be more than 0 s and at most a day" }], settings, login_error: null };
+          settings = next;
+          return { errors: [], settings, login_error: null };
+        }
+        case "free_up_space":
+          return freed;
+        case "how_it_works":
+          return rules;
         case "pause":
           status = { ...status, pause: { paused: true, until: new Date(Date.now() + 1800e3).toISOString() } };
           return status;

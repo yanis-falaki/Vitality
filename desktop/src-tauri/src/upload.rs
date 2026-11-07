@@ -71,6 +71,7 @@ impl UploadTimings {
 #[derive(Clone)]
 pub struct Uploader {
     status: Arc<Mutex<UploadStatus>>,
+    server: Arc<Mutex<Option<String>>>,
     wake: Arc<Notify>,
 }
 
@@ -103,6 +104,7 @@ impl Uploader {
         let server = server.map(|s| s.trim().trim_end_matches('/').to_string()).filter(|s| !s.is_empty());
         let initial = if server.is_some() { UploadState::Ok } else { UploadState::Disabled };
         let uploader = Uploader {
+            server: Arc::new(Mutex::new(server.clone())),
             status: Arc::new(Mutex::new(UploadStatus {
                 state: initial,
                 pending: store.pending().len() as u32,
@@ -113,7 +115,7 @@ impl Uploader {
             wake: Arc::new(Notify::new()),
         };
         let u = uploader.clone();
-        tokio::spawn(async move { u.run(store, server, device, timings).await });
+        tokio::spawn(async move { u.run(store, device, timings).await });
         uploader
     }
 
@@ -126,7 +128,16 @@ impl Uploader {
         self.wake.notify_one();
     }
 
-    async fn run(&self, store: Arc<Store>, server: Option<String>, device: String, t: UploadTimings) {
+    /// Uploads to another server from now on (`None`: no upload).
+    pub fn set_server(&self, server: Option<String>) {
+        let server = server.map(|s| s.trim().trim_end_matches('/').to_string()).filter(|s| !s.is_empty());
+        let state = if server.is_some() { UploadState::Ok } else { UploadState::Disabled };
+        *self.server.lock().unwrap() = server;
+        self.set(|s| s.state = state);
+        self.wake();
+    }
+
+    async fn run(&self, store: Arc<Store>, device: String, t: UploadTimings) {
         let client = match reqwest::Client::builder().connect_timeout(t.connect_timeout).build() {
             Ok(c) => c,
             Err(e) => {
@@ -143,7 +154,9 @@ impl Uploader {
                 s.pending = pending.len() as u32;
                 s.failed = store.failed_count();
             });
+            let server = self.server.lock().unwrap().clone();
             let Some(server) = server.as_deref() else {
+                self.set(|s| s.state = UploadState::Disabled);
                 self.wake.notified().await;
                 continue;
             };

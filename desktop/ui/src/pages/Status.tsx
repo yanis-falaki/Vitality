@@ -3,6 +3,7 @@
 // disk use, warnings from the health checks, and the recent decisions, skipped shots included.
 import type { StatusPage, UploadStatus } from "../core";
 import { usePauseResume } from "../components/CaptureState";
+import { WithCode } from "../components/CheckLine";
 import { captureLine } from "../lib/capture";
 import { bytes, clock, plural } from "../lib/format";
 import { useNow } from "../lib/now";
@@ -86,7 +87,7 @@ export function Status() {
                 <span className={`dot tone-${c.essential ? "bad" : "warn"}`} aria-hidden />
                 <div>
                   <p className="check-title">{c.title} <span className="check-detail">· {c.detail}</span></p>
-                  {c.fix && <p className="check-fix">{c.fix}</p>}
+                  {c.fix && <p className="check-fix"><WithCode text={c.fix} /></p>}
                 </div>
               </li>
             ))}

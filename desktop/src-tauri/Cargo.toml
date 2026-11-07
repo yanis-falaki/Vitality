@@ -29,6 +29,7 @@ reqwest = { version = "0.12", default-features = false, features = ["multipart",
 ksni = "0.3"
 base64 = "0.22"
 libc = "0.2"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 

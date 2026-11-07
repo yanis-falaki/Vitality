@@ -7,6 +7,7 @@ mod activity;
 mod app;
 mod cli;
 mod commands;
+mod health;
 mod control;
 mod log;
 mod paths;

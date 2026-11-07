@@ -145,3 +145,70 @@
 .decisions span { overflow-wrap: anywhere; }
 .decisions .skipped span { color: var(--ink-3); }
 .decisions .error span { color: var(--bad); }
+
+/* -- Checks, switches, fields (Setup, Settings) ----------------------------------------------- */
+.app-loading { height: 100%; background: var(--bg); }
+.tick { flex: none; width: 18px; text-align: center; font-weight: 700; }
+.tick-ok { color: var(--ok); }
+.tick-bad { color: var(--bad); }
+.check-ok .check-title { font-weight: 500; }
+.switch { display: inline-flex; align-items: center; gap: var(--s3); cursor: pointer; font-size: var(--text); margin: var(--s2) 0 var(--s4); }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch-track { width: 36px; height: 20px; border-radius: var(--r-pill); background: var(--line-2); position: relative; transition: background 0.15s; flex: none; }
+.switch-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--panel); box-shadow: var(--shadow); transition: left 0.15s; }
+.switch input:checked + .switch-track { background: var(--ok); }
+.switch input:checked + .switch-track .switch-knob { left: 18px; }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--action); outline-offset: 2px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s4) var(--s5) var(--s5); margin-bottom: var(--s4); }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--s4) var(--s5); }
+.field label { display: block; font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--s1); }
+.field-input { display: flex; align-items: center; gap: var(--s2); }
+.field input[type="number"], .field input[type="text"] {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r-sm);
+  padding: 5px 9px; min-height: 32px;
+}
+.field input[type="number"] { width: 96px; }
+.field-wide input[type="text"] { width: min(100%, 460px); }
+.field input:focus-visible { outline: 2px solid var(--action); outline-offset: 0; }
+.unit { color: var(--ink-3); font-size: var(--text-sm); }
+.field-help { margin: var(--s1) 0 0; color: var(--ink-3); font-size: var(--text-sm); }
+.field-error input { border-color: var(--bad); }
+.field-error .field-help, .field-help-error { color: var(--bad); }
+.free { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--line); }
+.free-ask { display: flex; align-items: center; gap: var(--s2); }
+code { font-family: var(--mono); font-size: 0.92em; background: var(--hover); padding: 1px 5px; border-radius: 4px; }
+.link { border: 0; background: none; padding: 0; color: var(--action); cursor: pointer; text-decoration: underline; font-size: inherit; }
+
+/* -- How capture works ------------------------------------------------------------------------ */
+.rules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); }
+.rule { display: flex; gap: var(--s4); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s4) var(--s5); }
+.rule-id { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--activity-soft); color: var(--activity); font-weight: 650; font-size: var(--text-sm); }
+.rule h2 { margin: 2px 0 var(--s1); font-size: 15px; }
+.rule p { margin: 0; color: var(--ink-2); line-height: 1.55; }
+
+/* -- Setup ------------------------------------------------------------------------------------ */
+.setup { height: 100%; display: grid; grid-template-columns: 216px minmax(0, 1fr); }
+.setup-steps { background: var(--panel); border-right: 1px solid var(--line); padding: var(--s5) var(--s3); }
+.setup-caption { margin: 0 var(--s3) var(--s3); font: 600 var(--text-xs)/1.4 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.setup-steps ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.setup-steps button {
+  display: flex; align-items: center; gap: var(--s3); width: 100%; text-align: left; border: 0; background: none;
+  padding: 7px var(--s3); border-radius: var(--r-sm); font-size: var(--text); font-weight: 500; color: var(--ink-2); cursor: pointer;
+}
+.setup-steps button.on { background: var(--hover); color: var(--ink); }
+.step-mark {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: var(--text-xs);
+  border: 1.5px solid var(--line-2); color: var(--ink-3);
+}
+.step-done { background: var(--ok); border-color: var(--ok); color: var(--panel); font-weight: 700; }
+.setup-page section h1 { font: 600 28px/1.2 var(--serif); letter-spacing: -0.012em; margin: 0 0 6px; }
+.setup-page section .lede { margin-bottom: var(--s5); }
+.setup-page .checks { margin: var(--s4) 0; }
+.setup-blocking { margin-top: 0 !important; }
+.setup-nav { display: flex; gap: var(--s2); margin-top: var(--s6); }
+.facts { margin: 0; padding: 0 0 0 var(--s5); display: flex; flex-direction: column; gap: var(--s3); max-width: 68ch; color: var(--ink-2); line-height: 1.6; }
+.command { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s4) var(--s5); }
+.command p { margin: 0 0 var(--s2); }
+.command-line { display: flex; align-items: center; gap: var(--s2); }
+.command-line code { font-size: var(--text); padding: 6px 10px; }
+.command-line input { flex: 1; max-width: 460px; }

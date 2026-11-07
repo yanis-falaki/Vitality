@@ -18,6 +18,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, Utc};
 use image::RgbImage;
@@ -25,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::write_atomic;
 use crate::policy::Trigger;
-pub use crate::types::TodayCounts;
+pub use crate::types::{Freed, TodayCounts};
 
 pub const INTERACTION_FILE: &str = "interaction.json";
 pub const UPLOADED: &str = "uploaded";
@@ -110,21 +111,19 @@ pub fn local_tz_name() -> String {
 
 pub struct Store {
     root: PathBuf,
-    quality: f32,
+    quality: Mutex<f32>,
 }
 
-/// What `free_up_space` deleted.
-#[allow(dead_code)] // Settings' Free up space (milestone 3)
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Freed {
-    pub interactions: u32,
-    pub bytes: u64,
-}
 
 impl Store {
     /// The store under `root` (the captures folder), writing WebP at `quality` (0–100).
     pub fn new(root: &Path, quality: f32) -> Store {
-        Store { root: root.to_path_buf(), quality }
+        Store { root: root.to_path_buf(), quality: Mutex::new(quality) }
+    }
+
+    /// The WebP quality of shots taken from now on.
+    pub fn set_quality(&self, quality: f32) {
+        *self.quality.lock().unwrap() = quality;
     }
 
     pub fn root(&self) -> &Path {
@@ -155,7 +154,7 @@ impl Store {
             tz: tz.to_string(),
         };
         append_line(&folder.join(PARTIAL), &header)?;
-        Ok(InteractionHandle { folder, header, start, shots: vec![], quality: self.quality })
+        Ok(InteractionHandle { folder, header, start, shots: vec![], quality: *self.quality.lock().unwrap() })
     }
 
     /// Completes every folder left without a readable `interaction.json` (a crash or a power
@@ -243,7 +242,6 @@ impl Store {
     }
 
     /// Deletes the local copies of uploaded interactions (never pending or failed ones).
-    #[allow(dead_code)] // Settings' Free up space (milestone 3)
     pub fn free_up_space(&self) -> io::Result<Freed> {
         let mut freed = Freed::default();
         for folder in self.folders()? {

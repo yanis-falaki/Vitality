@@ -3,7 +3,7 @@
 //!
 //! Requests: `{"cmd":"status"}`, `{"cmd":"pause","minutes":30}` (`minutes` left out = until
 //! resumed), `{"cmd":"resume"}`, `{"cmd":"show"}` (open the window; a second start of the app
-//! sends it). Replies: `{"ok":true,"status":{…StatusView…}}` or `{"ok":false,"error":"…"}`.
+//! sends it), `{"cmd":"screens"}` (adds `"screens"`, for `doctor`). Replies: `{"ok":true,"status":{…StatusView…}}` or `{"ok":false,"error":"…"}`.
 //!
 //! `serve(path, core)` binds the socket (only the owner may use it) and answers on the tokio
 //! runtime; `request(path, req)` is the blocking client the CLI uses.
@@ -32,6 +32,8 @@ pub enum ControlRequest {
     },
     Resume,
     Show,
+    /// The screens (for `doctor`).
+    Screens,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,6 +41,8 @@ pub struct ControlReply {
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<StatusView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screens: Option<crate::types::ScreensView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -82,7 +86,7 @@ pub fn serve(path: &Path, core: Arc<Core>) -> io::Result<()> {
 async fn answer(core: &Core, line: &str) -> ControlReply {
     let request: ControlRequest = match serde_json::from_str(line) {
         Ok(r) => r,
-        Err(e) => return ControlReply { ok: false, status: None, error: Some(format!("bad request: {e}")) },
+        Err(e) => return ControlReply { ok: false, status: None, screens: None, error: Some(format!("bad request: {e}")) },
     };
     let status = match request {
         ControlRequest::Status => core.status(),
@@ -93,8 +97,11 @@ async fn answer(core: &Core, line: &str) -> ControlReply {
             core.show_window();
             core.status()
         }
+        ControlRequest::Screens => {
+            return ControlReply { ok: true, status: Some(core.status()), screens: Some(core.screens.view()), error: None };
+        }
     };
-    ControlReply { ok: true, status: Some(status), error: None }
+    ControlReply { ok: true, status: Some(status), screens: None, error: None }
 }
 
 /// Holds the one-instance lock (`client.lock` beside the socket) for as long as the returned

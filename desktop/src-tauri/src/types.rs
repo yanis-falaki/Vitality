@@ -124,6 +124,13 @@ pub struct TodayCounts {
     pub interactions: u32,
 }
 
+/// What Free up space deleted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Freed {
+    pub interactions: u32,
+    pub bytes: u64,
+}
+
 /// Disk use of the captures.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiskView {
@@ -156,6 +163,14 @@ pub struct Check {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionLine {
     pub at: DateTime<Utc>,
+    pub text: String,
+}
+
+/// One rule in plain words with the current numbers ("How capture works").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleText {
+    pub id: String,
+    pub title: String,
     pub text: String,
 }
 
@@ -296,12 +311,15 @@ mod tests {
             ("statusPaused", "StatusView", v(samples::status_paused())),
             ("statusIdle", "StatusView", v(samples::status_idle())),
             ("statusPage", "StatusPage", v(samples_page::status_page())),
+            ("rules", "RuleText[]", v(crate::policy::explain::explain(&Default::default()))),
+            ("settings", "Settings", v(crate::settings::Settings::default())),
+            ("freed", "Freed", v(super::Freed { interactions: 12, bytes: 48_000_000 })),
         ]
     }
 
     fn render() -> String {
         let fixtures = fixtures();
-        let mut types: Vec<&str> = fixtures.iter().map(|f| f.1).collect();
+        let mut types: Vec<&str> = fixtures.iter().map(|f| f.1.trim_end_matches("[]")).collect();
         types.sort();
         types.dedup();
         let mut out = String::from(

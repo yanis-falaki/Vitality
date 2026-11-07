@@ -18,6 +18,8 @@ use crate::screens::portal::XdgPortal;
 use crate::settings::Settings;
 use crate::state::PauseFor;
 use crate::tray::{self, TrayAction};
+use crate::commands::{refresh_checks, AppState};
+use crate::settings::SystemdUnit;
 use crate::upload::UploadTimings;
 
 pub fn run() {
@@ -42,11 +44,23 @@ pub fn run() {
             crate::commands::screens_rename,
             crate::commands::screens_remove,
             crate::commands::screen_preview,
+            crate::commands::settings_get,
+            crate::commands::settings_save,
+            crate::commands::free_up_space,
+            crate::commands::how_it_works,
+            crate::commands::checks,
+            crate::commands::checks_run,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
-            let core = tauri::async_runtime::block_on(start(paths.clone(), handle.clone()))?;
+            let settings = Settings::load(&paths.settings);
+            let core = tauri::async_runtime::block_on(start(paths.clone(), settings.clone(), handle.clone()))?;
             app.manage(core.clone());
+            app.manage(AppState {
+                settings: std::sync::Mutex::new(settings),
+                settings_path: paths.settings.clone(),
+                login: Box::new(SystemdUnit),
+            });
             if core.screens.count() == 0 {
                 show(&handle);
             }
@@ -63,8 +77,7 @@ pub fn run() {
 }
 
 /// Starts the core and everything around it (inside the async runtime).
-async fn start(paths: Paths, handle: AppHandle) -> Result<Arc<Core>, Box<dyn std::error::Error>> {
-    let settings = Settings::load(&paths.settings);
+async fn start(paths: Paths, settings: Settings, handle: AppHandle) -> Result<Arc<Core>, Box<dyn std::error::Error>> {
     let feeds = GstFeeds::new()?;
     let core = Runtime::start(Parts {
         paths: paths.clone(),
@@ -76,6 +89,21 @@ async fn start(paths: Paths, handle: AppHandle) -> Result<Arc<Core>, Box<dyn std
         portal: Arc::new(XdgPortal),
         feeds: Arc::new(feeds),
         tick: Duration::from_millis(250),
+    });
+    core.apply_settings(&settings);
+    // The health checks: once the saved screens have been reopened, then every 30 s.
+    tokio::spawn({
+        let core = core.clone();
+        let settings_path = paths.settings.clone();
+        async move {
+            while !core.screens.opened_all() {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            loop {
+                refresh_checks(core.clone(), Settings::load(&settings_path), None).await;
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        }
     });
     *core.on_show.lock().unwrap() = Some(Box::new({
         let handle = handle.clone();

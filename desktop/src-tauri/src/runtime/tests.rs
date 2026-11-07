@@ -266,3 +266,13 @@ fn a_suspend_is_a_wall_clock_jump_the_monotonic_clock_did_not_make() {
     assert!(slept(wall(7200), Duration::from_millis(250)), "two hours asleep");
     assert!(!slept(wall(-3600), Duration::from_millis(250)), "the clock set back");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_settings_apply_at_once() {
+    let r = rig().await;
+    let s = crate::settings::Settings { server: "".into(), disk_warning_gb: 1e6, ..Default::default() };
+    r.core.apply_settings(&s);
+    eventually("upload off", || r.core.status().upload.state == crate::types::UploadState::Disabled).await;
+    assert!(r.core.status_page().disk.low, "the new warning level counts");
+    eventually("logged", || r.core.recent_decisions(10).iter().any(|d| d.text == "settings changed")).await;
+}

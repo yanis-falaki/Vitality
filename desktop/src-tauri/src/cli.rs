@@ -1,7 +1,8 @@
 //! The command line: `vitality-client status | pause [MINUTES] | resume | doctor`.
 //!
 //! `main(args)` parses the arguments, does the command and returns the process's exit code
-//! (0 done, 1 the command failed, 2 the arguments were wrong).
+//! (0 done, 1 the command failed — for `doctor`, an essential check — 2 the arguments were
+//! wrong).
 
 use chrono::{DateTime, Local, TimeZone, Utc};
 
@@ -56,11 +57,7 @@ fn run(command: Command) -> i32 {
         Command::Status => ControlRequest::Status,
         Command::Pause { minutes } => ControlRequest::Pause { minutes },
         Command::Resume => ControlRequest::Resume,
-        Command::Doctor => {
-            // The health checks come with the setup pages (milestone 3).
-            eprintln!("vitality-client: doctor is not available yet");
-            return 1;
-        }
+        Command::Doctor => return doctor(),
     };
     match control::request(&Paths::from_env().socket, &request) {
         Ok(ControlReply { ok: true, status: Some(status), .. }) => {
@@ -76,6 +73,34 @@ fn run(command: Command) -> i32 {
             1
         }
     }
+}
+
+/// `doctor`: every health check on this machine, ✓/✗ with fixes; exit 1 if an essential one
+/// fails. Screens are asked of the running app (they fail when it is not running).
+fn doctor() -> i32 {
+    use crate::activity::{EvdevInput, SystemDevices};
+    use crate::health::{report, MachineEnv};
+    use crate::settings::{Settings, SystemdUnit};
+    let paths = Paths::from_env();
+    let settings = Settings::load(&paths.settings);
+    let socket = paths.socket.clone();
+    let screens = move || match control::request(&socket, &ControlRequest::Screens) {
+        Ok(ControlReply { screens: Some(view), .. }) => Ok(view.screens),
+        _ => Err("Vitality isn't running, so its screens are not open".to_string()),
+    };
+    let input = std::sync::Arc::new(EvdevInput::start(Box::new(SystemDevices), std::time::Duration::from_secs(3600)));
+    let env = MachineEnv::new(input, Box::new(screens), paths.captures.clone(), Box::new(SystemdUnit));
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("vitality-client: {e}");
+            return 1;
+        }
+    };
+    let checks = runtime.block_on(crate::health::checks(&env, &settings));
+    let (text, code) = report(&checks);
+    print!("{text}");
+    code
 }
 
 /// The few lines `status`, `pause` and `resume` print, with times in `tz`.

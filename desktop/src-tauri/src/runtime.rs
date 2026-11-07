@@ -49,6 +49,7 @@ enum Request {
     Resume(oneshot::Sender<()>),
     Quit(oneshot::Sender<()>),
     ForgetScreen(ScreenId),
+    Settings(PolicySettings),
 }
 
 /// The running core, shared by the interface, the tray and the control socket.
@@ -56,7 +57,7 @@ pub struct Core {
     pub screens: Arc<Screens>,
     pub store: Arc<Store>,
     pub uploader: Uploader,
-    input: Arc<dyn InputSource>,
+    pub input: Arc<dyn InputSource>,
     requests: mpsc::Sender<Request>,
     snapshot: Mutex<StatusView>,
     changed: broadcast::Sender<()>,
@@ -89,6 +90,16 @@ impl Core {
         self.ask(Request::Quit).await;
     }
 
+    /// Applies new settings at once (they are saved by the caller).
+    pub fn apply_settings(&self, s: &crate::settings::Settings) {
+        let _ = self.requests.try_send(Request::Settings(s.policy()));
+        self.store.set_quality(s.webp_quality);
+        self.uploader.set_server(s.server());
+        *self.disk_warning.lock().unwrap() = s.disk_warning_bytes();
+        self.recount();
+        self.notify_changed();
+    }
+
     pub fn forget_screen(&self, id: &ScreenId) {
         let _ = self.requests.try_send(Request::ForgetScreen(id.clone()));
         self.notify_changed();
@@ -104,7 +115,6 @@ impl Core {
         self.checks.lock().unwrap().clone()
     }
 
-    #[allow(dead_code)] // the health checks (milestone 3) set them
     pub fn set_checks(&self, checks: Vec<Check>) {
         let changed = *self.checks.lock().unwrap() != checks;
         *self.checks.lock().unwrap() = checks;
@@ -302,6 +312,10 @@ impl Runtime {
                 let _ = done.send(());
             }
             Request::ForgetScreen(id) => self.policy.forget_screen(&id),
+            Request::Settings(p) => {
+                self.log("settings changed");
+                self.policy.set_settings(p);
+            }
         }
     }
 

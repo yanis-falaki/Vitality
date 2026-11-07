@@ -1,17 +1,33 @@
-// The window: the sidebar (pages, and capture's state with Pause/Resume at the bottom) and the
-// page shown, Status first.
-import { useState } from "react";
+// The window: Setup while no screen is set up or an essential check fails (spec §8), else the
+// sidebar (pages, and capture's state with Pause/Resume at the bottom) and the page shown,
+// Status first. Once Setup has started it stays until its Done, even if the checks pass midway.
+import { useEffect, useState } from "react";
 import { CaptureState } from "./components/CaptureState";
-import { useCoreEvents } from "./lib/queries";
+import { useChecks, useCoreEvents, useStatus } from "./lib/queries";
+import { needsSetup } from "./lib/setup";
+import { HowItWorks } from "./pages/HowItWorks";
 import { Screens } from "./pages/Screens";
+import { Settings } from "./pages/Settings";
+import { Setup } from "./pages/Setup";
 import { Status } from "./pages/Status";
 
-const PAGES = { status: "Status", screens: "Screens" } as const;
+const PAGES = { status: "Status", screens: "Screens", settings: "Settings", how: "How capture works" } as const;
 type Page = keyof typeof PAGES;
 
 export function App() {
   useCoreEvents();
-  const [page, setPage] = useState<Page>(() => (new URLSearchParams(location.search).get("page") as Page) || "status");
+  const params = new URLSearchParams(location.search);
+  const [page, setPage] = useState<Page>(() => (params.get("page") as Page) || "status");
+  const [inSetup, setInSetup] = useState(() => params.get("setup") === "1");
+  const status = useStatus().data;
+  const checks = useChecks().data;
+  const needed = needsSetup(status, checks);
+  useEffect(() => {
+    if (needed) setInSetup(true);
+  }, [needed]);
+  if (needed === undefined) return <div className="app-loading" />;
+  if (needed || inSetup)
+    return <Setup initialStep={Number(params.get("step") ?? 0)} onDone={() => { setInSetup(false); setPage("status"); }} />;
   return (
     <div className="app">
       <aside className="sidebar">
@@ -26,7 +42,12 @@ export function App() {
         <span className="spacer" />
         <CaptureState />
       </aside>
-      <main className="page">{page === "status" ? <Status /> : <Screens />}</main>
+      <main className="page">
+        {page === "status" && <Status />}
+        {page === "screens" && <Screens />}
+        {page === "settings" && <Settings />}
+        {page === "how" && <HowItWorks />}
+      </main>
     </div>
   );
 }

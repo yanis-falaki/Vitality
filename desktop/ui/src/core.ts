@@ -102,6 +102,46 @@ export interface StatusPage {
   recent_decisions: DecisionLine[];
 }
 
+/** `client.toml`: the server, every number of the rules, image quality, disk warning, start at login. */
+export interface Settings {
+  server: string;
+  webp_quality: number;
+  start_gap_s: number;
+  settle_s: number;
+  max_gap_s: number;
+  change_fraction: number;
+  change_levels: number;
+  passive_every_s: number;
+  passive_quiet_checks: number;
+  max_interaction_mib: number;
+  disk_warning_gb: number;
+  start_at_login: boolean;
+}
+
+export interface FieldError {
+  field: keyof Settings | string;
+  message: string;
+}
+
+/** `settings_save`'s reply: errors (nothing saved), or the saved settings; `login_error` if start at login could not change. */
+export interface SaveReply {
+  errors: FieldError[];
+  settings: Settings;
+  login_error: string | null;
+}
+
+/** One rule in plain words, written by the core with the current numbers. */
+export interface RuleText {
+  id: string;
+  title: string;
+  text: string;
+}
+
+export interface Freed {
+  interactions: number;
+  bytes: number;
+}
+
 export const core = {
   status: () => invoke<StatusView>("status"),
   statusPage: () => invoke<StatusPage>("status_page"),
@@ -112,6 +152,14 @@ export const core = {
   screensRepick: (id: ScreenId) => invoke<ScreensView>("screens_repick", { id }),
   screensRename: (id: ScreenId, name: string) => invoke<ScreensView>("screens_rename", { id, name }),
   screensRemove: (id: ScreenId) => invoke<ScreensView>("screens_remove", { id }),
+  settingsGet: () => invoke<Settings>("settings_get"),
+  settingsSave: (settings: Settings) => invoke<SaveReply>("settings_save", { settings }),
+  freeUpSpace: () => invoke<Freed>("free_up_space"),
+  howItWorks: () => invoke<RuleText[]>("how_it_works"),
+  /** The health checks as last run. */
+  checks: () => invoke<Check[]>("checks"),
+  /** Runs them now; with `server`, the server parts test that address (not saved). */
+  checksRun: (server: string | null) => invoke<Check[]>("checks_run", { server }),
   /** A `data:image/jpeg` URL of the screen's newest frame, about 480 px wide, or null. */
   screenPreview: (id: ScreenId) => invoke<string | null>("screen_preview", { id }),
 };

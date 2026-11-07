@@ -6,7 +6,8 @@ import { core, type ScreensView } from "../core";
 import { ScreenCard } from "../components/ScreenCard";
 import { keys, useScreens } from "../lib/queries";
 
-export function Screens() {
+/** `embedded`: inside Setup's Screens step (no page frame of its own). */
+export function Screens({ embedded = false }: { embedded?: boolean }) {
   const screens = useScreens();
   const client = useQueryClient();
   const done = (view: ScreensView) => {
@@ -22,7 +23,7 @@ export function Screens() {
   const error = add.error ?? repick.error ?? rename.error ?? remove.error;
 
   return (
-    <div className="page-inner">
+    <div className={embedded ? "" : "page-inner"}>
       <header className="page-head">
         <div>
           <h1>Screens</h1>

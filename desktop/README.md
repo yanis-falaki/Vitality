@@ -40,7 +40,17 @@ the interface). Each file starts with its contract.
 ## The command line
 
 `vitality-client` without arguments is the app. With arguments: `status`, `pause [MINUTES]`,
-`resume` (through the running app's socket) and `doctor`.
+`resume` (through the running app's socket) and `doctor`: every health check (input access, the
+desktop session, the screen-share portal, the screens, Tailscale, the server and whether it
+accepts this device, disk space, start at login) with ✓/✗ and a fix for each failure; it exits 1
+when an essential one fails. The same checks drive Setup (shown while no screen is set up or an
+essential check fails) and the warnings on Status.
+
+## Settings
+
+`~/.config/vitality/client.toml`, written by the Settings page: the server, every number of the
+rules (How capture works shows them in words), image quality, the disk warning level and start at
+login (`systemctl --user enable|disable vitality-client.service`).
 
 ## Setup notes for some desktops
 

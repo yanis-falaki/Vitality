@@ -12,6 +12,7 @@
 //! The rules themselves are in `rules.rs`; change detection in `change.rs`.
 
 pub mod change;
+pub mod explain;
 mod rules;
 
 use std::collections::BTreeMap;
@@ -165,6 +166,11 @@ impl Policy {
             }
             Mode::Stopped { why } => PolicyState { mode: CaptureMode::Stopped, stopped_by: Some(why), ..base },
         }
+    }
+
+    /// New numbers for the rules, from now on (the open interaction goes on).
+    pub fn set_settings(&mut self, settings: PolicySettings) {
+        self.settings = settings;
     }
 
     /// Forget a screen's last shot (it was removed, re-picked, or its shot could not be written),

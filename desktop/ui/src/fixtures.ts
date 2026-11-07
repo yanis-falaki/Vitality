@@ -1,7 +1,7 @@
 // Sample values of the types the core sends, written by the Rust test `types::tests`
 // (`UPDATE_FIXTURES=1 cargo test types` rewrites it). Typed with core.ts's mirrors, so the
 // type check fails when Rust and TypeScript drift apart. Also the fake core's data.
-import type { ScreensView, StatusPage, StatusView } from "./core";
+import type { Freed, RuleText, ScreensView, Settings, StatusPage, StatusView } from "./core";
 
 export const screens: ScreensView = {
   "duplicates": [
@@ -192,4 +192,72 @@ export const statusPage: StatusPage = {
     "interactions": 37,
     "shots": 214
   }
+};
+
+export const rules: RuleText[] = [
+  {
+    "id": "R1",
+    "text": "Any keyboard or mouse input after at least 2 s without input starts an active interaction, with a shot of every screen.",
+    "title": "Start active"
+  },
+  {
+    "id": "R2",
+    "text": "2 s after the last input, a shot.",
+    "title": "Settle"
+  },
+  {
+    "id": "R3",
+    "text": "While you are continuously active, a shot at least every 10 s.",
+    "title": "Maximum gap"
+  },
+  {
+    "id": "R4",
+    "text": "A shot includes a screen only if it changed since that screen's own last shot: more than 0.5 % of a small grayscale copy (64 × 36) moved by more than 16 levels. A shot in which no screen changed is skipped. R1 shots include every screen.",
+    "title": "Which screens"
+  },
+  {
+    "id": "R5",
+    "text": "After the R2 shot, if no input follows within 2 s, the interaction ends and is uploaded.",
+    "title": "End active"
+  },
+  {
+    "id": "R6",
+    "text": "While idle, every 45 s, each screen is compared with its last shot by R4's rule; if any changed, a shot of the changed screens, marked passive.",
+    "title": "Passive check"
+  },
+  {
+    "id": "R7",
+    "text": "The first passive shot starts a passive interaction; every passive shot until it ends belongs to it. It ends on any input (R1 then starts an active one), after 3 checks in a row without change, or on pause. It holds only passive shots.",
+    "title": "Passive interaction"
+  },
+  {
+    "id": "R8",
+    "text": "While paused, nothing is captured and no checks run; an open interaction ends.",
+    "title": "Stop"
+  },
+  {
+    "id": "R9",
+    "text": "When an interaction's shots reach 40 MiB (or 900 shots), it ends and a new one of the same kind starts at once with a shot of every screen, so every upload stays under the server's limit.",
+    "title": "Size budget"
+  }
+];
+
+export const settings: Settings = {
+  "change_fraction": 0.005,
+  "change_levels": 16,
+  "disk_warning_gb": 5.0,
+  "max_gap_s": 10.0,
+  "max_interaction_mib": 40,
+  "passive_every_s": 45.0,
+  "passive_quiet_checks": 3,
+  "server": "http://vitality-librarian:8100",
+  "settle_s": 2.0,
+  "start_at_login": true,
+  "start_gap_s": 2.0,
+  "webp_quality": 85.0
+};
+
+export const freed: Freed = {
+  "bytes": 48000000,
+  "interactions": 12
 };
