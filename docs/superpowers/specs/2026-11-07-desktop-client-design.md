@@ -18,14 +18,14 @@ see at any time what it is doing and why.
 
 **In:** the app (tray icon, window, first-run setup, settings, status), the capture policy, screens
 set up and named by the owner, passive capture, local storage and upload, a small CLI, a local Arch
-package, the two protocol additions with the server and observer updates, moving the owner's
-laptop and desktop over from the old client.
+package, the two protocol additions with the server and observer updates.
 
 **Out:** macOS, Windows, phones (ports later, if ever); publishing packages (AUR, PPA, Flathub);
-Flatpak; a self-updater; the web app, the modeler; multi-device features.
+Flatpak; a self-updater; the web app, the modeler; multi-device features; migration code (moving the
+owner's two machines over is a manual checklist, §9).
 
 **Built in milestones, each a working app:** (1) the shell: core, capture, tray icon, Screens page,
-upload; (2) Status; (3) Settings and first-run setup; (4) packaging and moving the two machines over.
+upload; (2) Status; (3) Settings and first-run setup; (4) packaging; then the owner's two machines are moved over by hand.
 
 ## 3. Decisions
 
@@ -160,10 +160,12 @@ unmerged `screens` branch are not used.
 one and marks passive shots ("Screenshot 3 (12 s) · Main · passive"); its prompt says images are
 per screen, named by the owner, and that passive shots mean watching or reading.
 
-**Moving over** (laptop and desktop): install the app; it adopts existing local captures as they are
-(marked uploaded where the old index said so) and the server address from the old config; setup asks
-for the screens once; the old client, its service, its index and the Waybar module are removed (the
-Waybar config restored from its backup).
+**Moving over** (laptop and desktop) is a one-time, **manual** step, done with the owner; the app has
+no migration code. Per machine: stop and remove the old client (its service, its install under
+`~/.local/share/vitality-client`, its `index.sqlite`, the Hyprland start line) and the Waybar module
+(restoring the Waybar config from its backup); mark the existing local capture folders as uploaded
+(an empty `uploaded` file in each), or delete them, so the new app does not send them again; install
+the app; go through setup once (server address, screens).
 
 ## 10. Where things live
 
@@ -177,8 +179,8 @@ Waybar config restored from its backup).
 | Control socket | `$XDG_RUNTIME_DIR/vitality/client.sock` (while the app runs) |
 | App log | the systemd journal (`journalctl --user -u vitality-client`) |
 
-Frames and previews exist only in memory. The `client` names are kept so existing captures are found
-where they are.
+Frames and previews exist only in memory. The `client` names are kept, so the folders sit where the
+old client's did.
 
 ## 11. Packaging
 
@@ -195,7 +197,7 @@ Flatpak, no self-updater.
   lock and pause).
 - **Change detection:** clock digit, cursor, pointer → no change; a new message, scrolling → change.
 - **Store and upload:** against a fake server in a temporary folder: markers, finishing interrupted
-  folders, retries, refused device, adopting old captures, Free up space deleting only uploaded ones.
+  folders, retries, refused device, Free up space deleting only uploaded ones.
 - **Interface:** type checks; headless runs against a fake core (setup, screens with the duplicate
   warning, status, settings) with screenshots looked at.
 - **Health and CLI:** each check against simulated good and bad machines; `status`, `pause`,
