@@ -38,7 +38,8 @@ prepare() {
   rm -rf "$srcdir/desktop"
   mkdir -p "$srcdir/desktop"
   tar -C "$_repo/desktop" --exclude=./target --exclude=./ui/node_modules --exclude=./ui/dist \
-      --exclude=./src-tauri/gen -cf - . | tar -C "$srcdir/desktop" -xf -
+      --exclude=./src-tauri/gen \
+      --exclude=./packaging/arch/src --exclude=./packaging/arch/pkg --exclude="./packaging/arch/*.pkg.tar.zst" -cf - . | tar -C "$srcdir/desktop" -xf -
   cd "$srcdir/desktop/ui"
   npm ci --no-audit --no-fund
 }
