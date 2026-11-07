@@ -9,7 +9,7 @@ the `vitality-server` command, which loads the settings and inspects the server,
 import asyncio
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 import uvicorn
@@ -21,7 +21,7 @@ from vitality_server.shared.storage import FileStore
 
 log = logging.getLogger(__name__)
 
-IPv4Finder = Callable[[], Awaitable[str]]
+IPv4Finder = Callable[[], Coroutine[Any, Any, str]]
 """Returns this machine's Tailscale IPv4 address, or raises RuntimeError (see `tailscale_ipv4`)."""
 
 

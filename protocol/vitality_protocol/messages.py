@@ -37,10 +37,11 @@ class Shot(_Message):
     # One screenshot of an interaction.
     file: Annotated[str, Field(pattern=SHOT_FILE_RE.pattern)]  # "0004.webp"
     ts: Timestamp  # exact time of the capture
-    trigger: Literal["activity", "manual"]
+    trigger: Literal["activity", "manual", "passive"]  # passive: taken while idle (R6)
     width: int
     height: int
     bytes: int
+    screen_name: str | None = None  # the owner's name for the screen; only with several screens
 
 
 class Interaction(_Message):

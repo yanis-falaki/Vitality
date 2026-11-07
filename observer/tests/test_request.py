@@ -160,3 +160,32 @@ def test_prompt_version_is_stable():
     reload(request)
     assert request.PROMPT_VERSION == PROMPT_VERSION
     assert PROMPT.startswith("# Observe one interaction")
+
+
+def test_line_names_the_screen_and_marks_passive_shots(tmp_path: Path):
+    interaction = make_interaction("2026-11-03T14:22:05Z", seconds=(0, 12))
+    shots = [interaction.shots[0].model_copy(update={"screen_name": "Side"}),
+             interaction.shots[1].model_copy(update={"screen_name": "Main", "trigger": "passive"})]
+    interaction = interaction.model_copy(update={"shots": shots})
+    item = make_item(tmp_path, interaction)
+
+    content = build_params(item, interaction, ObserverConfig())["messages"][0]["content"]
+
+    assert content[1]["text"] == "0000.webp, 0 s after the first input · Side:"
+    assert content[3]["text"] == "0012.webp, 12 s after the first input · Main · passive:"
+
+
+def test_passive_shot_without_screen_name(tmp_path: Path):
+    interaction = make_interaction("2026-11-03T14:22:05Z", seconds=(12,))
+    interaction = interaction.model_copy(
+        update={"shots": [interaction.shots[0].model_copy(update={"trigger": "passive"})]})
+    item = make_item(tmp_path, interaction)
+
+    content = build_params(item, interaction, ObserverConfig())["messages"][0]["content"]
+
+    assert content[1]["text"] == "0012.webp, 12 s after the first input · passive:"
+
+
+def test_prompt_explains_screens_and_passive_shots():
+    assert "named by the owner" in PROMPT
+    assert "passive" in PROMPT

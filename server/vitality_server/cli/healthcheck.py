@@ -4,7 +4,8 @@ import asyncio
 import sys
 import urllib.error
 import urllib.request
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from vitality_protocol import HEALTH_PATH
 
@@ -13,7 +14,7 @@ from vitality_server.shared.identity import tailscale_ipv4
 
 
 def healthcheck(config: ServerConfig,
-                ipv4: Callable[[], Awaitable[str]] = tailscale_ipv4,
+                ipv4: Callable[[], Coroutine[Any, Any, str]] = tailscale_ipv4,
                 fetch: Callable[[str], int] = lambda url: _get_status(url)) -> int:  # defined below
     """Ask the server on this machine whether it is up; return the exit code.
 

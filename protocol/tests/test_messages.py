@@ -60,3 +60,17 @@ def test_utc_written_as_z_from_any_zone():
 
 def test_python_dump_keeps_datetimes():
     assert isinstance(Interaction.model_validate(INTERACTION).model_dump()["start"], datetime)
+
+
+def test_shot_without_new_fields_round_trips_unchanged():
+    shot = Shot.model_validate(SHOT)
+    assert shot.screen_name is None
+    assert json.loads(shot.model_dump_json(exclude_none=True)) == {**SHOT, "ts": "2026-10-25T17:00:00.449Z"}
+
+
+def test_passive_shot_with_screen_name_round_trips():
+    data = {**SHOT, "trigger": "passive", "screen_name": "Main"}
+    i = Interaction.model_validate({**INTERACTION, "shots": [data]})
+    again = Interaction.model_validate_json(i.model_dump_json())
+    assert again == i
+    assert again.shots[0].trigger == "passive" and again.shots[0].screen_name == "Main"

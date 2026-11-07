@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from vitality_protocol.layout import INTERACTION_FILE
-from vitality_protocol.messages import Interaction
+from vitality_protocol.messages import Interaction, Shot
 
 from vitality_observer.config import ObserverConfig
 from vitality_observer.work import WorkItem, device_of
@@ -96,7 +96,8 @@ def build_params(item: WorkItem, interaction: Interaction, config: ObserverConfi
 
     `interaction` is the item's `interaction.json`, already read (`read_interaction`).
     The user message is a text header with the local times, then for each screenshot, in order,
-    a line saying which one it is and the image. Excludes `betas`, `fallbacks` and `timeout`.
+    a line saying which one it is (and its screen, and
+    whether it is passive) and the image. Excludes `betas`, `fallbacks` and `timeout`.
     Raises ValueError, naming the file, if a listed screenshot is missing or unreadable, or its
     name does not start with digits.
     """
@@ -112,7 +113,7 @@ def build_params(item: WorkItem, interaction: Interaction, config: ObserverConfi
             data = base64.b64encode(path.read_bytes()).decode("ascii")
         except OSError as e:
             raise ValueError(f"cannot read screenshot {shot.file} of {item.name}: {e.strerror or e}") from e
-        content.append({"type": "text", "text": f"{shot.file}, {_seconds_in(shot.file)} s after the first input:"})
+        content.append({"type": "text", "text": _shot_line(shot)})
         content.append({"type": "image", "source": {"type": "base64", "media_type": "image/webp", "data": data}})
     return {
         "model": config.model,
@@ -129,6 +130,17 @@ def parse_reply(text: str) -> Reply:
         return Reply.model_validate_json(text)
     except ValidationError as e:
         raise ValueError(f"invalid reply: {_first_problem(e)}") from e
+
+
+def _shot_line(shot: Shot) -> str:
+    # "0012.webp, 12 s after the first input · Main · passive:"; the screen's name only when
+    # the client wrote one (several screens), "passive" only for shots taken while idle.
+    parts = [f"{shot.file}, {_seconds_in(shot.file)} s after the first input"]
+    if shot.screen_name is not None:
+        parts.append(shot.screen_name)
+    if shot.trigger == "passive":
+        parts.append("passive")
+    return " · ".join(parts) + ":"
 
 
 def _seconds_in(file: str) -> int:

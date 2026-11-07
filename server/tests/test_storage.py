@@ -189,3 +189,53 @@ def test_recover_skips_folder_whose_json_names_another_interaction(tmp_path):
     folder.mkdir(parents=True)
     (folder / "interaction.json").write_text(META.model_dump_json())
     assert s.recover() == 0
+
+
+# --- passive shots and screen names (desktop client) ---
+
+TWO_SCREENS = Interaction.model_validate({
+    **META.model_dump(mode="json"),
+    "shots": [{"file": "0000.webp", "ts": "2026-10-25T17:00:00.449Z", "trigger": "passive",
+               "width": 8, "height": 8, "bytes": len(WEBP), "screen_name": "Main"},
+              {"file": "0000-2.webp", "ts": "2026-10-25T17:00:00.449Z", "trigger": "passive",
+               "width": 8, "height": 8, "bytes": len(WEBP), "screen_name": "Side"}]})
+
+
+def test_two_screen_passive_interaction_is_stored_and_indexed(tmp_path):
+    s = FileStore(tmp_path)
+    assert s.put("desktop", TWO_SCREENS, {"0000.webp": WEBP, "0000-2.webp": WEBP}) == "new"
+    folder = tmp_path / "captures/desktop/2026-10-25/17-00-00"
+    assert Interaction.model_validate_json((folder / "interaction.json").read_text()) == TWO_SCREENS
+    assert _rows(tmp_path, "SELECT file, trigger, screen_name FROM shots ORDER BY file") == [
+        ("0000-2.webp", "passive", "Side"), ("0000.webp", "passive", "Main")]
+
+
+def test_old_style_interaction_json_has_no_new_fields(tmp_path):
+    FileStore(tmp_path).put("laptop", META, FILES)
+    import json
+    written = json.loads((tmp_path / "captures/laptop/2026-10-25/17-00-00/interaction.json").read_text())
+    assert written == META.model_dump(mode="json", exclude_none=True)
+    assert "screen_name" not in written["shots"][0]
+
+
+def test_index_from_before_passive_shots_is_upgraded(tmp_path):
+    import sqlite3
+    conn = sqlite3.connect(tmp_path / "index.sqlite")
+    conn.executescript("""
+CREATE TABLE interactions (client TEXT NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL,
+    start TEXT NOT NULL, end TEXT NOT NULL, local_start TEXT NOT NULL, tz TEXT NOT NULL,
+    received_at TEXT NOT NULL, PRIMARY KEY (client, name));
+CREATE TABLE shots (client TEXT NOT NULL, interaction TEXT NOT NULL, file TEXT NOT NULL,
+    ts TEXT NOT NULL, trigger TEXT NOT NULL CHECK (trigger IN ('activity','manual')),
+    width INTEGER NOT NULL, height INTEGER NOT NULL, bytes INTEGER NOT NULL,
+    PRIMARY KEY (client, interaction, file),
+    FOREIGN KEY (client, interaction) REFERENCES interactions(client, name));
+INSERT INTO interactions VALUES ('laptop','2026-10-24/10-00-00','screen','a','b','c','UTC','d');
+INSERT INTO shots VALUES ('laptop','2026-10-24/10-00-00','0000.webp','a','activity',1,1,1);
+""")
+    conn.close()
+    s = FileStore(tmp_path)
+    assert s.put("desktop", TWO_SCREENS, {"0000.webp": WEBP, "0000-2.webp": WEBP}) == "new"
+    assert _rows(tmp_path, "SELECT client, file, trigger, screen_name FROM shots ORDER BY client, file") == [
+        ("desktop", "0000-2.webp", "passive", "Side"), ("desktop", "0000.webp", "passive", "Main"),
+        ("laptop", "0000.webp", "activity", None)]

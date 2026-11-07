@@ -40,10 +40,11 @@ CREATE TABLE IF NOT EXISTS shots (
     interaction TEXT NOT NULL,
     file        TEXT NOT NULL,
     ts          TEXT NOT NULL,
-    trigger     TEXT NOT NULL CHECK (trigger IN ('activity','manual')),
+    trigger     TEXT NOT NULL CHECK (trigger IN ('activity','manual','passive')),
     width       INTEGER NOT NULL,
     height      INTEGER NOT NULL,
     bytes       INTEGER NOT NULL,
+    screen_name TEXT,
     PRIMARY KEY (client, interaction, file),
     FOREIGN KEY (client, interaction) REFERENCES interactions(client, name)
 );
@@ -63,6 +64,7 @@ class FileStore(InteractionStore):
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._data_dir / "index.sqlite", check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        _upgrade_shots_table(self._conn)
         self._conn.executescript(_SCHEMA)
 
     def put(self, client: str, interaction: Interaction,
@@ -79,7 +81,9 @@ class FileStore(InteractionStore):
             try:
                 for name, data in files.items():
                     (staging / name).write_bytes(data)
-                (staging / INTERACTION_FILE).write_text(interaction.model_dump_json(indent=2))
+                # Without `None` fields, so a one-screen interaction is written as before.
+                (staging / INTERACTION_FILE).write_text(
+                    interaction.model_dump_json(indent=2, exclude_none=True))
                 folder.parent.mkdir(parents=True, exist_ok=True)
                 os.rename(staging, folder)
             except BaseException:
@@ -139,11 +143,29 @@ class FileStore(InteractionStore):
             if added:
                 self._conn.executemany(
                     "INSERT INTO shots (client, interaction, file, ts, trigger, width, height, "
-                    "bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "bytes, screen_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [(client, i["name"], s["file"], s["ts"], s["trigger"], s["width"],
-                      s["height"], s["bytes"]) for s in i["shots"]],
+                      s["height"], s["bytes"], s["screen_name"]) for s in i["shots"]],
                 )
         return added
+
+
+def _upgrade_shots_table(conn: sqlite3.Connection) -> None:
+    """Rebuild a `shots` table made before passive shots and screen names, keeping its rows.
+
+    Its CHECK would refuse `passive`, and SQLite cannot change a CHECK in place.
+    """
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='shots'").fetchone()
+    if row is None or "'passive'" in row[0]:
+        return
+    with conn:
+        conn.execute("ALTER TABLE shots RENAME TO shots_before_passive")
+        conn.executescript(_SCHEMA)
+        conn.execute(
+            "INSERT INTO shots (client, interaction, file, ts, trigger, width, height, bytes) "
+            "SELECT client, interaction, file, ts, trigger, width, height, bytes "
+            "FROM shots_before_passive")
+        conn.execute("DROP TABLE shots_before_passive")
 
 
 def _validate(client: str, interaction: Interaction, files: Mapping[str, bytes]) -> None:
