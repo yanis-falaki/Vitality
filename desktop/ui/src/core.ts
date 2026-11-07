@@ -65,8 +65,46 @@ export interface StatusView {
   input: "ok" | "no_devices" | "permission_denied";
 }
 
+export interface TodayCounts {
+  shots: number;
+  interactions: number;
+}
+
+export interface DiskView {
+  captures_bytes: number;
+  free_bytes: number;
+  /** Free space is under the warning level. */
+  low: boolean;
+}
+
+/** One health check: the same list serves Setup, Status and `vitality-client doctor`. */
+export interface Check {
+  id: string;
+  ok: boolean;
+  /** Setup is shown while an essential check fails. */
+  essential: boolean;
+  title: string;
+  detail: string;
+  fix: string | null;
+}
+
+export interface DecisionLine {
+  at: string;
+  text: string;
+}
+
+export interface StatusPage {
+  status: StatusView;
+  today: TodayCounts;
+  disk: DiskView;
+  checks: Check[];
+  /** The last 50 decisions, oldest first. */
+  recent_decisions: DecisionLine[];
+}
+
 export const core = {
   status: () => invoke<StatusView>("status"),
+  statusPage: () => invoke<StatusPage>("status_page"),
   pause: (minutes: number | null) => invoke<StatusView>("pause", { minutes }),
   resume: () => invoke<StatusView>("resume"),
   screensList: () => invoke<ScreensView>("screens_list"),

@@ -1,7 +1,7 @@
 // Sample values of the types the core sends, written by the Rust test `types::tests`
 // (`UPDATE_FIXTURES=1 cargo test types` rewrites it). Typed with core.ts's mirrors, so the
 // type check fails when Rust and TypeScript drift apart. Also the fake core's data.
-import type { ScreensView, StatusView } from "./core";
+import type { ScreensView, StatusPage, StatusView } from "./core";
 
 export const screens: ScreensView = {
   "duplicates": [
@@ -113,5 +113,83 @@ export const statusIdle: StatusView = {
     "last_upload": null,
     "pending": 1,
     "state": "offline"
+  }
+};
+
+export const statusPage: StatusPage = {
+  "checks": [
+    {
+      "detail": "4 input devices open",
+      "essential": true,
+      "fix": null,
+      "id": "input_access",
+      "ok": true,
+      "title": "Keyboard and mouse"
+    },
+    {
+      "detail": "Screen 2 needs to be picked again",
+      "essential": true,
+      "fix": "Open Screens and pick Screen 2 again.",
+      "id": "screens_open",
+      "ok": false,
+      "title": "Screens"
+    },
+    {
+      "detail": "accepted as \"desktop\"",
+      "essential": false,
+      "fix": null,
+      "id": "device_accepted",
+      "ok": true,
+      "title": "This device accepted by the server"
+    }
+  ],
+  "disk": {
+    "captures_bytes": 1843200000,
+    "free_bytes": 96000000000,
+    "low": false
+  },
+  "recent_decisions": [
+    {
+      "at": "2026-11-07T20:02:00Z",
+      "text": "start active interaction 2026-11-07/20-02-00"
+    },
+    {
+      "at": "2026-11-07T20:02:00Z",
+      "text": "R1 shot activity · Main (0000.webp), Screen 2 (0000-2.webp)"
+    },
+    {
+      "at": "2026-11-07T20:02:04Z",
+      "text": "R2 skipped: no screen changed (R4)"
+    }
+  ],
+  "status": {
+    "capture": {
+      "mode": "active",
+      "next_check_at": null,
+      "shots": 14,
+      "since": "2026-11-07T20:02:00Z",
+      "stopped_by": null
+    },
+    "input": "ok",
+    "pause": {
+      "paused": false,
+      "until": null
+    },
+    "screens": 2,
+    "screens_attention": [
+      "Screen 2"
+    ],
+    "screens_live": 1,
+    "upload": {
+      "failed": 0,
+      "last_failure": null,
+      "last_upload": "2026-11-07T20:01:30Z",
+      "pending": 0,
+      "state": "ok"
+    }
+  },
+  "today": {
+    "interactions": 37,
+    "shots": 214
   }
 };

@@ -28,7 +28,7 @@ use crate::screens::Screens;
 use crate::session::{SessionEvent, SessionWatch};
 use crate::state::{PauseFor, PauseState};
 use crate::store::{local_tz_name, InteractionHandle, Store};
-use crate::types::{CaptureView, ScreenId, ScreenState, StatusView, StopReason};
+use crate::types::{Check, CaptureView, DecisionLine, DiskView, ScreenId, ScreenState, StatusPage, StatusView, StopReason, TodayCounts};
 use crate::upload::{device_name, UploadTimings, Uploader};
 
 /// Everything the runtime is made of; the app passes the real ones, tests fakes.
@@ -62,6 +62,10 @@ pub struct Core {
     snapshot: Mutex<StatusView>,
     changed: broadcast::Sender<()>,
     log: Mutex<DecisionLog>,
+    checks: Mutex<Vec<Check>>,
+    details: Mutex<Option<(Instant, TodayCounts, DiskView)>>,
+    /// Free space under this many bytes is a warning.
+    pub disk_warning: Mutex<u64>,
     /// Shows the window (set by the app; the control socket's `show`).
     pub on_show: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
@@ -91,9 +95,51 @@ impl Core {
         self.notify_changed();
     }
 
-    #[allow(dead_code)] // shown on Status (milestone 2)
-    pub fn recent_decisions(&self, n: usize) -> Vec<String> {
-        self.log.lock().unwrap().recent(n)
+    /// The newest `n` decisions, oldest first.
+    pub fn recent_decisions(&self, n: usize) -> Vec<DecisionLine> {
+        self.log.lock().unwrap().recent(n).iter().filter_map(|l| parse_decision(l)).collect()
+    }
+
+    /// The health checks, as last run (`set_checks`).
+    pub fn checks(&self) -> Vec<Check> {
+        self.checks.lock().unwrap().clone()
+    }
+
+    #[allow(dead_code)] // the health checks (milestone 3) set them
+    pub fn set_checks(&self, checks: Vec<Check>) {
+        let changed = *self.checks.lock().unwrap() != checks;
+        *self.checks.lock().unwrap() = checks;
+        if changed {
+            self.notify_changed();
+        }
+    }
+
+    /// Everything the Status page shows. Today's counts and disk use are recounted at most
+    /// every 15 s (they walk the captures folder).
+    pub fn status_page(&self) -> StatusPage {
+        let (today, disk) = {
+            let mut cache = self.details.lock().unwrap();
+            match &*cache {
+                Some((at, today, disk)) if at.elapsed() < Duration::from_secs(15) => (*today, disk.clone()),
+                _ => {
+                    let today = self.store.today();
+                    let disk = self.disk();
+                    *cache = Some((Instant::now(), today, disk.clone()));
+                    (today, disk)
+                }
+            }
+        };
+        StatusPage { status: self.status(), today, disk, checks: self.checks(), recent_decisions: self.recent_decisions(50) }
+    }
+
+    /// Drop the cached counts (an interaction just ended, or space was freed).
+    pub fn recount(&self) {
+        *self.details.lock().unwrap() = None;
+    }
+
+    fn disk(&self) -> DiskView {
+        let free = crate::paths::free_bytes(self.store.root()).unwrap_or(0);
+        DiskView { captures_bytes: self.store.disk_bytes(), free_bytes: free, low: free < *self.disk_warning.lock().unwrap() }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<()> {
@@ -161,6 +207,9 @@ impl Runtime {
             snapshot: Mutex::new(blank_status()),
             changed: broadcast::channel(16).0,
             log: Mutex::new(DecisionLog::open(&parts.paths.log)),
+            checks: Mutex::new(vec![]),
+            details: Mutex::new(None),
+            disk_warning: Mutex::new(5 * 1024 * 1024 * 1024),
             on_show: Mutex::new(None),
         });
         let mut runtime = Runtime {
@@ -385,6 +434,7 @@ impl Runtime {
         let (shots, bytes) = (handle.shot_count(), handle.bytes());
         match tokio::task::spawn_blocking(move || handle.finish()).await {
             Ok(Ok(Some(_))) => {
+                self.core.recount();
                 self.log(&format!("{rule:?} end {name} · {shots} shots, {:.1} MiB", bytes as f64 / 1048576.0));
                 self.core.uploader.wake();
             }
@@ -402,6 +452,13 @@ impl Runtime {
         let view = status_view(&self.policy.state(), &self.pause, &self.core);
         self.core.publish(view);
     }
+}
+
+/// "2026-11-07T20:02:03Z<TAB>text" as a `DecisionLine`.
+fn parse_decision(line: &str) -> Option<DecisionLine> {
+    let (at, text) = line.split_once('\t')?;
+    let at = DateTime::parse_from_rfc3339(at).ok()?.with_timezone(&Utc);
+    Some(DecisionLine { at, text: text.to_string() })
 }
 
 fn kind_name(k: InteractionKind) -> &'static str {

@@ -4,9 +4,14 @@
 // Never shipped: only mock.html loads it.
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { ScreensView, StatusView } from "../core";
-import { statusActive, statusPaused } from "../fixtures";
+import { statusActive, statusIdle, statusPage, statusPaused } from "../fixtures";
 
-type Scenario = "two" | "duplicate" | "needs-pick" | "empty" | "paused" | "stopped";
+type Scenario = "two" | "duplicate" | "needs-pick" | "empty" | "paused" | "stopped" | "idle" | "offline" | "rejected";
+
+/** The checks a scenario shows: only the failing ones matter to Status. */
+function scenarioChecks(s: Scenario) {
+  return s === "needs-pick" || s === "stopped" ? statusPage.checks : statusPage.checks.filter((c) => c.ok);
+}
 
 /** A made-up desktop: a window with a title bar and lines of "text", in the given hue. */
 function fakeScreen(hue: number, seed: number): string {
@@ -52,10 +57,18 @@ function screensFor(s: Scenario): ScreensView {
 export function installFakeCore(scenario: Scenario) {
   let screens = screensFor(scenario);
   const attention = screens.screens.filter((s) => s.state === "needs_pick" || s.state === "stopped").map((s) => s.name);
+  const base = { ...statusActive, screens: screens.screens.length, screens_live: screens.screens.length - attention.length, screens_attention: attention };
+  const soon = (s: number) => new Date(Date.now() + s * 1000).toISOString();
   let status: StatusView =
     scenario === "paused"
-      ? statusPaused
-      : { ...statusActive, screens: screens.screens.length, screens_live: screens.screens.length - attention.length, screens_attention: attention };
+      ? { ...statusPaused, pause: { paused: true, until: null } }
+      : scenario === "idle"
+        ? { ...base, capture: { ...statusIdle.capture, next_check_at: soon(31) } }
+        : scenario === "offline"
+          ? { ...base, capture: { ...statusIdle.capture, next_check_at: soon(12) }, upload: { ...statusIdle.upload, pending: 4 } }
+          : scenario === "rejected"
+            ? { ...base, upload: statusPaused.upload }
+            : base;
   const previews: Record<string, string> = {
     s1: fakeScreen(200, 1),
     s2: scenario === "duplicate" ? fakeScreen(200, 1) : fakeScreen(30, 2),
@@ -67,6 +80,8 @@ export function installFakeCore(scenario: Scenario) {
       switch (cmd) {
         case "status":
           return status;
+        case "status_page":
+          return { ...statusPage, status, checks: scenarioChecks(scenario) };
         case "pause":
           status = { ...status, pause: { paused: true, until: new Date(Date.now() + 1800e3).toISOString() } };
           return status;

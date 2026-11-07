@@ -70,6 +70,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     sync_dir(dir)
 }
 
+/// Bytes free (for an unprivileged user) on the disk holding `path` or its nearest existing
+/// parent.
+pub fn free_bytes(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let existing = path.ancestors().find(|p| p.exists())?;
+    let c = std::ffi::CString::new(existing.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid C string and a zeroed struct for the call to fill.
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    Some(st.f_bavail as u64 * st.f_frsize as u64)
+}
+
 /// Syncs a folder's entries (after a rename or a new file in it).
 pub fn sync_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::File::open(dir)?.sync_all()
@@ -89,6 +103,12 @@ mod tests {
         assert!(p.state.ends_with("vitality/client/state.json"));
         assert!(p.log.ends_with("vitality/client/capture.log"));
         assert!(p.socket.ends_with("vitality/client.sock"));
+    }
+
+    #[test]
+    fn free_bytes_of_a_path_not_made_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(free_bytes(&dir.path().join("not/yet")).unwrap() > 0);
     }
 
     #[test]

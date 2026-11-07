@@ -8,6 +8,19 @@ export function clock(iso: string): string {
   return `${((h + 11) % 12) + 1}:${m} ${h < 12 ? "a.m." : "p.m."}`;
 }
 
+/** "1.8 GB", "340 MB". */
+export function bytes(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  return `${Math.round(n / 1e3)} kB`;
+}
+
+/** "in 31 s", "in 2 min" until an ISO time (from `now`, ms). */
+export function until(iso: string, now: number): string {
+  const s = Math.max(0, Math.round((Date.parse(iso) - now) / 1000));
+  return s < 90 ? `in ${s}\u00a0s` : `in ${Math.round(s / 60)}\u00a0min`;
+}
+
 /** "1 shot" / "14 shots". */
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 

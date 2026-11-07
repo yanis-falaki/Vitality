@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::write_atomic;
 use crate::policy::Trigger;
+pub use crate::types::TodayCounts;
 
 pub const INTERACTION_FILE: &str = "interaction.json";
 pub const UPLOADED: &str = "uploaded";
@@ -112,13 +113,6 @@ pub struct Store {
     quality: f32,
 }
 
-/// Interactions and shots counted for today (local day).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TodayCounts {
-    pub shots: u32,
-    pub interactions: u32,
-}
-
 /// What `free_up_space` deleted.
 #[allow(dead_code)] // Settings' Free up space (milestone 3)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,7 +127,6 @@ impl Store {
         Store { root: root.to_path_buf(), quality }
     }
 
-    #[allow(dead_code)] // for tests and Status
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -245,7 +238,6 @@ impl Store {
     }
 
     /// Bytes used by all captures.
-    #[allow(dead_code)] // Status (milestone 2)
     pub fn disk_bytes(&self) -> u64 {
         dir_bytes(&self.root)
     }
@@ -505,7 +497,6 @@ fn sort_key(root: &Path, p: &Path) -> (String, u32) {
     (base, n)
 }
 
-#[allow(dead_code)] // with disk_bytes and free_up_space
 fn dir_bytes(path: &Path) -> u64 {
     let Ok(entries) = fs::read_dir(path) else { return 0 };
     entries

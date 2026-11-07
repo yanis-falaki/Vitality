@@ -119,6 +119,59 @@ pub struct UploadStatus {
     pub last_failure: Option<String>,
 }
 
+/// Interactions and shots of one local day.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodayCounts {
+    pub shots: u32,
+    pub interactions: u32,
+}
+
+/// Disk use of the captures.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiskView {
+    /// Bytes the captures take (uploaded ones included until freed).
+    pub captures_bytes: u64,
+    /// Bytes free on the disk that holds them.
+    pub free_bytes: u64,
+    /// Free space is under the warning level.
+    pub low: bool,
+}
+
+/// One health check (spec §8): the same list serves Setup, Status and `vitality-client doctor`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Check {
+    /// "input_access", "desktop_session", "portal_available", "screens_open", "tailscale",
+    /// "server_health", "device_accepted", "disk_space", "start_at_login".
+    pub id: String,
+    pub ok: bool,
+    /// Setup is shown while an essential check fails.
+    pub essential: bool,
+    /// What is checked, in plain words ("Keyboard and mouse").
+    pub title: String,
+    /// What was found ("in the input group, 4 devices open").
+    pub detail: String,
+    /// How to fix it, when it fails.
+    pub fix: Option<String>,
+}
+
+/// A line of the recent-decisions log.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionLine {
+    pub at: DateTime<Utc>,
+    pub text: String,
+}
+
+/// The reply of `status_page`: the status and what only the Status page needs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatusPage {
+    pub status: StatusView,
+    pub today: TodayCounts,
+    pub disk: DiskView,
+    pub checks: Vec<Check>,
+    /// The last 50 decisions, oldest first.
+    pub recent_decisions: Vec<DecisionLine>,
+}
+
 /// The reply of `status` (the interface, the tray, `vitality-client status`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StatusView {
@@ -200,8 +253,37 @@ pub mod samples {
 }
 
 #[cfg(test)]
+pub mod samples_page {
+    //! Samples of the Status page's data.
+    use super::samples::*;
+    use super::*;
+
+    pub fn check(id: &str, ok: bool, essential: bool, title: &str, detail: &str, fix: Option<&str>) -> Check {
+        Check { id: id.into(), ok, essential, title: title.into(), detail: detail.into(), fix: fix.map(str::to_string) }
+    }
+
+    pub fn status_page() -> StatusPage {
+        StatusPage {
+            status: status(),
+            today: TodayCounts { shots: 214, interactions: 37 },
+            disk: DiskView { captures_bytes: 1_843_200_000, free_bytes: 96_000_000_000, low: false },
+            checks: vec![
+                check("input_access", true, true, "Keyboard and mouse", "4 input devices open", None),
+                check("screens_open", false, true, "Screens", "Screen 2 needs to be picked again", Some("Open Screens and pick Screen 2 again.")),
+                check("device_accepted", true, false, "This device accepted by the server", "accepted as \"desktop\"", None),
+            ],
+            recent_decisions: vec![
+                DecisionLine { at: at(20, 2, 0), text: "start active interaction 2026-11-07/20-02-00".into() },
+                DecisionLine { at: at(20, 2, 0), text: "R1 shot activity · Main (0000.webp), Screen 2 (0000-2.webp)".into() },
+                DecisionLine { at: at(20, 2, 4), text: "R2 skipped: no screen changed (R4)".into() },
+            ],
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::samples;
+    use super::{samples, samples_page};
     use serde::Serialize;
     use std::path::PathBuf;
 
@@ -215,6 +297,7 @@ mod tests {
             ("statusActive", "StatusView", v(samples::status())),
             ("statusPaused", "StatusView", v(samples::status_paused())),
             ("statusIdle", "StatusView", v(samples::status_idle())),
+            ("statusPage", "StatusPage", v(samples_page::status_page())),
         ]
     }
 

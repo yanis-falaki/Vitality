@@ -1,5 +1,5 @@
 //! The Tauri commands the interface calls (typed in `ui/src/core.ts`): `status`, `pause`,
-//! `resume`, `screens_list`, `screens_add`, `screens_repick`, `screens_rename`,
+//! `resume`, `status_page`, `screens_list`, `screens_add`, `screens_repick`, `screens_rename`,
 //! `screens_remove`, `screen_preview`. Each is a thin call into the `Core`; errors come back
 //! as their message. The `state-changed` event is sent by the app (see `app.rs`).
 
@@ -10,13 +10,21 @@ use tauri::State;
 
 use crate::runtime::Core;
 use crate::state::PauseFor;
-use crate::types::{ScreenId, ScreensView, StatusView};
+use crate::types::{ScreenId, ScreensView, StatusPage, StatusView};
 
 type CoreState<'a> = State<'a, Arc<Core>>;
 
 #[tauri::command]
 pub fn status(core: CoreState<'_>) -> StatusView {
     core.status()
+}
+
+/// What the Status page shows: the status, today's counts, disk use, the checks and the last
+/// 50 decisions.
+#[tauri::command]
+pub async fn status_page(core: CoreState<'_>) -> Result<StatusPage, String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || core.status_page()).await.map_err(|e| e.to_string())
 }
 
 /// `minutes: null` pauses until resumed.

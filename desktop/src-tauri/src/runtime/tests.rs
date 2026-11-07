@@ -120,7 +120,7 @@ async fn input_becomes_an_interaction_folder_that_is_uploaded() {
     assert_eq!(shots.len(), 2, "the R1 shot and the settle shot: {j}");
     assert!(shots.iter().all(|s| s["trigger"] == "activity" && s.get("screen_name").is_none()));
     assert_eq!(r.server.names().len(), 1);
-    let log = r.core.recent_decisions(50).join("\n");
+    let log = r.core.recent_decisions(50).iter().map(|d| d.text.clone()).collect::<Vec<_>>().join("\n");
     assert!(log.contains("start active interaction") && log.contains("R1 shot") && log.contains("R2 shot") && log.contains("R5 end"), "{log}");
     eventually("idle again", || r.core.status().capture.mode == CaptureMode::Idle).await;
 }
@@ -255,7 +255,7 @@ async fn a_full_interaction_is_split_and_every_part_is_uploaded() {
         c.len() >= 2 && c.iter().all(|f| f.join(UPLOADED).exists())
     })
     .await;
-    let log = r.core.recent_decisions(50).join("\n");
+    let log = r.core.recent_decisions(50).iter().map(|d| d.text.clone()).collect::<Vec<_>>().join("\n");
     assert!(log.contains("R9 end") && log.contains("R9 shot"), "{log}");
     let second = json(&r.complete()[1]);
     assert!(!second["shots"].as_array().unwrap().is_empty());
@@ -280,4 +280,19 @@ async fn started_while_locked_captures_nothing() {
         tick: Duration::from_millis(20),
     });
     eventually("stopped by the lock", || core.status().capture.stopped_by == Some(StopReason::Locked)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_status_page_counts_today_and_lists_decisions() {
+    let r = rig().await;
+    r.add_screen(40).await;
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    r.input();
+    eventually("finished", || !r.complete().is_empty()).await;
+    eventually("counted", || r.core.status_page().today.interactions == 1).await;
+    let page = r.core.status_page();
+    assert!(page.today.shots >= 1);
+    assert!(page.disk.captures_bytes > 0 && page.disk.free_bytes > 0);
+    assert!(page.recent_decisions.iter().any(|d| d.text.starts_with("R1 shot")), "{:?}", page.recent_decisions);
+    assert!(page.recent_decisions.len() <= 50);
 }

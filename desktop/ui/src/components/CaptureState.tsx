@@ -1,48 +1,42 @@
-// Capture's state in a line ("Recording", "Paused until 9:00 p.m.") with its dot, and the
-// buttons to pause for 30 min or 1 h, or to resume. Reads `status`; calls `pause` / `resume`.
+// The sidebar's foot: capture's state in a line with its dot (paused in the warning colour, so it
+// cannot be missed), warnings about screens and refused uploads, and Pause for 30 min / 1 h or
+// Resume. Reads `status`; calls `pause` / `resume`.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { core, type StatusView } from "../core";
-import { clock, plural } from "../lib/format";
+import { core } from "../core";
+import { captureLine } from "../lib/capture";
 import { keys, useStatus } from "../lib/queries";
+import { useNow } from "../lib/now";
 
-function line(s: StatusView): { text: string; tone: string } {
-  if (s.pause.paused) return { text: s.pause.until ? `Paused until ${clock(s.pause.until)}` : "Paused", tone: "off" };
-  switch (s.capture.mode) {
-    case "active":
-      return { text: `Active since ${clock(s.capture.since!)} · ${plural(s.capture.shots, "shot")}`, tone: "busy" };
-    case "passive":
-      return { text: `Watching since ${clock(s.capture.since!)} · ${plural(s.capture.shots, "shot")}`, tone: "busy" };
-    case "stopped":
-      return { text: s.capture.stopped_by === "locked" ? "Stopped · locked" : "Stopped · asleep", tone: "off" };
-    default:
-      return { text: "Recording · idle", tone: "ok" };
-  }
+export function usePauseResume() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (minutes: number | null | "resume") => (minutes === "resume" ? core.resume() : core.pause(minutes)),
+    onSuccess: (s) => {
+      client.setQueryData(keys.status, s);
+      void client.invalidateQueries({ queryKey: keys.statusPage });
+    },
+  });
 }
 
 export function CaptureState() {
   const status = useStatus();
-  const client = useQueryClient();
-  const change = useMutation({
-    mutationFn: (minutes: number | null | "resume") => (minutes === "resume" ? core.resume() : core.pause(minutes)),
-    onSuccess: (s) => client.setQueryData(keys.status, s),
-  });
+  const change = usePauseResume();
+  const now = useNow();
   if (!status.data) return <div className="capture" />;
-  const { text, tone } = line(status.data);
+  const s = status.data;
+  const { text, tone } = captureLine(s, now);
   return (
-    <div className="capture">
+    <div className={`capture${s.pause.paused ? " capture-paused" : ""}`}>
       <p className="capture-line"><span className={`dot tone-${tone}`} aria-hidden />{text}</p>
-      {status.data.screens_attention.length > 0 && (
-        <p className="capture-warning">{status.data.screens_attention.join(", ")}: see Screens</p>
-      )}
-      {status.data.upload.failed > 0 && (
-        <p className="capture-warning" title={status.data.upload.last_failure ?? undefined}>
-          {status.data.upload.failed === 1 ? "1 interaction" : `${status.data.upload.failed} interactions`} refused by the
-          server for good{status.data.upload.last_failure ? ` · latest: ${status.data.upload.last_failure}` : ""}
+      {s.screens_attention.length > 0 && <p className="capture-warning">{s.screens_attention.join(", ")}: see Screens</p>}
+      {s.upload.failed > 0 && (
+        <p className="capture-warning" title={s.upload.last_failure ?? undefined}>
+          {s.upload.failed === 1 ? "1 interaction" : `${s.upload.failed} interactions`} refused by the server for good
         </p>
       )}
       <div className="capture-actions">
-        {status.data.pause.paused ? (
-          <button className="button button-wide" disabled={change.isPending} onClick={() => change.mutate("resume")}>Resume</button>
+        {s.pause.paused ? (
+          <button className="button button-primary button-wide" disabled={change.isPending} onClick={() => change.mutate("resume")}>Resume</button>
         ) : (
           <>
             <span className="label">Pause for</span>

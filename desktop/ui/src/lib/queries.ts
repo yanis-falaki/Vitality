@@ -5,9 +5,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { core, onStateChanged, type ScreenId } from "../core";
 
-export const keys = { status: ["status"], screens: ["screens"], preview: (id: ScreenId) => ["preview", id] };
+export const keys = { status: ["status"], statusPage: ["status-page"], screens: ["screens"], preview: (id: ScreenId) => ["preview", id] };
 
 export const useStatus = () => useQuery({ queryKey: keys.status, queryFn: core.status, refetchInterval: 5000 });
+
+export const useStatusPage = () => useQuery({ queryKey: keys.statusPage, queryFn: core.statusPage, refetchInterval: 3000 });
 
 export const useScreens = () => useQuery({ queryKey: keys.screens, queryFn: core.screensList, refetchInterval: 2000 });
 
@@ -24,6 +26,7 @@ export function useCoreEvents() {
   useEffect(() => {
     const stop = onStateChanged(() => {
       void client.invalidateQueries({ queryKey: keys.status });
+      void client.invalidateQueries({ queryKey: keys.statusPage });
       void client.invalidateQueries({ queryKey: keys.screens });
     });
     return () => void stop.then((unlisten) => unlisten());

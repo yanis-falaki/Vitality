@@ -34,6 +34,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             crate::commands::status,
+            crate::commands::status_page,
             crate::commands::pause,
             crate::commands::resume,
             crate::commands::screens_list,
