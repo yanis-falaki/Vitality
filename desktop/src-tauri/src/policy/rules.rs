@@ -1,22 +1,19 @@
 //! The rules R1–R8 as `Policy`'s event handlers (the types are in `mod.rs`).
 //!
-//! R1 input after ≥ start_gap without input starts an active interaction, shot of every screen.
-//! R2 settle shot `settle` after the last input.  R3 while input goes on, a shot every `max_gap`.
-//! R4 a shot holds only screens changed since their own last shot; none changed → skipped.
-//! R5 no input within `start_gap` after the settle shot → the interaction ends.
-//! R6 while idle, every `passive_every`, a passive shot of the changed screens.
-//! R7 passive shots form one passive interaction; it ends on input, after
-//!    `passive_quiet_checks` checks without change, or when capture stops.
-//! R8 paused: an open interaction ends; nothing is captured, no checks run.
-//!
-//! After a suspend (`on_slept`, told by the runtime) an open interaction ends at once (R5
-//! active, R7 passive) with no shot: the time asleep is not part of it.
-//! R9 an interaction whose shots reach `max_interaction_bytes` (or `max_interaction_shots`)
+//! R1 any input while no interaction is open starts an active one, with a shot of every screen.
+//! R2 after `end_after_idle` without input, a closing shot, and the interaction ends at once.
+//! R3 while input goes on, a shot at least every `max_gap`.
+//! R4 a shot holds only screens changed since their own last shot; none changed → no shot (the
+//!    R2 end still happens). R1 shots include every screen.
+//! R5 while idle, every `passive_every`, a passive shot of the changed screens.
+//! R6 passive shots form one passive interaction; it ends on input (R1 then starts an active
+//!    one), after `passive_quiet_checks` checks without change, or when capture stops.
+//! R7 paused: an open interaction ends; nothing is captured, no checks run.
+//! R8 an interaction whose shots reach `max_interaction_bytes` (or `max_interaction_shots`)
 //!    ends, and one of the same kind starts at once with a shot of every screen.
 //!
-//! In idle every input starts an interaction: an interaction only ends after `settle` +
-//! `start_gap` without input, so R1's gap has always passed by then (and after a resume the
-//! owner is plainly active).
+//! After a suspend (`on_slept`, told by the runtime) an open interaction ends at once (R2
+//! active, R6 passive) with no shot: the time asleep is not part of it.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -28,7 +25,16 @@ impl Policy {
     /// Keyboard or mouse input at `now`.
     pub fn on_input(&mut self, now: Instant) -> Vec<Decision> {
         self.last_input = Some(now);
-        self.input_decisions(now)
+        match &self.mode {
+            Mode::Stopped { .. } | Mode::Active { .. } => vec![],
+            Mode::Idle { .. } => self.start_active(now),
+            Mode::Passive { .. } => {
+                // R6: input ends the passive interaction; R1 starts an active one.
+                let mut out = vec![Decision::EndInteraction { rule: Rule::R6 }];
+                out.extend(self.start_active(now));
+                out
+            }
+        }
     }
 
     /// The machine was suspended (the runtime measures it; the monotonic clock the policy runs
@@ -36,29 +42,12 @@ impl Policy {
     /// and the next input starts a fresh one. Call it before the first event after waking.
     pub fn on_slept(&mut self, now: Instant) -> Vec<Decision> {
         let rule = match self.mode {
-            Mode::Active { .. } => Rule::R5,
-            Mode::Passive { .. } => Rule::R7,
+            Mode::Active { .. } => Rule::R2,
+            Mode::Passive { .. } => Rule::R6,
             _ => return vec![],
         };
         self.mode = Mode::Idle { next_check: Some(now + self.settings.passive_every) };
         vec![Decision::EndInteraction { rule }]
-    }
-
-    fn input_decisions(&mut self, now: Instant) -> Vec<Decision> {
-        match &mut self.mode {
-            Mode::Stopped { .. } => vec![],
-            Mode::Active { settled_at, .. } => {
-                *settled_at = None; // R5: input after the settle shot keeps the interaction going
-                vec![]
-            }
-            Mode::Idle { .. } => self.start_active(now),
-            Mode::Passive { .. } => {
-                // R7: input ends the passive interaction; R1 starts an active one.
-                let mut out = vec![Decision::EndInteraction { rule: Rule::R7 }];
-                out.extend(self.start_active(now));
-                out
-            }
-        }
     }
 
     /// The 250 ms tick, with each screen's newest thumb (screens without a frame are absent).
@@ -72,16 +61,16 @@ impl Policy {
                 vec![]
             }
             Mode::Idle { next_check: Some(due) } if now >= due => {
-                // R6: a passive check; the first changed one starts a passive interaction (R7).
+                // R5: a passive check; the first changed one starts a passive interaction (R6).
                 let screens = self.changed_screens();
                 if screens.is_empty() {
                     self.mode = Mode::Idle { next_check: Some(now + s.passive_every) };
-                    return vec![skipped(Rule::R6, "passive check: no screen changed")];
+                    return vec![skipped(Rule::R5, "passive check: no screen changed")];
                 }
                 self.mode = Mode::Passive { since: now, shots: 1, next_check: now + s.passive_every, quiet: 0 };
                 vec![
                     Decision::StartInteraction { kind: InteractionKind::Passive },
-                    self.shoot(screens, Trigger::Passive, Rule::R6),
+                    self.shoot(screens, Trigger::Passive, Rule::R5),
                 ]
             }
             Mode::Idle { .. } => vec![],
@@ -90,50 +79,49 @@ impl Policy {
                 let next_check = now + s.passive_every;
                 if !screens.is_empty() {
                     self.mode = Mode::Passive { since, shots: shots + 1, next_check, quiet: 0 };
-                    return vec![self.shoot(screens, Trigger::Passive, Rule::R6)];
+                    return vec![self.shoot(screens, Trigger::Passive, Rule::R5)];
                 }
                 let quiet = quiet + 1;
                 if quiet >= s.passive_quiet_checks {
                     self.mode = Mode::Idle { next_check: Some(next_check) };
                     return vec![
-                        skipped(Rule::R6, "passive check: no screen changed"),
-                        Decision::EndInteraction { rule: Rule::R7 },
+                        skipped(Rule::R5, "passive check: no screen changed"),
+                        Decision::EndInteraction { rule: Rule::R6 },
                     ];
                 }
                 self.mode = Mode::Passive { since, shots, next_check, quiet };
-                vec![skipped(Rule::R6, &format!("passive check: no screen changed ({quiet} of {})", s.passive_quiet_checks))]
+                vec![skipped(Rule::R5, &format!("passive check: no screen changed ({quiet} of {})", s.passive_quiet_checks))]
             }
             Mode::Passive { .. } => vec![],
-            Mode::Active { since, shots, last_shot_at, settled_at } => {
+            Mode::Active { since, shots, last_shot_at } => {
                 let last_input = self.last_input.unwrap_or(since);
-                if let Some(settled) = settled_at {
-                    if now.duration_since(settled) >= s.start_gap {
-                        // R5: no input after the settle shot.
-                        self.mode = Mode::Idle { next_check: Some(now + s.passive_every) };
-                        return vec![Decision::EndInteraction { rule: Rule::R5 }];
-                    }
+                if now.duration_since(last_input) >= s.end_after_idle {
+                    // R2: idle long enough: the closing shot (R4 decides which screens), then the end.
+                    let screens = self.changed_screens();
+                    let closing = if screens.is_empty() {
+                        skipped(Rule::R2, "closing shot: no screen changed (R4)")
+                    } else {
+                        self.shoot(screens, Trigger::Activity, Rule::R2)
+                    };
+                    self.mode = Mode::Idle { next_check: Some(now + s.passive_every) };
+                    return vec![closing, Decision::EndInteraction { rule: Rule::R2 }];
+                }
+                if now.duration_since(last_shot_at) < s.max_gap {
                     return vec![];
                 }
-                let rule = if now.duration_since(last_input) >= s.settle {
-                    Rule::R2
-                } else if now.duration_since(last_shot_at) >= s.max_gap {
-                    Rule::R3
-                } else {
-                    return vec![];
-                };
+                // R3: still busy: a shot at least every `max_gap`.
                 let screens = self.changed_screens();
-                let settled_at = if rule == Rule::R2 { Some(now) } else { None };
                 if screens.is_empty() {
-                    self.mode = Mode::Active { since, shots, last_shot_at: now, settled_at };
-                    return vec![skipped(rule, "no screen changed (R4)")];
+                    self.mode = Mode::Active { since, shots, last_shot_at: now };
+                    return vec![skipped(Rule::R3, "no screen changed (R4)")];
                 }
-                self.mode = Mode::Active { since, shots: shots + 1, last_shot_at: now, settled_at };
-                vec![self.shoot(screens, Trigger::Activity, rule)]
+                self.mode = Mode::Active { since, shots: shots + 1, last_shot_at: now };
+                vec![self.shoot(screens, Trigger::Activity, Rule::R3)]
             }
         }
     }
 
-    /// The open interaction now holds `bytes` in `shots` shots (R9: past the budget it is split).
+    /// The open interaction now holds `bytes` in `shots` shots (R8: past the budget it is split).
     pub fn on_written(&mut self, now: Instant, bytes: u64, shots: u32) -> Vec<Decision> {
         let s = &self.settings;
         // An interaction of one shot cannot be split any further.
@@ -148,7 +136,7 @@ impl Policy {
         let screens: Vec<ScreenId> = self.current.keys().cloned().collect();
         let first = u32::from(!screens.is_empty());
         match &mut self.mode {
-            Mode::Active { since, shots, last_shot_at, .. } => {
+            Mode::Active { since, shots, last_shot_at } => {
                 (*since, *shots, *last_shot_at) = (now, first, now);
             }
             Mode::Passive { since, shots, quiet, .. } => {
@@ -157,19 +145,19 @@ impl Policy {
             _ => {}
         }
         let shot = if screens.is_empty() {
-            skipped(Rule::R9, "no screen has a frame")
+            skipped(Rule::R8, "no screen has a frame")
         } else {
-            self.shoot(screens, trigger, Rule::R9)
+            self.shoot(screens, trigger, Rule::R8)
         };
-        vec![Decision::EndInteraction { rule: Rule::R9 }, Decision::StartInteraction { kind }, shot]
+        vec![Decision::EndInteraction { rule: Rule::R8 }, Decision::StartInteraction { kind }, shot]
     }
 
-    /// Capture must stop (R8, or quitting). Ends an open interaction.
+    /// Capture must stop (R7, or quitting). Ends an open interaction.
     pub fn on_stop(&mut self, _now: Instant, why: StopReason) -> Vec<Decision> {
         let open = matches!(self.mode, Mode::Active { .. } | Mode::Passive { .. });
         self.mode = Mode::Stopped { why };
         if open {
-            vec![Decision::EndInteraction { rule: Rule::R8 }]
+            vec![Decision::EndInteraction { rule: Rule::R7 }]
         } else {
             vec![]
         }
@@ -187,7 +175,7 @@ impl Policy {
     fn start_active(&mut self, now: Instant) -> Vec<Decision> {
         let screens: Vec<ScreenId> = self.current.keys().cloned().collect();
         let shots = u32::from(!screens.is_empty());
-        self.mode = Mode::Active { since: now, shots, last_shot_at: now, settled_at: None };
+        self.mode = Mode::Active { since: now, shots, last_shot_at: now };
         let shot = if screens.is_empty() {
             skipped(Rule::R1, "no screen has a frame")
         } else {

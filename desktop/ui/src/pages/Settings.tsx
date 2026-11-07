@@ -1,6 +1,8 @@
-// The Settings page (spec §7): start at login, the server address, the numbers of the rules,
-// image quality, the disk warning level, and Free up space (after asking). Edits a draft;
-// Save sends it to the core, which checks it (errors appear under their field) and applies it.
+// The Settings page (spec §7), in three groups: General (start at login, the server),
+// Screenshots (image quality, the disk warning level, Free up space after asking) and, folded
+// away under Advanced, Capture timing in plain words (no rule numbers here; "How these are
+// used" links to How capture works). Edits a draft; Save sends it to the core, which checks
+// each field (errors appear under it, and Advanced opens when one is there) and applies it.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { core, type FieldError, type Freed, type Settings as S } from "../core";
@@ -14,35 +16,34 @@ interface Field {
   key: NumberKey;
   label: string;
   unit: string;
-  help: string;
-  /** Shown value from the stored one, and back (the change share is stored as a fraction). */
+  /** Shown value from the stored one, and back (the changed share is stored as a fraction). */
   scale?: number;
   step?: number;
 }
 
-const RULES: Field[] = [
-  { key: "start_gap_s", label: "Start gap", unit: "s", help: "Input after this long without input starts an interaction (R1); the same wait ends it after the settle shot (R5)." },
-  { key: "settle_s", label: "Settle", unit: "s", help: "A shot this long after the last input (R2)." },
-  { key: "max_gap_s", label: "Maximum gap", unit: "s", help: "While you are continuously active, a shot at least this often (R3)." },
-  { key: "change_fraction", label: "Changed area", unit: "%", scale: 100, step: 0.1, help: "A screen counts as changed when more than this share of it moved (R4)." },
-  { key: "change_levels", label: "Change strength", unit: "levels", help: "How many gray levels (of 255) a part of the screen must move by to count as changed (R4)." },
-  { key: "passive_every_s", label: "Passive check", unit: "s", help: "While idle, the screens are checked this often (R6)." },
-  { key: "passive_quiet_checks", label: "Quiet checks", unit: "checks", help: "A passive interaction ends after this many checks in a row without change (R7)." },
-  { key: "max_interaction_mib", label: "Size budget", unit: "MiB", help: "An interaction this large is split in two (R9); the server takes at most 50 MiB." },
+const TIMING: Field[] = [
+  { key: "end_after_idle_s", label: "End an interaction after you've been idle for", unit: "s", step: 0.5 },
+  { key: "max_gap_s", label: "Screenshot at least every", unit: "s while you're busy" },
+  { key: "change_fraction", label: "Count a screen as changed when more than", unit: "% of it changes", scale: 100, step: 0.1 },
+  { key: "change_levels", label: "…by more than", unit: "brightness levels (of 255)" },
+  { key: "passive_every_s", label: "Check idle screens every", unit: "s" },
+  { key: "passive_quiet_checks", label: "End a passive interaction after", unit: "quiet checks" },
+  { key: "max_interaction_mib", label: "Split an interaction when it reaches", unit: "MiB" },
 ];
 
-const STORAGE: Field[] = [
-  { key: "webp_quality", label: "Image quality", unit: "of 100", help: "WebP quality of the shots: higher is sharper and larger." },
-  { key: "disk_warning_gb", label: "Disk warning", unit: "GB free", step: 0.5, help: "Status warns when the disk has less free space than this." },
+const SCREENSHOTS: Field[] = [
+  { key: "webp_quality", label: "Image quality", unit: "of 100" },
+  { key: "disk_warning_gb", label: "Warn when free disk space is under", unit: "GB", step: 0.5 },
 ];
 
-export function Settings() {
+export function Settings({ onHowItWorks }: { onHowItWorks?: () => void }) {
   const view = useSettingsView();
   const stored = { data: view.data?.settings };
   const client = useQueryClient();
   const [draft, setDraft] = useState<S | null>(null);
   const [errors, setErrors] = useState<FieldError[]>([]);
   const [note, setNote] = useState<string | null>(null);
+  const [advanced, setAdvanced] = useState(false);
   useEffect(() => {
     if (stored.data && !draft) setDraft(stored.data);
   }, [stored.data, draft]);
@@ -50,6 +51,7 @@ export function Settings() {
     mutationFn: core.settingsSave,
     onSuccess: (reply) => {
       setErrors(reply.errors);
+      if (reply.errors.some((e) => TIMING.some((f) => f.key === e.field))) setAdvanced(true);
       if (reply.errors.length) return setNote(null);
       void client.invalidateQueries({ queryKey: keys.settings });
       setDraft(reply.settings);
@@ -64,7 +66,7 @@ export function Settings() {
     setNote(null);
   };
   const errorOf = (k: string) => errors.find((e) => e.field === k)?.message;
-  const known = new Set<string>(["server", "start_at_login", ...RULES.map((f) => f.key), ...STORAGE.map((f) => f.key)]);
+  const known = new Set<string>(["server", "start_at_login", ...TIMING.map((f) => f.key), ...SCREENSHOTS.map((f) => f.key)]);
   // Errors no field shows (the file could not be written…), and a failed call.
   const general = [
     ...errors.filter((e) => !known.has(e.field)).map((e) => (e.field === "file" ? e.message : `${e.field}: ${e.message}`)),
@@ -74,7 +76,7 @@ export function Settings() {
   const changed = JSON.stringify(draft) !== JSON.stringify(stored.data);
 
   const number = (f: Field) => (
-    <div className={`field${errorOf(f.key) ? " field-error" : ""}`} key={f.key}>
+    <div className={`row-field${errorOf(f.key) ? " field-error" : ""}`} key={f.key}>
       <label htmlFor={f.key}>{f.label}</label>
       <div className="field-input">
         <input
@@ -86,7 +88,7 @@ export function Settings() {
         />
         <span className="unit">{f.unit}</span>
       </div>
-      <p className="field-help">{errorOf(f.key) ?? f.help}</p>
+      {errorOf(f.key) && <p className="field-help">{errorOf(f.key)}</p>}
     </div>
   );
 
@@ -123,15 +125,20 @@ export function Settings() {
       </section>
 
       <section className="panel">
-        <h2 className="section-title">Capture rules</h2>
-        <div className="fields">{RULES.map(number)}</div>
-      </section>
-
-      <section className="panel">
-        <h2 className="section-title">Images and disk</h2>
-        <div className="fields">{STORAGE.map(number)}</div>
+        <h2 className="section-title">Screenshots</h2>
+        <div className="rows-fields">{SCREENSHOTS.map(number)}</div>
         <FreeUpSpace />
       </section>
+
+      <details className="panel advanced" open={advanced} onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}>
+        <summary>
+          <span className="section-title">Advanced · Capture timing</span>
+        </summary>
+        <div className="rows-fields">{TIMING.map(number)}</div>
+        {onHowItWorks && (
+          <button className="link link-quiet" onClick={onHowItWorks}>How these are used →</button>
+        )}
+      </details>
     </div>
   );
 }

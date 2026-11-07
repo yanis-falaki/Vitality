@@ -138,7 +138,7 @@ export function installFakeCore(scenario: Scenario) {
         case "settings_save": {
           const next = a.settings as Settings;
           const errors = [];
-          if (!(next.settle_s > 0)) errors.push({ field: "settle_s", message: "must be more than 0 s and at most a day" });
+          if (!(next.end_after_idle_s > 0)) errors.push({ field: "end_after_idle_s", message: "must be more than 0 s and at most a day" });
           if (!(next.change_levels >= 1 && next.change_levels <= 254)) errors.push({ field: "change_levels", message: "must be a whole number from 1 to 254" });
           if (errors.length) return { errors, settings, login_error: null };
           settings = next;

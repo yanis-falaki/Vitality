@@ -88,28 +88,30 @@ frames per second; normal memory is requested, GPU buffers only if nothing else 
 
 Times are the defaults; every number is a setting.
 
-- **R1 · Start active.** Any keyboard or mouse input after ≥ 2 s without input starts an active
+- **R1 · Start.** Any keyboard or mouse input while no interaction is open starts an active
   interaction, with a shot of every screen.
-- **R2 · Settle.** 2 s after the last input, a shot.
+- **R2 · End.** After 3 s without input, a closing shot (by R4's rule; if no screen changed there
+  is no shot, but the interaction still ends), and the interaction ends at once and is uploaded.
 - **R3 · Maximum gap.** While continuously active, a shot at least every 10 s.
 - **R4 · Which screens.** A shot includes a screen only if it changed since that screen's own last
   shot: more than 0.5 % of a 64×36 grayscale thumbnail moved by more than 16 levels. A shot in which
   no screen changed is skipped. R1 shots include every screen.
-- **R5 · End active.** After the R2 shot, if no input follows within 2 s, the interaction ends and is
-  uploaded.
-- **R6 · Passive check.** While idle, every 45 s, each screen is compared with its last shot by
+- **R5 · Passive check.** While idle, every 45 s, each screen is compared with its last shot by
   R4's rule; if any changed, a shot of the changed screens, marked `passive`.
-- **R7 · Passive interaction.** The first passive shot starts one; every passive shot until it ends
+- **R6 · Passive interaction.** The first passive shot starts one; every passive shot until it ends
   belongs to it. It ends on any input (R1 then starts an active one), after 3 consecutive checks
   without change, or on pause. It holds only passive shots.
-- **R8 · Stop.** While paused, nothing is captured and no checks run; an open interaction ends.
+- **R7 · Stop.** While paused, nothing is captured and no checks run; an open interaction ends.
   (Lock and sleep are not watched: the owner does not need capture to stop on lock, and while the
   machine sleeps the app is frozen with it. An interaction left open across a sleep ends as soon as
   the machine wakes, with no shots for the gap; the input that wakes it starts a new one.)
-- **R9 · Size budget.** When an open interaction's shots reach 40 MiB (or 900 shots), it ends and a
+- **R8 · Size budget.** When an open interaction's shots reach 40 MiB (or 900 shots), it ends and a
   new interaction of the same kind starts at once with a shot of every screen (active: as R1;
   passive: a passive start). Every interaction then stays under the server's 50 MiB upload limit
   (and its 1000-file limit). A 413 that still happens shows as a warning in Status.
+
+(The rules were renumbered when settle and the start gap were merged into R2's single
+`end_after_idle_s`; the old R5 is gone.)
 
 ## 7. Tray icon and window
 
@@ -123,7 +125,7 @@ shots today"), Pause for 30 min / 1 h / until tomorrow, Open Vitality, Quit.
   upload state and pending, disk use, warnings from the health checks, and the recent-decisions log
   (including skipped shots).
 - **Screens** — §5.
-- **Settings** — start at login; server address; the timings and threshold of R1–R8; image quality;
+- **Settings** — start at login; server address; the timings and threshold of the rules; image quality;
   the disk warning level; **Free up space** (deletes local copies already uploaded, after asking).
 - **How capture works** — R1–R8 in plain words with the current numbers.
 - **Setup** — §8, instead of the pages when something essential is missing.

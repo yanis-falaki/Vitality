@@ -23,8 +23,7 @@ struct Rig {
 
 fn quick() -> PolicySettings {
     PolicySettings {
-        start_gap: Duration::from_millis(150),
-        settle: Duration::from_millis(150),
+        end_after_idle: Duration::from_millis(300),
         max_gap: Duration::from_secs(2),
         passive_every: Duration::from_secs(60),
         ..PolicySettings::default()
@@ -113,17 +112,17 @@ async fn input_becomes_an_interaction_folder_that_is_uploaded() {
     tokio::time::sleep(Duration::from_millis(60)).await; // a tick sees the frame
     r.input();
     eventually("an active interaction", || r.core.status().capture.mode == CaptureMode::Active).await;
-    r.frame(1, 200); // the screen changes before the settle shot
+    r.frame(1, 200); // the screen changes before the closing shot
     eventually("finished", || !r.complete().is_empty()).await;
     eventually("uploaded", || r.complete().first().is_some_and(|f| f.join(UPLOADED).exists())).await;
     let folder = &r.complete()[0];
     let j = json(folder);
     let shots = j["shots"].as_array().unwrap();
-    assert_eq!(shots.len(), 2, "the R1 shot and the settle shot: {j}");
+    assert_eq!(shots.len(), 2, "the R1 shot and the closing shot: {j}");
     assert!(shots.iter().all(|s| s["trigger"] == "activity" && s.get("screen_name").is_none()));
     assert_eq!(r.server.names().len(), 1);
     let log = r.core.recent_decisions(50).iter().map(|d| d.text.clone()).collect::<Vec<_>>().join("\n");
-    assert!(log.contains("start active interaction") && log.contains("R1 shot") && log.contains("R2 shot") && log.contains("R5 end"), "{log}");
+    assert!(log.contains("start active interaction") && log.contains("R1 shot") && log.contains("R2 shot") && log.contains("R2 end"), "{log}");
     eventually("idle again", || r.core.status().capture.mode == CaptureMode::Idle).await;
 }
 
@@ -230,21 +229,25 @@ pub async fn bare_core() -> BareCore {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_full_interaction_is_split_and_every_part_is_uploaded() {
-    // R9 end to end: a tiny budget, so the second shot of an interaction passes it.
+    // R8 end to end: a tiny budget, so the second shot of a busy interaction (R3) passes it.
     let dir = tempfile::tempdir().unwrap();
-    let r = rig_with(dir, PolicySettings { max_interaction_bytes: 1, ..quick() }).await;
+    let r = rig_with(dir, PolicySettings { max_interaction_bytes: 1, max_gap: Duration::from_millis(400), ..quick() }).await;
     r.add_screen(40).await;
     tokio::time::sleep(Duration::from_millis(60)).await;
     r.input();
     eventually("active", || r.core.status().capture.mode == CaptureMode::Active).await;
-    r.frame(1, 200); // the settle shot has something to take
+    r.frame(1, 200); // the R3 shot has something to take
+    for _ in 0..8 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        r.input(); // still busy
+    }
     eventually("two interactions uploaded", || {
         let c = r.complete();
         c.len() >= 2 && c.iter().all(|f| f.join(UPLOADED).exists())
     })
     .await;
     let log = r.core.recent_decisions(50).iter().map(|d| d.text.clone()).collect::<Vec<_>>().join("\n");
-    assert!(log.contains("R9 end") && log.contains("R9 shot"), "{log}");
+    assert!(log.contains("R8 end") && log.contains("R8 shot"), "{log}");
     let second = json(&r.complete()[1]);
     assert!(!second["shots"].as_array().unwrap().is_empty());
 }
@@ -283,7 +286,7 @@ async fn after_a_suspend_the_waking_input_starts_a_fresh_interaction() {
         let s = suspended.clone();
         Arc::new(move || *s.lock().unwrap())
     };
-    let slow = PolicySettings { settle: Duration::from_secs(30), ..quick() };
+    let slow = PolicySettings { end_after_idle: Duration::from_secs(30), ..quick() };
     let r = rig_full(tempfile::tempdir().unwrap(), slow, clock, Duration::from_millis(50)).await;
     r.add_screen(40).await;
     tokio::time::sleep(Duration::from_millis(120)).await;
@@ -295,7 +298,7 @@ async fn after_a_suspend_the_waking_input_starts_a_fresh_interaction() {
     eventually("a new one open", || r.folders().len() == 2).await;
     let log: Vec<String> = r.core.recent_decisions(20).iter().map(|d| d.text.clone()).collect();
     let i = log.iter().position(|l| l.starts_with("the machine was suspended")).expect("logged");
-    assert!(log[i + 1].starts_with("R5 end"), "{log:?}");
+    assert!(log[i + 1].starts_with("R2 end"), "{log:?}");
     assert!(log[i + 2].starts_with("start active"), "{log:?}");
 }
 

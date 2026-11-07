@@ -110,8 +110,7 @@ export interface StatusPage {
 export interface Settings {
   server: string;
   webp_quality: number;
-  start_gap_s: number;
-  settle_s: number;
+  end_after_idle_s: number;
   max_gap_s: number;
   change_fraction: number;
   change_levels: number;

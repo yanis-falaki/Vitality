@@ -52,7 +52,7 @@ export function App() {
       <main className="page">
         {page === "status" && <Status />}
         {page === "screens" && <Screens />}
-        {page === "settings" && <Settings />}
+        {page === "settings" && <Settings onHowItWorks={() => setPage("how")} />}
         {page === "how" && <HowItWorks />}
       </main>
     </div>

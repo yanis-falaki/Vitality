@@ -211,17 +211,17 @@ export const statusPage: StatusPage = {
 export const rules: RuleText[] = [
   {
     "id": "R1",
-    "text": "Any keyboard or mouse input after at least 2 s without input starts an active interaction, with a shot of every screen.",
-    "title": "Start active"
+    "text": "Any keyboard or mouse input while no interaction is open starts an active interaction, with a shot of every screen.",
+    "title": "Start"
   },
   {
     "id": "R2",
-    "text": "2 s after the last input, a shot.",
-    "title": "Settle"
+    "text": "After 3 s without input, a closing shot (of the screens that changed, by R4), and the interaction ends and is uploaded. If no screen changed, there is no closing shot, but the interaction still ends.",
+    "title": "End"
   },
   {
     "id": "R3",
-    "text": "While you are continuously active, a shot at least every 10 s.",
+    "text": "While you keep using the keyboard or mouse, a shot at least every 10 s.",
     "title": "Maximum gap"
   },
   {
@@ -231,26 +231,21 @@ export const rules: RuleText[] = [
   },
   {
     "id": "R5",
-    "text": "After the R2 shot, if no input follows within 2 s, the interaction ends and is uploaded.",
-    "title": "End active"
-  },
-  {
-    "id": "R6",
     "text": "While idle, every 45 s, each screen is compared with its last shot by R4's rule; if any changed, a shot of the changed screens, marked passive.",
     "title": "Passive check"
   },
   {
-    "id": "R7",
+    "id": "R6",
     "text": "The first passive shot starts a passive interaction; every passive shot until it ends belongs to it. It ends on any input (R1 then starts an active one), after 3 checks in a row without change, or on pause. It holds only passive shots.",
     "title": "Passive interaction"
   },
   {
-    "id": "R8",
+    "id": "R7",
     "text": "While paused, nothing is captured and no checks run; an open interaction ends. A locked screen is not a pause: the lock screen is captured like any other. When the machine sleeps, an open interaction ends as it wakes, with no shot for the time asleep.",
     "title": "Stop"
   },
   {
-    "id": "R9",
+    "id": "R8",
     "text": "When an interaction's shots reach 40 MiB (or 900 shots), it ends and a new one of the same kind starts at once with a shot of every screen, so every upload stays under the server's limit.",
     "title": "Size budget"
   }
@@ -260,14 +255,13 @@ export const settings: Settings = {
   "change_fraction": 0.005,
   "change_levels": 16,
   "disk_warning_gb": 5.0,
+  "end_after_idle_s": 3.0,
   "max_gap_s": 10.0,
   "max_interaction_mib": 40,
   "passive_every_s": 45.0,
   "passive_quiet_checks": 3,
   "server": "http://vitality-librarian:8100",
-  "settle_s": 2.0,
   "start_at_login": true,
-  "start_gap_s": 2.0,
   "webp_quality": 85.0
 };
 

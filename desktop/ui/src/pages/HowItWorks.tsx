@@ -1,4 +1,4 @@
-// "How capture works": the rules R1–R9 in plain words with the current numbers, as the core
+// "How capture works": the rules R1–R8 in plain words with the current numbers, as the core
 // writes them (`how_it_works`); this page only lays them out.
 import { useRules } from "../lib/queries";
 

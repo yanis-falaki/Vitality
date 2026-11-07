@@ -153,10 +153,10 @@ impl Timeline {
     }
 }
 
-// --- R1 · start active ------------------------------------------------------------------------
+// --- R1 · start ---------------------------------------------------------------------------------
 
 #[test]
-fn r1_first_input_after_idle_starts_with_a_shot_of_every_screen() {
+fn r1_input_while_none_is_open_starts_with_a_shot_of_every_screen() {
     let mut tl = Timeline::new(vec![("a", still()), ("b", still())]);
     tl.run(5.0, &[]).run(5.5, &[5.1]);
     assert_eq!(tl.starts(), vec![(5.1, InteractionKind::Active)]);
@@ -165,7 +165,6 @@ fn r1_first_input_after_idle_starts_with_a_shot_of_every_screen() {
 
 #[test]
 fn r1_shot_includes_unchanged_screens() {
-    // Both screens were shot before and have not changed since: R1 still takes both.
     let mut tl = Timeline::new(vec![("a", still()), ("b", still())]);
     tl.run(10.0, &[1.0]);
     tl.clear();
@@ -182,22 +181,48 @@ fn r1_without_frames_starts_but_skips_the_shot() {
     assert_eq!(tl.skipped(), vec![(1.0, Rule::R1)]);
 }
 
-// --- R2 · settle ------------------------------------------------------------------------------
+#[test]
+fn r1_needs_no_gap_input_right_after_an_end_starts_a_new_one() {
+    let mut tl = Timeline::new(vec![("a", still())]);
+    tl.run(4.25, &[1.0]).run(5.0, &[4.3]);
+    assert_eq!(tl.ends(), vec![(4.0, Rule::R2)]);
+    assert_eq!(tl.starts().iter().map(|s| s.0).collect::<Vec<_>>(), vec![1.0, 4.3]);
+}
+
+// --- R2 · end ----------------------------------------------------------------------------------
 
 #[test]
-fn r2_settle_shot_two_seconds_after_the_last_input() {
-    let mut tl = Timeline::new(vec![("a", changing_at(&[1.5]))]);
-    tl.run(4.0, &[1.0, 1.2]);
-    // Last input 1.2 s: the tick at 3.25 s is the first ≥ 2 s later.
-    assert_eq!(tl.shots().iter().map(|s| (s.0, s.3)).collect::<Vec<_>>(), vec![(1.0, Rule::R1), (3.25, Rule::R2)]);
+fn r2_input_then_nothing_shots_at_0_and_3_s_and_ends_at_3_s() {
+    let mut tl = Timeline::new(vec![("a", changing_at(&[2.0]))]);
+    tl.run(6.0, &[0.0]);
+    assert_eq!(tl.shots().iter().map(|s| (s.0, s.3)).collect::<Vec<_>>(), vec![(0.0, Rule::R1), (3.0, Rule::R2)]);
+    assert_eq!(tl.ends(), vec![(3.0, Rule::R2)]);
+    assert_eq!(tl.policy.state().mode, CaptureMode::Idle);
 }
 
 #[test]
-fn r2_settle_shot_of_an_unchanged_screen_is_skipped() {
+fn r2_with_nothing_changed_there_is_no_closing_shot_but_the_interaction_ends() {
     let mut tl = Timeline::new(vec![("a", still())]);
-    tl.run(4.0, &[1.0]);
+    tl.run(8.0, &[1.0]);
     assert_eq!(tl.rules_of_shots(), vec![Rule::R1]);
-    assert_eq!(tl.skipped(), vec![(3.0, Rule::R2)]);
+    assert_eq!(tl.skipped(), vec![(4.0, Rule::R2)]);
+    assert_eq!(tl.ends(), vec![(4.0, Rule::R2)]);
+}
+
+#[test]
+fn r2_a_pause_of_2_5_s_stays_one_interaction() {
+    let mut tl = Timeline::new(vec![("a", still())]);
+    tl.run(10.0, &[1.0, 3.5]);
+    assert_eq!(tl.starts().len(), 1);
+    assert_eq!(tl.ends(), vec![(6.5, Rule::R2)]);
+}
+
+#[test]
+fn r2_a_pause_of_3_5_s_makes_two_interactions() {
+    let mut tl = Timeline::new(vec![("a", still())]);
+    tl.run(10.0, &[1.0, 4.5]);
+    assert_eq!(tl.starts().iter().map(|s| s.0).collect::<Vec<_>>(), vec![1.0, 4.5]);
+    assert_eq!(tl.ends(), vec![(4.0, Rule::R2), (7.5, Rule::R2)]);
 }
 
 // --- R3 · maximum gap -------------------------------------------------------------------------
@@ -212,6 +237,7 @@ fn r3_a_shot_at_least_every_ten_seconds_in_a_long_burst() {
     assert_eq!(r3, vec![11.0, 21.0, 31.0]);
     assert_eq!(shots.last().unwrap().3, Rule::R2);
     assert_eq!(tl.starts().len(), 1, "one burst is one interaction");
+    assert_eq!(tl.ends(), vec![(38.0, Rule::R2)]);
 }
 
 #[test]
@@ -227,134 +253,108 @@ fn r3_gap_shot_skipped_when_nothing_changed() {
 #[test]
 fn r4_only_changed_screens_are_in_a_shot() {
     let mut tl = Timeline::new(vec![("a", changing_at(&[2.0])), ("b", still())]);
-    tl.run(5.0, &[1.0, 1.5]);
+    tl.run(6.0, &[1.0, 1.5]);
     let shots = tl.shots();
     assert_eq!(shots[0].1, vec![id("a"), id("b")]);
-    assert_eq!(shots[1], (3.5, vec![id("a")], Trigger::Activity, Rule::R2));
+    assert_eq!(shots[1], (4.5, vec![id("a")], Trigger::Activity, Rule::R2));
 }
 
 #[test]
 fn r4_change_is_against_each_screens_own_last_shot() {
-    // a changes at 2 s and is shot at 3.5 s; it does not change again, so the next shot (R3 in
-    // a long burst) skips it, while b, which changed at 12 s and was not shot since 1 s, is in.
+    // A new interaction at 5 s shoots both; a does not change again, b changes at 12 s: the
+    // R3 shot at 15 s holds only b, the one at 25 s nothing.
     let mut tl = Timeline::new(vec![("a", changing_at(&[2.0])), ("b", changing_at(&[12.0]))]);
-    tl.run(3.6, &[1.0, 1.5]).run(30.0, &Timeline::burst(4.0, 25.0));
-    let shots = tl.shots();
-    let at_r3: Vec<_> = shots.iter().filter(|s| s.3 == Rule::R3).map(|s| s.1.clone()).collect();
+    tl.run(4.75, &[1.0, 1.5]).run(30.0, &Timeline::burst(5.0, 25.0));
+    let at_r3: Vec<_> = tl.shots().iter().filter(|s| s.3 == Rule::R3).map(|s| s.1.clone()).collect();
     assert_eq!(at_r3, vec![vec![id("b")]]);
+    assert!(tl.skipped().contains(&(25.0, Rule::R3)));
 }
 
-// --- R5 · end active --------------------------------------------------------------------------
+// --- R5 · passive check -----------------------------------------------------------------------
 
 #[test]
-fn r5_ends_when_no_input_follows_the_settle_shot() {
-    let mut tl = Timeline::new(vec![("a", still())]);
-    tl.run(8.0, &[1.0]);
-    assert_eq!(tl.ends(), vec![(5.0, Rule::R5)]);
-    assert_eq!(tl.policy.state().mode, CaptureMode::Idle);
-}
-
-#[test]
-fn r5_input_soon_after_the_settle_shot_continues_the_interaction() {
-    let mut tl = Timeline::new(vec![("a", still())]);
-    tl.run(12.0, &[1.0, 4.0]); // settle at 3 s, input at 4 s (< 2 s later)
-    assert_eq!(tl.starts().len(), 1);
-    assert_eq!(tl.ends(), vec![(8.0, Rule::R5)]); // settle again at 6 s, end at 8 s
-}
-
-#[test]
-fn r5_then_input_starts_a_new_interaction() {
-    let mut tl = Timeline::new(vec![("a", still())]);
-    tl.run(10.0, &[1.0, 7.0]);
-    assert_eq!(tl.starts().iter().map(|s| s.0).collect::<Vec<_>>(), vec![1.0, 7.0]);
-}
-
-// --- R6 · passive check -----------------------------------------------------------------------
-
-#[test]
-fn r6_idle_check_every_45_s_shoots_only_changed_screens() {
+fn r5_idle_check_every_45_s_shoots_only_changed_screens() {
     let mut tl = Timeline::new(vec![("a", changing_at(&[30.0])), ("b", still())]);
-    tl.run(10.0, &[1.0]); // shoot both, end at 5 s; next check at 50 s
+    tl.run(10.0, &[1.0]); // shoot both, end at 4 s; next check at 49 s
     tl.clear();
     tl.run(60.0, &[]);
-    assert_eq!(tl.starts(), vec![(50.0, InteractionKind::Passive)]);
-    assert_eq!(tl.shots(), vec![(50.0, vec![id("a")], Trigger::Passive, Rule::R6)]);
+    assert_eq!(tl.starts(), vec![(49.0, InteractionKind::Passive)]);
+    assert_eq!(tl.shots(), vec![(49.0, vec![id("a")], Trigger::Passive, Rule::R5)]);
 }
 
 #[test]
-fn r6_check_without_change_is_skipped_and_starts_nothing() {
+fn r5_check_without_change_is_skipped_and_starts_nothing() {
     let mut tl = Timeline::new(vec![("a", still())]);
     tl.run(10.0, &[1.0]);
     tl.clear();
     tl.run(100.0, &[]);
     assert!(tl.starts().is_empty());
-    assert_eq!(tl.skipped(), vec![(50.0, Rule::R6), (95.0, Rule::R6)]);
+    assert_eq!(tl.skipped(), vec![(49.0, Rule::R5), (94.0, Rule::R5)]);
 }
 
-// --- R7 · passive interaction -----------------------------------------------------------------
+// --- R6 · passive interaction -----------------------------------------------------------------
 
 #[test]
-fn r7_a_video_while_idle_is_one_passive_interaction() {
+fn r6_a_video_while_idle_is_one_passive_interaction() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(10.0, &[1.0]);
     tl.clear();
     tl.run(240.0, &[]);
-    assert_eq!(tl.starts(), vec![(50.0, InteractionKind::Passive)]);
+    assert_eq!(tl.starts(), vec![(49.0, InteractionKind::Passive)]);
     assert!(tl.ends().is_empty());
     let times: Vec<f64> = tl.shots().iter().map(|s| s.0).collect();
-    assert_eq!(times, vec![50.0, 95.0, 140.0, 185.0, 230.0]);
+    assert_eq!(times, vec![49.0, 94.0, 139.0, 184.0, 229.0]);
     assert!(tl.shots().iter().all(|s| s.2 == Trigger::Passive));
 }
 
 #[test]
-fn r7_input_ends_the_passive_interaction_and_starts_an_active_one() {
+fn r6_input_ends_the_passive_interaction_and_starts_an_active_one() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(10.0, &[1.0]);
     tl.clear();
     tl.run(72.0, &[60.0]);
-    assert_eq!(tl.starts(), vec![(50.0, InteractionKind::Passive), (60.0, InteractionKind::Active)]);
-    assert_eq!(tl.ends(), vec![(60.0, Rule::R7), (64.0, Rule::R5)]);
-    // The order at 60 s: end the passive, start the active, then its R1 shot.
+    assert_eq!(tl.starts(), vec![(49.0, InteractionKind::Passive), (60.0, InteractionKind::Active)]);
+    assert_eq!(tl.ends(), vec![(60.0, Rule::R6), (63.0, Rule::R2)]);
     let at60: Vec<&Decision> = tl.log.iter().filter(|(t, _)| *t == 60.0).map(|(_, d)| d).collect();
-    assert!(matches!(at60[0], Decision::EndInteraction { rule: Rule::R7 }));
+    assert!(matches!(at60[0], Decision::EndInteraction { rule: Rule::R6 }));
     assert!(matches!(at60[1], Decision::StartInteraction { kind: InteractionKind::Active }));
     assert!(matches!(at60[2], Decision::Shot { trigger: Trigger::Activity, rule: Rule::R1, .. }));
 }
 
 #[test]
-fn r7_ends_after_three_quiet_checks() {
-    // Changes at 30 s (shot at 50 s), then nothing: quiet at 95, 140, 185 → ends at 185 s.
+fn r6_ends_after_three_quiet_checks() {
+    // Changes at 30 s (shot at 49 s), then nothing: quiet at 94, 139, 184 → ends at 184 s.
     let mut tl = Timeline::new(vec![("a", changing_at(&[30.0]))]);
     tl.run(10.0, &[1.0]);
     tl.clear();
     tl.run(250.0, &[]);
-    assert_eq!(tl.starts(), vec![(50.0, InteractionKind::Passive)]);
-    assert_eq!(tl.ends(), vec![(185.0, Rule::R7)]);
+    assert_eq!(tl.starts(), vec![(49.0, InteractionKind::Passive)]);
+    assert_eq!(tl.ends(), vec![(184.0, Rule::R6)]);
     assert_eq!(tl.policy.state().mode, CaptureMode::Idle);
 }
 
 #[test]
-fn r7_a_change_resets_the_quiet_count() {
+fn r6_a_change_resets_the_quiet_count() {
     let mut tl = Timeline::new(vec![("a", changing_at(&[30.0, 120.0]))]);
     tl.run(10.0, &[1.0]);
     tl.clear();
     tl.run(320.0, &[]);
-    // shots at 50 and 140; quiet at 95, then 185, 230, 275 → end at 275.
-    assert_eq!(tl.shots().iter().map(|s| s.0).collect::<Vec<_>>(), vec![50.0, 140.0]);
-    assert_eq!(tl.ends(), vec![(275.0, Rule::R7)]);
+    // shots at 49 and 139; quiet at 94, then 184, 229, 274 → end at 274.
+    assert_eq!(tl.shots().iter().map(|s| s.0).collect::<Vec<_>>(), vec![49.0, 139.0]);
+    assert_eq!(tl.ends(), vec![(274.0, Rule::R6)]);
 }
 
 #[test]
-fn r7_pause_ends_the_passive_interaction() {
+fn r6_pause_ends_the_passive_interaction() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(10.0, &[1.0]).run(60.0, &[]);
     tl.clear();
     tl.stop(StopReason::Paused);
-    assert_eq!(tl.ends(), vec![(60.0, Rule::R8)]);
+    assert_eq!(tl.ends(), vec![(60.0, Rule::R7)]);
 }
 
 #[test]
-fn r7_never_mixes_active_and_passive_shots_in_one_interaction() {
+fn r6_never_mixes_active_and_passive_shots_in_one_interaction() {
     let mut tl = Timeline::new(vec![("a", video()), ("b", changing_at(&[100.0]))]);
     let mut inputs = Timeline::burst(1.0, 3.0);
     inputs.extend(Timeline::burst(150.0, 152.0));
@@ -379,15 +379,15 @@ fn r7_never_mixes_active_and_passive_shots_in_one_interaction() {
     }
 }
 
-// --- R8 · stop (Review Focus 4) ---------------------------------------------------------------
+// --- R7 · stop (Review Focus 4) ---------------------------------------------------------------
 
 #[test]
-fn r8_pause_ends_an_open_interaction_at_once_and_captures_nothing_until_resume() {
+fn r7_pause_ends_an_open_interaction_at_once_and_captures_nothing_until_resume() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(3.0, &Timeline::burst(1.0, 3.0));
     tl.clear();
     tl.stop(StopReason::Paused);
-    assert_eq!(tl.ends(), vec![(3.0, Rule::R8)]);
+    assert_eq!(tl.ends(), vec![(3.0, Rule::R7)]);
     assert_eq!(tl.policy.state().mode, CaptureMode::Stopped);
     assert_eq!(tl.policy.state().stopped_by, Some(StopReason::Paused));
     tl.clear();
@@ -400,11 +400,18 @@ fn r8_pause_ends_an_open_interaction_at_once_and_captures_nothing_until_resume()
 }
 
 #[test]
-fn r8_quit_stops_checks_too() {
+fn r7_quit_stops_checks_too() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.stop(StopReason::Quit);
     tl.run(200.0, &[]);
     assert!(tl.log.is_empty());
+}
+
+#[test]
+fn r7_stop_while_idle_ends_nothing() {
+    let mut tl = Timeline::new(vec![("a", still())]);
+    tl.stop(StopReason::Paused);
+    assert!(tl.ends().is_empty());
 }
 
 // --- a suspend --------------------------------------------------------------------------------
@@ -418,7 +425,7 @@ fn a_suspend_ends_an_open_active_interaction_with_no_shot() {
     assert_eq!(tl.policy.state().mode, CaptureMode::Active);
     tl.clear();
     let ds = tl.policy.on_slept(tl.at(1.5));
-    assert_eq!(ds, vec![Decision::EndInteraction { rule: Rule::R5 }]);
+    assert_eq!(ds, vec![Decision::EndInteraction { rule: Rule::R2 }]);
     assert_eq!(tl.policy.state().mode, CaptureMode::Idle);
     tl.run(3.0, &[]);
     assert!(tl.shots().is_empty(), "no shot for the gap: {:?}", tl.log);
@@ -434,22 +441,21 @@ fn the_waking_input_starts_a_fresh_interaction_after_the_old_one_is_closed() {
     tl.clear();
     let mut ds = tl.policy.on_slept(tl.at(60.0));
     ds.extend(tl.policy.on_input(tl.at(60.1)));
-    assert_eq!(ds[0], Decision::EndInteraction { rule: Rule::R7 });
+    assert_eq!(ds[0], Decision::EndInteraction { rule: Rule::R6 });
     assert_eq!(ds[1], Decision::StartInteraction { kind: InteractionKind::Active });
     assert!(matches!(&ds[2], Decision::Shot { rule: Rule::R1, trigger: Trigger::Activity, .. }));
     assert_eq!(ds.len(), 3, "one end, one start: {ds:?}");
 }
 
 #[test]
-fn a_long_gap_between_ticks_alone_ends_nothing() {
-    // A stalled loop (the clock running, no suspend) is not a sleep.
+fn a_long_gap_between_ticks_alone_is_just_idle_time() {
+    // A stalled loop (the clock running, no suspend): the rules run as usual (R2).
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(1.5, &Timeline::burst(1.0, 1.4));
     tl.clear();
     tl.now += 60.0;
-    tl.run(tl.now + 3.0, &[]);
-    assert_eq!(tl.ends().iter().map(|e| e.1).collect::<Vec<_>>(), vec![Rule::R5]);
-    assert!(!tl.shots().is_empty() || !tl.skipped().is_empty(), "the rules run as usual");
+    tl.run(tl.now + 0.25, &[]);
+    assert_eq!(tl.ends().iter().map(|e| e.1).collect::<Vec<_>>(), vec![Rule::R2]);
 }
 
 // --- state ------------------------------------------------------------------------------------
@@ -466,53 +472,52 @@ fn state_reports_the_open_interaction_and_the_next_check() {
 #[test]
 fn settings_defaults_are_the_specs() {
     let s = PolicySettings::default();
-    assert_eq!(s.start_gap, Duration::from_secs(2));
-    assert_eq!(s.settle, Duration::from_secs(2));
+    assert_eq!(s.end_after_idle, Duration::from_secs(3));
     assert_eq!(s.max_gap, Duration::from_secs(10));
     assert_eq!(s.passive_every, Duration::from_secs(45));
     assert_eq!(s.passive_quiet_checks, 3);
     assert_eq!(s.threshold, Threshold { fraction: 0.005, levels: 16 });
+    assert_eq!(s.max_interaction_bytes, 40 * 1024 * 1024);
 }
 
-// --- R9 · size budget -------------------------------------------------------------------------
+// --- R8 · size budget -------------------------------------------------------------------------
 
 #[test]
-fn r9_a_full_active_interaction_ends_and_a_new_one_starts_with_every_screen() {
+fn r8_a_full_active_interaction_ends_and_a_new_one_starts_with_every_screen() {
     let mut tl = Timeline::new(vec![("a", video()), ("b", still())]);
     tl.run(3.0, &Timeline::burst(1.0, 3.0));
     let mib = 1024 * 1024;
     assert!(tl.policy.on_written(tl.at(3.0), 39 * mib, 10).is_empty());
     let ds = tl.policy.on_written(tl.at(3.0), 40 * mib, 11);
-    assert_eq!(ds[0], Decision::EndInteraction { rule: Rule::R9 });
+    assert_eq!(ds[0], Decision::EndInteraction { rule: Rule::R8 });
     assert_eq!(ds[1], Decision::StartInteraction { kind: InteractionKind::Active });
-    assert_eq!(ds[2], Decision::Shot { screens: vec![id("a"), id("b")], trigger: Trigger::Activity, rule: Rule::R9 });
+    assert_eq!(ds[2], Decision::Shot { screens: vec![id("a"), id("b")], trigger: Trigger::Activity, rule: Rule::R8 });
     let s = tl.policy.state();
     assert_eq!((s.mode, s.since, s.shots), (CaptureMode::Active, Some(tl.at(3.0)), 1));
-    // The burst goes on in the new interaction, which ends by R5 as usual.
     tl.clear();
     tl.run(10.0, &Timeline::burst(3.1, 4.0));
-    assert_eq!(tl.ends().last().map(|e| e.1), Some(Rule::R5));
+    assert_eq!(tl.ends().last().map(|e| e.1), Some(Rule::R2));
     assert!(tl.starts().is_empty());
 }
 
 #[test]
-fn r9_a_full_passive_interaction_continues_as_a_passive_one() {
+fn r8_a_full_passive_interaction_continues_as_a_passive_one() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(10.0, &[1.0]).run(60.0, &[]);
     let ds = tl.policy.on_written(tl.at(60.0), 1, 900); // the shot count limit
     assert_eq!(ds[1], Decision::StartInteraction { kind: InteractionKind::Passive });
-    assert!(matches!(&ds[2], Decision::Shot { trigger: Trigger::Passive, rule: Rule::R9, .. }));
+    assert!(matches!(&ds[2], Decision::Shot { trigger: Trigger::Passive, rule: Rule::R8, .. }));
     assert_eq!(tl.policy.state().mode, CaptureMode::Passive);
 }
 
 #[test]
-fn r9_does_nothing_without_an_open_interaction() {
+fn r8_does_nothing_without_an_open_interaction() {
     let mut tl = Timeline::new(vec![("a", video())]);
     assert!(tl.policy.on_written(tl.at(0.0), u64::MAX, 5).is_empty());
 }
 
 #[test]
-fn r9_never_splits_a_single_shot() {
+fn r8_never_splits_a_single_shot() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(1.5, &[1.0]);
     assert!(tl.policy.on_written(tl.at(1.5), u64::MAX, 1).is_empty());

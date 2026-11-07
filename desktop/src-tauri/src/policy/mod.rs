@@ -1,11 +1,12 @@
-//! The capture policy: rules R1–R9 (spec §6) as a pure state machine. No I/O, no clock of its own.
+//! The capture policy: rules R1–R8 (spec §6) as a pure state machine. No I/O, no clock of its own.
 //!
 //! The runtime feeds it events and executes what it returns:
 //! - `Policy::on_input(now)` for keyboard or mouse input,
 //! - `Policy::on_tick(now, thumbs)` every 250 ms with each screen's newest thumb,
 //! - `Policy::on_stop(now, why)` when capture must stop (pause, quit),
 //! - `Policy::on_resume(now)` when nothing stops it any more,
-//! - `Policy::on_written(now, bytes, shots)` after each shot, with the open interaction's size (R9).
+//! - `Policy::on_written(now, bytes, shots)` after each shot, with the open interaction's size (R8),
+//! - `Policy::on_slept(now)` before the first event after a suspend.
 //!
 //! Each returns `Decision`s in order: start an interaction, take a shot of some screens, end the
 //! interaction, or a skipped shot (for the decisions log). `Policy::state()` says what it is doing.
@@ -26,30 +27,26 @@ pub use change::{Thumb, Threshold};
 /// The numbers of the rules; every one is a setting. Defaults are the spec's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolicySettings {
-    /// R1: input after at least this long without input starts an interaction; R5: the interaction
-    /// ends when no input follows its settle shot within this long.
-    pub start_gap: Duration,
-    /// R2: a shot this long after the last input.
-    pub settle: Duration,
+    /// R2: after this long without input, the closing shot, and the interaction ends.
+    pub end_after_idle: Duration,
     /// R3: while continuously active, a shot at least this often.
     pub max_gap: Duration,
     /// R4: what counts as a changed screen.
     pub threshold: Threshold,
-    /// R6: while idle, a passive check this often.
+    /// R5: while idle, a passive check this often.
     pub passive_every: Duration,
-    /// R7: a passive interaction ends after this many checks in a row without change.
+    /// R6: a passive interaction ends after this many checks in a row without change.
     pub passive_quiet_checks: u32,
-    /// R9: an interaction whose shots reach this many bytes ends, and a new one starts.
+    /// R8: an interaction whose shots reach this many bytes ends, and a new one starts.
     pub max_interaction_bytes: u64,
-    /// R9: … or this many shots (the server takes at most 1000 files in one upload).
+    /// R8: … or this many shots (the server takes at most 1000 files in one upload).
     pub max_interaction_shots: u32,
 }
 
 impl Default for PolicySettings {
     fn default() -> Self {
         PolicySettings {
-            start_gap: Duration::from_secs(2),
-            settle: Duration::from_secs(2),
+            end_after_idle: Duration::from_secs(3),
             max_gap: Duration::from_secs(10),
             threshold: Threshold::default(),
             passive_every: Duration::from_secs(45),
@@ -87,7 +84,6 @@ pub enum Rule {
     R6,
     R7,
     R8,
-    R9,
 }
 
 /// What the runtime should do.
@@ -131,13 +127,7 @@ pub struct Policy {
 enum Mode {
     /// No interaction; `next_check` is set on the first tick.
     Idle { next_check: Option<Instant> },
-    Active {
-        since: Instant,
-        shots: u32,
-        last_shot_at: Instant,
-        /// When the settle shot (R2) for the current pause in input was due; `None` while input goes on.
-        settled_at: Option<Instant>,
-    },
+    Active { since: Instant, shots: u32, last_shot_at: Instant },
     Passive { since: Instant, shots: u32, next_check: Instant, quiet: u32 },
     Stopped { why: StopReason },
 }

@@ -4,7 +4,7 @@
 //! ```toml
 //! server = "http://vitality-librarian:8100"   # "" keeps captures on this machine
 //! webp_quality = 85
-//! start_gap_s = 2.0     settle_s = 2.0     max_gap_s = 10.0
+//! end_after_idle_s = 3.0     max_gap_s = 10.0
 //! change_fraction = 0.005   change_levels = 16
 //! passive_every_s = 45.0    passive_quiet_checks = 3
 //! max_interaction_mib = 40
@@ -35,8 +35,7 @@ pub const SERVICE: &str = "vitality-client.service";
 pub struct Settings {
     pub server: String,
     pub webp_quality: f32,
-    pub start_gap_s: f64,
-    pub settle_s: f64,
+    pub end_after_idle_s: f64,
     pub max_gap_s: f64,
     pub change_fraction: f64,
     pub change_levels: u8,
@@ -60,8 +59,7 @@ impl Default for Settings {
         Settings {
             server: DEFAULT_SERVER.into(),
             webp_quality: 85.0,
-            start_gap_s: p.start_gap.as_secs_f64(),
-            settle_s: p.settle.as_secs_f64(),
+            end_after_idle_s: p.end_after_idle.as_secs_f64(),
             max_gap_s: p.max_gap.as_secs_f64(),
             change_fraction: p.threshold.fraction,
             change_levels: p.threshold.levels,
@@ -100,8 +98,7 @@ const DAY: &str = "must be more than 0 s and at most a day";
 const SPECS: &[Spec] = &[
     Spec { name: "server", kind: Kind::Text, message: "must be an http:// or https:// address with a host (or empty to keep captures here)" },
     num("webp_quality", 0.0, true, 100.0, true, "must be from 0 to 100"),
-    num("start_gap_s", 0.0, false, 86_400.0, true, DAY),
-    num("settle_s", 0.0, false, 86_400.0, true, DAY),
+    num("end_after_idle_s", 0.0, false, 86_400.0, true, DAY),
     num("max_gap_s", 0.0, false, 86_400.0, true, DAY),
     num("change_fraction", 0.0, false, 1.0, false, "must be more than 0 % and less than 100 %"),
     int("change_levels", 1.0, 254.0, "must be a whole number from 1 to 254"),
@@ -164,11 +161,7 @@ impl Settings {
                 errors.push(FieldError { field: spec.name.into(), message: spec.message.into() });
             }
         }
-        let mut settings: Settings = serde_json::from_value(serde_json::Value::Object(map)).unwrap_or_default();
-        if settings.max_gap_s < settings.settle_s {
-            errors.push(FieldError { field: "max_gap_s".into(), message: "must be at least the settle time".into() });
-            (settings.max_gap_s, settings.settle_s) = (Settings::default().max_gap_s, Settings::default().settle_s);
-        }
+        let settings: Settings = serde_json::from_value(serde_json::Value::Object(map)).unwrap_or_default();
         (settings, errors)
     }
 
@@ -242,8 +235,7 @@ impl Settings {
 
     pub fn policy(&self) -> PolicySettings {
         PolicySettings {
-            start_gap: Duration::from_secs_f64(self.start_gap_s),
-            settle: Duration::from_secs_f64(self.settle_s),
+            end_after_idle: Duration::from_secs_f64(self.end_after_idle_s),
             max_gap: Duration::from_secs_f64(self.max_gap_s),
             threshold: Threshold { fraction: self.change_fraction, levels: self.change_levels },
             passive_every: Duration::from_secs_f64(self.passive_every_s),
@@ -367,10 +359,10 @@ pub mod tests {
         let path = dir.path().join("client.toml");
         assert_eq!(Settings::load(&path), Settings::default());
         assert_eq!(Settings::default().policy(), PolicySettings::default());
-        std::fs::write(&path, "server = \"\"\nsettle_s = 3.5\n").unwrap();
+        std::fs::write(&path, "server = \"\"\nend_after_idle_s = 3.5\n").unwrap();
         let s = Settings::load(&path);
         assert_eq!(s.server(), None);
-        assert_eq!(s.policy().settle, Duration::from_millis(3500));
+        assert_eq!(s.policy().end_after_idle, Duration::from_millis(3500));
         assert_eq!(s.webp_quality, 85.0);
         assert!(s.start_at_login);
     }
@@ -379,7 +371,7 @@ pub mod tests {
     fn round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vitality/client.toml");
-        let s = Settings { server: "http://box:8100".into(), settle_s: 3.0, max_interaction_mib: 30, start_at_login: false, disk_warning_gb: 2.5, ..Settings::default() };
+        let s = Settings { server: "http://box:8100".into(), end_after_idle_s: 3.0, max_interaction_mib: 30, start_at_login: false, disk_warning_gb: 2.5, ..Settings::default() };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
         assert!(std::fs::read_to_string(&path).unwrap().starts_with("# Vitality"));
@@ -389,7 +381,7 @@ pub mod tests {
     fn unknown_keys_of_the_old_client_are_ignored() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("client.toml");
-        std::fs::write(&path, "upload_server = \"http://x\"\nsettle_seconds = 3\nserver = \"http://box:8100\"\n").unwrap();
+        std::fs::write(&path, "upload_server = \"http://x\"\nend_after_idle_seconds = 3\nserver = \"http://box:8100\"\n").unwrap();
         assert_eq!(Settings::load(&path).server, "http://box:8100");
     }
 
@@ -397,7 +389,7 @@ pub mod tests {
     fn an_invalid_value_falls_back_alone_and_the_rest_is_kept() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("client.toml");
-        for bad in ["settle_s = 0", "settle_s = 1e30", "webp_quality = 200", "max_interaction_mib = 60", "server = 3", "change_levels = 300",
+        for bad in ["end_after_idle_s = 0", "end_after_idle_s = 1e30", "webp_quality = 200", "max_interaction_mib = 60", "server = 3", "change_levels = 300",
                     "server = \"box:8100\"", "server = \"http://\"", "passive_quiet_checks = 2.5", "start_at_login = 1"] {
             std::fs::write(&path, format!("disk_warning_gb = 2.5\n{bad}\n")).unwrap();
             let loaded = Settings::load_full(&path);
@@ -406,8 +398,6 @@ pub mod tests {
         }
         std::fs::write(&path, "change_levels = 300\n").unwrap();
         assert_eq!(Settings::load_full(&path).problems, ["change_levels = 300: must be a whole number from 1 to 254 (using 16)"]);
-        std::fs::write(&path, "max_gap_s = 1.0\nsettle_s = 3.0\n").unwrap();
-        assert_eq!(Settings::load(&path), Settings::default(), "inconsistent pair: both back to defaults");
         std::fs::write(&path, "not toml [").unwrap();
         assert_eq!(Settings::load_full(&path).problems.len(), 1);
     }
@@ -418,10 +408,10 @@ pub mod tests {
         let path = dir.path().join("client.toml");
         std::fs::write(&path, "upload_server = \"http://old\"\nchange_levels = 300\nserver = \"http://box:8100\"\n").unwrap();
         let loaded = Settings::load(&path);
-        Settings { settle_s: 3.0, ..loaded.clone() }.save(&path).unwrap();
+        Settings { end_after_idle_s: 3.0, ..loaded.clone() }.save(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let table: toml::Table = text.parse().unwrap();
-        assert_eq!(table["settle_s"].as_float(), Some(3.0));
+        assert_eq!(table["end_after_idle_s"].as_float(), Some(3.0));
         assert_eq!(table["change_levels"].as_integer(), Some(300), "an invalid value the owner did not touch stays");
         assert_eq!(table["server"].as_str(), Some("http://box:8100"));
         assert_eq!(table["upload_server"].as_str(), Some("http://old"), "unknown keys stay");
@@ -444,13 +434,13 @@ pub mod tests {
     #[test]
     fn page_values_are_checked_field_by_field_with_types() {
         let page = serde_json::json!({
-            "server": "http://box:8100", "webp_quality": 80, "start_gap_s": null, "settle_s": 2,
+            "server": "http://box:8100", "webp_quality": 80, "end_after_idle_s": null,
             "max_gap_s": 10, "change_fraction": 0.005, "change_levels": 0, "passive_every_s": 45,
             "passive_quiet_checks": 2.5, "max_interaction_mib": 40, "disk_warning_gb": 5, "start_at_login": true,
         });
         let (s, errors) = Settings::from_fields(|k| page.get(k).cloned());
         let fields: Vec<&str> = errors.iter().map(|e| e.field.as_str()).collect();
-        assert_eq!(fields, ["start_gap_s", "change_levels", "passive_quiet_checks"], "empty, 0 and a fraction are errors");
+        assert_eq!(fields, ["end_after_idle_s", "change_levels", "passive_quiet_checks"], "empty, 0 and a fraction are errors");
         assert_eq!(s.webp_quality, 80.0);
         assert!(Settings::from_fields(|k| serde_json::to_value(Settings::default()).unwrap().get(k).cloned()).1.is_empty());
     }
