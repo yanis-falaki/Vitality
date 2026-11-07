@@ -138,7 +138,7 @@ impl ksni::Tray for VitalityTray {
     }
 }
 
-/// Shows the tray icon and keeps it in step with the core (at most every 2 s). Without a tray
+/// Shows the tray icon and keeps it in step with the core (at once, then at most every 2 s). Without a tray
 /// host on the desktop it says so on stderr and does nothing more.
 pub async fn start(core: Arc<Core>, act: Arc<dyn Fn(TrayAction) + Send + Sync>) {
     use ksni::TrayMethods;
@@ -154,10 +154,21 @@ pub async fn start(core: Arc<Core>, act: Arc<dyn Fn(TrayAction) + Send + Sync>) 
     };
     let mut changes = core.subscribe();
     tokio::spawn(async move {
+        // Redraw at once on a change (a click must show immediately); changes that follow
+        // within 2 s are gathered into one more redraw at the end of that window.
+        let mut burst = false;
         loop {
-            let _ = changes.recv().await;
-            tokio::time::sleep(Duration::from_secs(2)).await; // gather a burst of changes
-            while changes.try_recv().is_ok() {}
+            if burst {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                burst = false;
+                if changes.try_recv().is_err() {
+                    continue; // nothing more happened in the window
+                }
+                while changes.try_recv().is_ok() {}
+            } else {
+                let _ = changes.recv().await;
+                burst = true;
+            }
             let status = core.status();
             let shots = tokio::task::spawn_blocking({
                 let store = core.store.clone();
