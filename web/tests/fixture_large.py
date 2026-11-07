@@ -5,8 +5,12 @@
     model/      a git repo: 6 strivings, 25 activities (some gone quiet for over a month, some begun
                 late), ~20 actions on most weekdays and a few weekend days (a holiday and some single
                 days missed), 2 to 12 interactions per action with 1 to 4 operations each, their
-                observations; the last two interactions are untracked (waiting for the modeler)
-    state/      the modeler's records, as in the small fixture
+                observations; the last two interactions are untracked (waiting for the modeler). Its
+                history: one commit of everything before the last 12 days with actions, then a
+                modeler commit for each of those days, adding its actions and revising the strivings
+                and activities (`_EARLIER`: a striving created, retitles, confidence, serving another
+                striving, an activity removed; statuses change as activities pass 60 actions)
+    state/      the modeler's records: a session for each modeler commit
     captures/   one to three placeholder screenshots per interaction: hard links to a handful of
                 generated images, so the folder costs almost no space
 
@@ -19,12 +23,12 @@ import json
 import os
 import random
 import subprocess
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
 
-from fixture import DEVICE, LOCAL, Fixture, _name, _png, _write_state
+from fixture import DEVICE, LOCAL, Fixture, _name, _png, _write_state, commit
 from vitality_usermodel.formats import (
     ActionMeta,
     ActivityMeta,
@@ -37,6 +41,7 @@ from vitality_usermodel.formats import (
 )
 
 LAST_DAY = date(2026, 11, 4)
+WINDOW = 12  # the last days with actions, each added by a modeler commit of its own
 
 _STRIVINGS: list[tuple[str, list[str], str]] = [
     ("Become a capable systems programmer", ["competence", "growth", "understanding"], "approach"),
@@ -115,6 +120,21 @@ _OPERATIONS = ["Opened a new tab", "Typed a few lines", "Scrolled down the page"
 
 _SCENES = ["editor", "browser", "notes", "sheet", "video", "photos"]
 
+# How the model read before the modeler commit `k` (1 to WINDOW) of the last days: (k, striving or
+# activity index, the fields it had before). A striving or activity given None did not exist yet.
+_EARLIER: list[tuple[int, str, dict[str, object] | None]] = [
+    (3, "str-4", None),                                                    # "Make music again" is new
+    (3, "act-16", {"part_of": []}), (3, "act-17", {"part_of": []}), (3, "act-18", {"part_of": []}),
+    (5, "act-13", {"confidence": 7}),
+    (6, "act-4", {"title": "Reading a parser's source code"}),
+    (8, "act-8", {"confidence": 3}),
+    (10, "str-1", {"confidence": 4}),
+    (11, "act-24", {"part_of": ["str-0002"]}),
+    (12, "act-22", {"title": "Reading the news"}),
+]
+# An activity the modeler later removed (in commit 10): (index, title, serves, first and last offset in days).
+_REMOVED = (25, "Planning a city break", [2], 50, 60)
+
 
 def build_large(root: Path, days: int = 120, seed: int = 7) -> Fixture:
     """Write the large fixture under `root` (which must not hold it yet); `days` calendar days ending on LAST_DAY."""
@@ -134,6 +154,8 @@ def build_large(root: Path, days: int = 120, seed: int = 7) -> Fixture:
 
     spans = [(start, end if end >= 0 else days + end) for _, _, _, start, end, _, _, _ in _ACTIVITIES]
     seen: dict[int, list[datetime]] = {}
+    window = set(active[-WINDOW:])
+    later: dict[date, list[tuple[ActionMeta, str]]] = {}   # the actions of the window, by day
     actions: list[str] = []
     interactions: list[str] = []
     for d in active:
@@ -150,23 +172,39 @@ def build_large(root: Path, days: int = 120, seed: int = 7) -> Fixture:
                 refs = _write_action(model, captures, images, rng, activity, at, a_end, interactions)
                 action_id = _name(at).split("/", 1)[1]
                 summary = _summary(rng, activity)
-                _write(model / "actions" / f"{action_id}.md", ActionMeta(
+                meta = ActionMeta(
                     id=action_id, summary=summary, start=at, end=a_end, operations=refs,
                     part_of=[f"act-{activity + 1:04d}"] if activity is not None else [],
-                    confidence=rng.randint(4, 9)),
-                    f"{summary}. These operations follow one another and serve one purpose, so they make "
-                    f"one action ({_name(at).split('/', 1)[1]}).")
+                    confidence=rng.randint(4, 9))
+                body = (f"{summary}. These operations follow one another and serve one purpose, so they make "
+                        f"one action ({_name(at).split('/', 1)[1]}).")
+                if d in window:
+                    later.setdefault(d, []).append((meta, body))
+                else:
+                    _write(model / "actions" / f"{action_id}.md", meta, body)
                 actions.append(action_id)
                 if activity is not None:
                     seen.setdefault(activity, []).append(at)
                 at = a_end + timedelta(minutes=rng.choice([0, 1, 2, 3, 5, 8, 12]))
 
-    _write_strivings(model)
-    _write_activities(model, seen)
-    (model / ".next-ids").write_text(json.dumps({"activity": len(_ACTIVITIES) + 1, "striving": len(_STRIVINGS) + 1}) + "\n",
+    (model / ".next-ids").write_text(json.dumps({"activity": len(_ACTIVITIES) + 2, "striving": len(_STRIVINGS) + 1}) + "\n",
                                      encoding="utf-8")
-    _git(model, "add", "-A")
-    _git(model, "-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", "commit", "-q", "-m", "model: large fixture")
+    days_of_window = active[-WINDOW:]
+    _write_strivings(model, 0)
+    _write_activities(model, seen, 0, days_of_window[0] - timedelta(days=1), first_day)
+    commit(model, "model: the large fixture's first months", f"{days_of_window[0]}T06:00:00-05:00")
+    sessions: list[dict[str, object]] = []
+    for k, d in enumerate(days_of_window, 1):
+        for meta, body in later[d]:
+            _write(model / "actions" / f"{meta.id}.md", meta, body)
+        _write_strivings(model, k)
+        _write_activities(model, seen, k, d, first_day)
+        at = datetime.combine(d, datetime.min.time(), LOCAL) + timedelta(hours=23, minutes=20)
+        run = f"{at.astimezone(timezone.utc):%Y-%m-%dT%H-%M-%SZ}"
+        commit(model, f"modeler run {run}: {len(later[d])} actions", at.isoformat())
+        utc = lambda t: f"{t.astimezone(timezone.utc):%Y-%m-%dT%H:%M:%SZ}"  # noqa: E731
+        sessions.append({"run": run, "started": utc(at - timedelta(minutes=6)), "ended": utc(at), "trigger": "sitting",
+                         "outcome": "committed", "changes": {"actions": len(later[d])}, "cost": 1.1})
 
     waiting: list[str] = []
     last = datetime.combine(LAST_DAY, datetime.min.time(), LOCAL) + timedelta(hours=23, minutes=30)
@@ -177,7 +215,7 @@ def build_large(root: Path, days: int = 120, seed: int = 7) -> Fixture:
                         start, start + timedelta(minutes=1), 1)
         interactions.append(name)
         waiting.append(name)
-    _write_state(state)
+    _write_state(state, sessions)
     return Fixture(model=model, state=state, captures=captures, actions=actions, interactions=interactions,
                    waiting=waiting)
 
@@ -232,31 +270,58 @@ def _write_evidence(model: Path, captures: Path, images: dict[str, list[Path]], 
         os.link(images[scene][n % len(images[scene])], folder / f"{n * seconds // 3:04d}.png")
 
 
-def _write_strivings(model: Path) -> None:
+def _earlier(version: int, key: str) -> dict[str, object] | None:
+    # The fields of striving or activity `key` ("str-4", "act-16") as of modeler commit `version` (0: before
+    # the first); None if it did not exist yet.
+    fields: dict[str, object] = {}
+    for k, at, before in sorted(_EARLIER, key=lambda e: -e[0]):  # the earliest change wins
+        if at == key and version < k:
+            if before is None:
+                return None
+            fields.update(before)
+    return fields
+
+
+def _write_strivings(model: Path, version: int = WINDOW) -> None:
     for n, (title, needs, orientation) in enumerate(_STRIVINGS):
         id = f"str-{n + 1:04d}"
+        earlier = _earlier(version, f"str-{n}")
+        if earlier is None:
+            continue
         conflicts = ["str-0002"] if n in (0, 4) else []
         _write(model / "strivings" / f"{id}.md", StrivingMeta.model_validate(dict(
             id=id, title=title, confidence=4 + n % 5, needs=needs, orientation=orientation,
             aspiration_vs_obligation=["ideal", "mixed", "ought"][n % 3], autonomy=["autonomous", "mixed"][n % 2],
-            relations=Relations(conflicts_with=conflicts))),
+            relations=Relations(conflicts_with=conflicts)) | earlier),
             f"{title}, as the model reads it after four months. Most of the evidence comes from the activities "
             f"serving it; see act-{n * 4 + 1:04d} for the steadiest of them.\n\nConfidence grows with every week "
             f"in which it shows up again.")
 
 
-def _write_activities(model: Path, seen: dict[int, list[datetime]]) -> None:
+def _write_activities(model: Path, seen: dict[int, list[datetime]], version: int, until: date, first_day: date) -> None:
+    # Each activity as of modeler commit `version`, from its actions up to the day `until`.
     for n, (title, serves, hinders, *_) in enumerate(_ACTIVITIES):
-        times = seen.get(n)
-        if not times:
+        times = [t for t in seen.get(n, []) if t.date() <= until]
+        earlier = _earlier(version, f"act-{n}")
+        if not times or earlier is None:
             continue
         id = f"act-{n + 1:04d}"
-        _write(model / "activities" / f"{id}.md", ActivityMeta(
+        _write(model / "activities" / f"{id}.md", ActivityMeta.model_validate(dict(
             id=id, title=title, part_of=[f"str-{s + 1:04d}" for s in serves],
             hinders=[f"str-{s + 1:04d}" for s in hinders], confidence=3 + n % 7,
-            status="established" if len(times) > 60 else "tentative", first_seen=times[0], last_seen=times[-1]),
+            status="established" if len(times) > 60 else "tentative", first_seen=times[0], last_seen=times[-1]) | earlier),
             f"{title}: {len(times)} actions so far, first on {times[0]:%B %-d} and last on {times[-1]:%B %-d}.\n\n"
             f"The first of them was {_name(times[0]).split('/', 1)[1]}.")
+    n, title, serves, first, last = _REMOVED
+    path = model / "activities" / f"act-{n + 1:04d}.md"
+    if version < 10:
+        seen_at = [datetime.combine(first_day + timedelta(days=d), datetime.min.time(), LOCAL) + timedelta(hours=19)
+                   for d in (first, last)]
+        _write(path, ActivityMeta(id=f"act-{n + 1:04d}", title=title, part_of=[f"str-{s + 1:04d}" for s in serves],
+                                  confidence=3, status="tentative", first_seen=seen_at[0], last_seen=seen_at[1]),
+               f"{title}: a few evenings of looking at trains and hotels. Perhaps part of the reunion trip.")
+    elif path.exists():
+        path.unlink()
 
 
 def _images(root: Path) -> dict[str, list[Path]]:

@@ -189,6 +189,86 @@
         }
       }
     },
+    "/api/pipeline": {
+      "get": {
+        "summary": "Get Pipeline",
+        "operationId": "get_pipeline_api_pipeline_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pipeline"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/changes": {
+      "get": {
+        "summary": "Get Changes",
+        "operationId": "get_changes_api_changes_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{7,40}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Changes"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such commit"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Get Health",
@@ -390,6 +470,102 @@
         ],
         "title": "Activity"
       },
+      "ChangeItem": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "created",
+              "retitled",
+              "status",
+              "confidence",
+              "serves",
+              "unserves",
+              "removed"
+            ],
+            "title": "Kind"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "striving",
+              "activity"
+            ],
+            "title": "Level"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "other": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "level",
+          "id",
+          "title"
+        ],
+        "title": "ChangeItem",
+        "description": "One change to a striving or activity in a modeler commit, read from its frontmatter before and after."
+      },
+      "Changes": {
+        "properties": {
+          "commits": {
+            "items": {
+              "$ref": "#/components/schemas/ModelerCommit"
+            },
+            "type": "array",
+            "title": "Commits"
+          },
+          "more": {
+            "type": "boolean",
+            "title": "More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "commits",
+          "more"
+        ],
+        "title": "Changes"
+      },
       "Evidence": {
         "properties": {
           "interaction": {
@@ -575,6 +751,48 @@
         ],
         "title": "Modeler"
       },
+      "ModelerCommit": {
+        "properties": {
+          "commit": {
+            "type": "string",
+            "title": "Commit"
+          },
+          "time": {
+            "type": "string",
+            "title": "Time"
+          },
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "actions_added": {
+            "type": "integer",
+            "title": "Actions Added"
+          },
+          "actions_changed": {
+            "type": "integer",
+            "title": "Actions Changed"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "commit",
+          "time",
+          "session",
+          "actions_added",
+          "actions_changed",
+          "items"
+        ],
+        "title": "ModelerCommit",
+        "description": "A commit of the modeler (`modeler run <session>: ...`) and what it changed."
+      },
       "Observation": {
         "properties": {
           "device": {
@@ -625,6 +843,44 @@
           "confidence"
         ],
         "title": "Operation"
+      },
+      "Pipeline": {
+        "properties": {
+          "now": {
+            "type": "string",
+            "title": "Now"
+          },
+          "last_capture": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Capture"
+          },
+          "last_observation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "now",
+          "last_capture",
+          "last_observation"
+        ],
+        "title": "Pipeline",
+        "description": "How far the evidence has come: the clock, and the newest capture and observation (Home's header)."
       },
       "Problem": {
         "properties": {

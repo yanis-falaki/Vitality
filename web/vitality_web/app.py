@@ -7,6 +7,8 @@
     GET /api/interactions?from=&to=    summaries of the cited interactions started on those days (`schema.Interactions`)
     GET /api/evidence/{interaction}    one interaction's evidence (`schema.Evidence`), or 404
     GET /api/modeler                   the modeler's state (`schema.Modeler`)
+    GET /api/pipeline                  the clock, the newest capture and observation (`schema.Pipeline`)
+    GET /api/changes?limit=&before=    the modeler's commits and what they changed (`schema.Changes`), or 404
     GET /api/health                    {"ok": true}, for the container's healthcheck
     GET /captures/{path}               a screenshot, cached for a year, or 404
     anything else                      a file of the built app, else its index.html (client routes)
@@ -19,26 +21,31 @@ once in the background, so the first visit after a restart does not wait for eve
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from vitality_web import captures, schema
+from vitality_web.changes import ChangeLog, UnknownCommit
 from vitality_web.model import Json, ModelReader
 from vitality_web.modeler import read_modeler
+from vitality_web.pipeline import read_pipeline
 
 _YEAR = "public, max-age=31536000, immutable"
 _NO_APP = "<!doctype html><title>Vitality</title><p>The app is not built (see web/README.md).</p>"
 
 
-def create_app(model: Path, state: Path, captures_dir: Path, app_dir: Path | None, fresh: float = 2.0) -> FastAPI:
+def create_app(model: Path, state: Path, captures_dir: Path, app_dir: Path | None, fresh: float = 2.0,
+               now: datetime | None = None) -> FastAPI:
     """The application over the model folder, the modeler's records, the captures and the built app (if any).
 
-    `fresh`: how many seconds a check of the model's files stands for (see `ModelReader`).
+    `fresh`: how many seconds a check of the model's files stands for (see `ModelReader`). `now`: the
+    time `/api/pipeline` gives as the present (for looking at a fixture as of a day); else the clock.
     """
     reader = ModelReader(model, captures_dir, fresh)
+    changelog = ChangeLog(model)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -75,6 +82,18 @@ def create_app(model: Path, state: Path, captures_dir: Path, app_dir: Path | Non
     @app.get("/api/modeler", response_model=schema.Modeler)
     def get_modeler() -> schema.Modeler:
         return read_modeler(state, model, reader.operation_counts)
+
+    @app.get("/api/pipeline", response_model=schema.Pipeline)
+    def get_pipeline() -> schema.Pipeline:
+        return read_pipeline(captures_dir, model, now)
+
+    @app.get("/api/changes", response_model=schema.Changes, responses={404: {"description": "No such commit"}})
+    def get_changes(limit: int = Query(10, ge=1, le=100),
+                    before: str | None = Query(None, pattern="^[0-9a-f]{7,40}$")) -> schema.Changes:
+        try:
+            return changelog.page(limit, before)
+        except UnknownCommit:
+            raise HTTPException(404, "no such modeler commit") from None
 
     @app.get("/api/health")
     def get_health() -> dict[str, bool]:

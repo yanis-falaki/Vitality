@@ -89,6 +89,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pipeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pipeline */
+        get: operations["get_pipeline_api_pipeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Changes */
+        get: operations["get_changes_api_changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -174,6 +208,39 @@ export interface components {
             /** Body */
             body: string;
         };
+        /**
+         * ChangeItem
+         * @description One change to a striving or activity in a modeler commit, read from its frontmatter before and after.
+         */
+        ChangeItem: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "created" | "retitled" | "status" | "confidence" | "serves" | "unserves" | "removed";
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "striving" | "activity";
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Before */
+            before?: string | null;
+            /** After */
+            after?: string | null;
+            /** Other */
+            other?: string | null;
+        };
+        /** Changes */
+        Changes: {
+            /** Commits */
+            commits: components["schemas"]["ModelerCommit"][];
+            /** More */
+            more: boolean;
+        };
         /** Evidence */
         Evidence: {
             /** Interaction */
@@ -237,6 +304,24 @@ export interface components {
             /** Sessions */
             sessions: components["schemas"]["Session"][];
         };
+        /**
+         * ModelerCommit
+         * @description A commit of the modeler (`modeler run <session>: ...`) and what it changed.
+         */
+        ModelerCommit: {
+            /** Commit */
+            commit: string;
+            /** Time */
+            time: string;
+            /** Session */
+            session: string;
+            /** Actions Added */
+            actions_added: number;
+            /** Actions Changed */
+            actions_changed: number;
+            /** Items */
+            items: components["schemas"]["ChangeItem"][];
+        };
         /** Observation */
         Observation: {
             /** Device */
@@ -256,6 +341,18 @@ export interface components {
             text: string;
             /** Confidence */
             confidence: number;
+        };
+        /**
+         * Pipeline
+         * @description How far the evidence has come: the clock, and the newest capture and observation (Home's header).
+         */
+        Pipeline: {
+            /** Now */
+            now: string;
+            /** Last Capture */
+            last_capture: string | null;
+            /** Last Observation */
+            last_observation: string | null;
         };
         /** Problem */
         Problem: {
@@ -500,6 +597,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Modeler"];
+                };
+            };
+        };
+    };
+    get_pipeline_api_pipeline_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Pipeline"];
+                };
+            };
+        };
+    };
+    get_changes_api_changes_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Changes"];
+                };
+            };
+            /** @description No such commit */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

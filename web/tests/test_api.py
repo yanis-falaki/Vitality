@@ -77,7 +77,7 @@ def test_malformed_files_are_listed_not_raised(client: TestClient, fx: Fixture) 
     assert reply.status_code == 200
     problems = {p["path"]: p["error"] for p in reply.json()["problems"]}
     assert problems == {
-        "activities/act-0006.md": "confidence: Input should be a valid integer, unable to parse string as an integer",
+        "activities/act-0007.md": "confidence: Input should be a valid integer, unable to parse string as an integer",
         "strivings/str-0009.md": "missing frontmatter",
         "operations/laptop/2026-11-02/14-04-00.md": "missing, but cited by an action",
     }
@@ -169,7 +169,7 @@ def test_modeler_not_running(client: TestClient) -> None:
     assert modeler["status"] == {"state": "not running", "since": None, "until": None}
     assert modeler["waiting"] == 3  # two untracked operations files: 2 + 1 operations
     assert [s["run"] for s in modeler["sessions"]] == [
-        "2026-11-03T04-00-00Z", "2026-11-04T03-00-00Z", "2026-11-05T04-20-00Z"]  # the torn line skipped
+        "2026-11-03T04-00-00Z", "2026-11-04T03-00-00Z", "2026-11-05T03-46-00Z"]  # the torn line skipped
     assert "offered" not in modeler["sessions"][0]
     assert modeler["sessions"][0]["changes"]["actions"] == 9
     assert modeler["sessions"][0]["trigger"] == "sitting"  # other fields are kept
@@ -245,6 +245,7 @@ def test_health(client: TestClient) -> None:
 def test_nothing_is_written(client: TestClient, fx: Fixture) -> None:
     before = subprocess.run(["git", "-C", str(fx.model), "status", "--porcelain"], capture_output=True, text=True).stdout
     for path in ("/api/model", "/api/modeler", f"/api/evidence/{fx.interactions[0]}", "/api/interactions",
+                 "/api/changes", "/api/pipeline",
                  f"/api/actions/{fx.actions[0]}"):
         client.get(path)
     after = subprocess.run(["git", "-C", str(fx.model), "status", "--porcelain"], capture_output=True, text=True).stdout

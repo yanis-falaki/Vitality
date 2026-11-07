@@ -5,6 +5,8 @@ These models are the contract with the app: FastAPI publishes them as its OpenAP
 local time with its offset); the app shows the wall-clock text before the offset.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, RootModel
 
 
@@ -134,3 +136,39 @@ class Modeler(BaseModel):
     waiting: int | None     # operations waiting for the modeler; None if the model is not a git repo
     sessions: list[Session]  # newest last
 
+
+
+class Pipeline(BaseModel):
+    """How far the evidence has come: the clock, and the newest capture and observation (Home's header)."""
+
+    now: str                        # the server's time, local with its offset (fixed by `serve_fixture.py --now`)
+    last_capture: str | None        # UTC, from the newest `<device>/<day>/<time>` folder of the captures
+    last_observation: str | None    # UTC, from the newest file under the model's `observations/`
+
+
+class ChangeItem(BaseModel):
+    """One change to a striving or activity in a modeler commit, read from its frontmatter before and after."""
+
+    kind: Literal["created", "retitled", "status", "confidence", "serves", "unserves", "removed"]
+    level: Literal["striving", "activity"]
+    id: str
+    title: str                      # after the commit; before it, if removed
+    before: str | None = None       # retitled, status, confidence: the old value
+    after: str | None = None        # ... and the new one
+    other: str | None = None        # serves / unserves: the striving; removed: the activity it was merged into, if seen
+
+
+class ModelerCommit(BaseModel):
+    """A commit of the modeler (`modeler run <session>: ...`) and what it changed."""
+
+    commit: str
+    time: str                       # committer time, local with its offset
+    session: str                    # the run id, as in `sessions.jsonl`
+    actions_added: int
+    actions_changed: int
+    items: list[ChangeItem]
+
+
+class Changes(BaseModel):
+    commits: list[ModelerCommit]    # newest first
+    more: bool                      # whether older modeler commits remain

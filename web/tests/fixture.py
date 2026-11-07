@@ -2,9 +2,13 @@
 
 `build(root)` writes three folders under `root` and returns them as a `Fixture`:
 
-    model/      a git repo: 2 strivings, 5 activities (and a malformed sixth), 28 actions over three
+    model/      a git repo: 2 strivings, 5 activities (and a malformed one), 28 actions over three
                 days (2026-11-02 to 04, three sittings a day), their observations and operations;
-                the last two interactions are untracked (waiting for the modeler)
+                the last two interactions are untracked (waiting for the modeler). Its history: the
+                evidence, then one modeler commit a day (`_RUNS`, as in sessions.jsonl) that adds the
+                day's actions and revises the strivings and activities (created, retitled, made
+                established, confidence, serving another striving, act-0006 merged into act-0001),
+                then the owner's commit of the malformed file
     state/      the modeler's status.json and sessions.jsonl (with a torn line)
     captures/   placeholder screenshots (generated PNGs) per interaction, and two links that lead
                 outside the folder
@@ -130,13 +134,12 @@ def build(root: Path) -> Fixture:
     for folder in (model, state, captures):
         folder.mkdir(parents=True)
     _git(model, "init", "-q")
-    _write_strivings(model)
-    _write_activities(model)
     images = {scene: _png(scene) for scene in set(_SCENE.values())}
 
     actions: list[str] = []
     interactions: list[str] = []
     pending: list[tuple[str, list[Operation], datetime, datetime, str]] = []  # interactions to write
+    by_day: dict[str, list[ActionMeta]] = {}
     for day, at, minutes, activity, summary, texts, shares in _ACTIONS:
         start = _local(day, at)
         end = start + timedelta(minutes=minutes)
@@ -157,20 +160,28 @@ def build(root: Path) -> Fixture:
             pending.append((name, ops, i_start, i_end, _scene(activity, summary)))
             refs += [f"{name}#{op.id}" for op in ops]
         action_id = _name(start).split("/", 1)[1]
-        write_file(model / "actions" / f"{action_id}.md", ActionMeta(
+        by_day.setdefault(day, []).append(ActionMeta(
             id=action_id, summary=summary, start=start, end=end, operations=refs,
-            part_of=[activity] if activity else [], confidence=6 + len(refs) % 4),
-            f"{summary}. These operations follow one another within a few minutes and serve one "
-            f"purpose, so they make one action.")
+            part_of=[activity] if activity else [], confidence=6 + len(refs) % 4))
         actions.append(action_id)
 
     for name, ops, i_start, i_end, scene in pending:
         _write_evidence(model, captures, images[scene], name, ops, i_start, i_end)
         interactions.append(name)
+    (model / ".next-ids").write_text(json.dumps({"activity": 8, "striving": 3}) + "\n", encoding="utf-8")
+    commit(model, "observer: evidence of 2026-11-02 to 04", "2026-11-02T21:00:00-05:00")
+    for version, (day, run, at) in enumerate(_RUNS, 1):
+        _write_strivings(model, version)
+        _write_activities(model, version)
+        for meta in by_day[day]:
+            _write_action(model, meta, version)
+        if version == 2:  # act-0006 is merged into act-0001: its action moves there
+            for meta in by_day[_RUNS[0][0]]:
+                _write_action(model, meta, version)
+            (model / "activities" / "act-0006.md").unlink()
+        commit(model, f"modeler run {run}: {len(by_day[day])} actions", at)
     _write_broken(model)
-    (model / ".next-ids").write_text(json.dumps({"activity": 6, "striving": 2}) + "\n", encoding="utf-8")
-    _git(model, "add", "-A")
-    _git(model, "-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", "commit", "-q", "-m", "model: fixture")
+    commit(model, "owner: a half-written activity", "2026-11-05T09:00:00-05:00")
 
     waiting: list[str] = []
     for day, at, minutes, texts in _WAITING:
@@ -189,9 +200,25 @@ def build(root: Path) -> Fixture:
                    waiting=waiting)
 
 
-def _write_strivings(model: Path) -> None:
+# The modeler's sessions: (the day whose actions it added, run id, commit time). As in `_write_state`.
+_RUNS = [("2026-11-02", "2026-11-03T04-00-00Z", "2026-11-02T23:09:12-05:00"),
+         ("2026-11-03", "2026-11-04T03-00-00Z", "2026-11-03T22:06:40-05:00"),
+         ("2026-11-04", "2026-11-05T03-46-00Z", "2026-11-04T22:52:02-05:00")]
+_FINAL = len(_RUNS)
+
+
+def _write_action(model: Path, meta: ActionMeta, version: int) -> None:
+    # In the first session, the reading of the Rust book was its own activity (act-0006).
+    if version == 1 and meta.summary.startswith("Read the Rust book"):
+        meta = meta.model_copy(update={"part_of": ["act-0006"]})
+    write_file(model / "actions" / f"{meta.id}.md", meta,
+               f"{meta.summary}. These operations follow one another within a few minutes and serve one "
+               f"purpose, so they make one action.")
+
+
+def _write_strivings(model: Path, version: int = _FINAL) -> None:
     write_file(model / "strivings" / "str-0001.md", StrivingMeta(
-        id="str-0001", title="Become a capable systems programmer", confidence=7,
+        id="str-0001", title="Become a capable systems programmer", confidence=7 if version == _FINAL else 5,
         needs=["competence", "growth", "understanding"], orientation="approach",
         aspiration_vs_obligation="ideal", autonomy="autonomous",
         relations=Relations(conflicts_with=["str-0002"])),
@@ -201,8 +228,10 @@ def _write_strivings(model: Path) -> None:
         "and no one else is named.\n\n"
         "The **identity link** is plain in the journal (act-0002): what was learned is written down "
         "in the owner's own words. It competes with str-0002 for the late evening.")
+    if version == 1:
+        return
     write_file(model / "strivings" / "str-0002.md", StrivingMeta(
-        id="str-0002", title="Keep a steady, healthy daily rhythm", confidence=5,
+        id="str-0002", title="Keep a steady, healthy daily rhythm", confidence=5 if version == _FINAL else 4,
         needs=["safety_security", "order_predictability", "nurturance"], orientation="mixed",
         aspiration_vs_obligation="mixed", autonomy="mixed"),
         "Meals are planned at lunch on most days (act-0003), and a journal is kept. Against it, "
@@ -211,12 +240,23 @@ def _write_strivings(model: Path) -> None:
         "Confidence is moderate: three days are little to go on.")
 
 
-def _write_activities(model: Path) -> None:
+def _write_activities(model: Path, version: int = _FINAL) -> None:
+    # Each as it is at the end; earlier sessions had some of them otherwise (`earlier`, by version).
+    earlier: dict[tuple[int, str], dict[str, object]] = {
+        (1, "act-0001"): {"title": "Building a key-value store", "confidence": 6, "status": "tentative"},
+        (2, "act-0001"): {"confidence": 7},
+        (1, "act-0002"): {"part_of": ["str-0001"], "confidence": 4},
+        (2, "act-0002"): {"part_of": ["str-0001"], "confidence": 4},
+        (1, "act-0003"): {"part_of": [], "confidence": 5, "status": "tentative"},
+        (1, "act-0004"): {"hinders": []},
+    }
+
     def activity(id: str, title: str, part_of: list[str], hinders: list[str], confidence: int, status: str,
                  first: str, last: str, body: str) -> None:
-        write_file(model / "activities" / f"{id}.md", ActivityMeta.model_validate(dict(
-            id=id, title=title, part_of=part_of, hinders=hinders, confidence=confidence, status=status,
-            first_seen=_local(*first.split()), last_seen=_local(*last.split()))), body)
+        fields: dict[str, object] = dict(id=id, title=title, part_of=part_of, hinders=hinders, confidence=confidence, status=status,
+                      first_seen=_local(*first.split()), last_seen=_local(*last.split()))
+        fields.update(earlier.get((version, id), {}))
+        write_file(model / "activities" / f"{id}.md", ActivityMeta.model_validate(fields), body)
 
     activity("act-0001", "Building a toy key-value store in Rust", ["str-0001"], [], 8, "established",
              "2026-11-02 09:04", "2026-11-04 09:47",
@@ -243,12 +283,17 @@ def _write_activities(model: Path) -> None:
              "2026-11-02 22:15", "2026-11-04 22:32",
              "A few minutes with the photo folders at the end of an evening: discarding, backing up, "
              "making an album. Too little to say what it is for.")
+    if version == 1:
+        activity("act-0006", "Reading the Rust book", ["str-0001"], [], 4, "tentative",
+                 "2026-11-02 09:18", "2026-11-02 09:27",
+                 "Reading a chapter of the Rust book in the browser (2026-11-02/14-18-00). Perhaps part of "
+                 "act-0001.")
 
 
 def _write_broken(model: Path) -> None:
     # A malformed file: the API must skip it and list it in `problems`.
-    (model / "activities" / "act-0006.md").write_text(
-        "---\nid: act-0006\ntitle: Half-written\nconfidence: eleven\n---\n\nBroken on purpose.\n", encoding="utf-8")
+    (model / "activities" / "act-0007.md").write_text(
+        "---\nid: act-0007\ntitle: Half-written\nconfidence: eleven\n---\n\nBroken on purpose.\n", encoding="utf-8")
 
 
 def _write_evidence(model: Path, captures: Path, image: bytes, name: str, ops: list[Operation],
@@ -271,7 +316,8 @@ def _write_evidence(model: Path, captures: Path, image: bytes, name: str, ops: l
     (folder / "interaction.json").write_text("{}\n", encoding="utf-8")
 
 
-def _write_state(state: Path) -> None:
+def _write_state(state: Path, sessions: list[dict[str, object]] | None = None) -> None:
+    # The scheduler's status and its session records (those given, else the three of `_RUNS`).
     (state / "status.json").write_text(json.dumps({"state": "idle", "since": "2026-11-04T23:20:00-05:00"}) + "\n")
     sessions = [
         {"run": "2026-11-03T04-00-00Z", "started": "2026-11-03T04:00:00Z", "ended": "2026-11-03T04:09:12Z",
@@ -282,11 +328,11 @@ def _write_state(state: Path) -> None:
          "trigger": "sitting", "operations": {"count": 25}, "outcome": "committed",
          "changes": {"actions": 11, "activities_created": 0, "activities_revised": 3, "activities_merged": 0,
                      "strivings_created": 0, "strivings_revised": 1}, "cost": 1.18},
-        {"run": "2026-11-05T04-20-00Z", "started": "2026-11-05T04:20:00Z", "ended": "2026-11-05T04:26:02Z",
+        {"run": "2026-11-05T03-46-00Z", "started": "2026-11-05T03:46:00Z", "ended": "2026-11-05T03:52:02Z",
          "trigger": "sitting", "operations": {"count": 19}, "outcome": "committed",
          "changes": {"actions": 8, "activities_created": 0, "activities_revised": 4, "activities_merged": 0,
                      "strivings_created": 0, "strivings_revised": 2}, "cost": 0.97},
-    ]
+    ] if sessions is None else sessions
     text = "".join(json.dumps(s) + "\n" for s in sessions) + '{"run": "torn'
     (state / "sessions.jsonl").write_text(text, encoding="utf-8")
 
@@ -307,6 +353,15 @@ def _scene(activity: str | None, summary: str) -> str:
 
 def _git(model: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(model), *args], check=True)
+
+
+def commit(model: Path, message: str, at: str) -> None:
+    """Commit everything in `model` at the time `at` (ISO, with its offset), as the fixture."""
+    environment = {**os.environ, "GIT_AUTHOR_DATE": at, "GIT_COMMITTER_DATE": at}
+    _git(model, "add", "-A")
+    subprocess.run(["git", "-C", str(model), "-c", "user.name=Fixture", "-c", "user.email=fixture@localhost",
+                    "commit", "-q", "-m", message], check=True, env=environment)
+
 
 
 # -- placeholder screenshots: flat shapes that suggest a kind of screen -------------------------
