@@ -104,6 +104,10 @@ Times are the defaults; every number is a setting.
   without change, or on lock or display sleep. It holds only passive shots.
 - **R8 · Stop.** While paused, locked or with the display asleep, nothing is captured and no checks
   run; an open interaction ends.
+- **R9 · Size budget.** When an open interaction's shots reach 40 MiB (or 900 shots), it ends and a
+  new interaction of the same kind starts at once with a shot of every screen (active: as R1;
+  passive: a passive start). Every interaction then stays under the server's 50 MiB upload limit
+  (and its 1000-file limit). A 413 that still happens shows as a warning in Status.
 
 ## 7. Tray icon and window
 
