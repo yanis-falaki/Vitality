@@ -71,6 +71,7 @@ class Status(TypedDict):
     disk_warning: bool         # above disk_warning_gb
     activity: Literal["available", "unavailable"]  # can input be read?
     capture: Literal["available", "unavailable"]   # is the screen stream up?
+    screens: int               # monitors being captured (0 while capture is unavailable)
     paths: StatusPaths
     upload: UploadStatus
 
@@ -79,7 +80,7 @@ class CaptureReply(TypedDict):
     """The reply to `capture`."""
 
     ok: Literal[True]
-    path: str  # absolute path of the saved screenshot
+    path: str  # absolute path of the saved screenshot (the focused screen's, else the first)
 
 
 class ErrorReply(TypedDict):

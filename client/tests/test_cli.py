@@ -10,7 +10,7 @@ from vitality_client.shared.channel import Reply, Request, Status
 STATUS: Status = {
     "ok": True, "state": "idle", "paused_until": None, "captures_today": 412,
     "last_capture": "2026-10-21T14:02:05.312Z", "disk_bytes": 3_100_000_000, "disk_warning": False,
-    "activity": "available", "capture": "available",
+    "activity": "available", "capture": "available", "screens": 1,
     "paths": {"config": "/c", "data": "/d", "state": "/s"},
     "upload": {"state": "disabled", "pending": 0, "last_upload": None},
 }
@@ -43,7 +43,8 @@ def test_format_status_idle():
     lines = format_status(STATUS).splitlines()
     assert lines[0].startswith("capturing · 412 captures today · last ")
     assert lines[0].endswith(" · 3.1 GB")
-    assert "activity: available" in lines and "capture: available" in lines
+    assert "activity: available" in lines and "capture: available · 1 screen" in lines
+    assert "capture: available · 2 screens" in format_status(status(screens=2))
     assert not any("warning" in line for line in lines)
     assert any("/c" in line for line in lines) and any("/d" in line for line in lines)
 
@@ -68,7 +69,7 @@ def test_format_status_upload_line():
     line = next(line for line in lines if line.startswith("upload:"))
     assert line.startswith("upload: offline · 12 pending · last ")
     assert not line.endswith("never")
-    assert lines.index(line) == lines.index("capture: available") + 1
+    assert lines.index(line) == lines.index("capture: available · 1 screen") + 1
 
 
 def test_format_status_upload_never_uploaded():
@@ -225,3 +226,12 @@ def test_capture_when_daemon_not_running(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     assert main(["capture"]) == 1
     assert "vitality-client daemon is not running" in capsys.readouterr().err
+
+
+def test_screens_line_live_and_saved():
+    from vitality_client.cli.doctor import screens_line
+    from vitality_client.shared.state import State
+
+    assert screens_line(status(screens=2), State(), 2) == "screens: 2 captured (screens = 2 in client.toml)"
+    assert screens_line(None, State(restore_tokens=["a", None, "c"]), 2) == (
+        "screens: screens = 2 in client.toml; 1 of 2 screen-sharing permission(s) saved")

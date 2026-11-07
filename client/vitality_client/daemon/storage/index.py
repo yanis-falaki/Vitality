@@ -36,11 +36,16 @@ CREATE TABLE IF NOT EXISTS shots (
     width       INTEGER NOT NULL,
     height      INTEGER NOT NULL,
     bytes       INTEGER NOT NULL,
+    screen      TEXT,
+    focused     INTEGER,
     PRIMARY KEY (interaction, file)
 );
 CREATE INDEX IF NOT EXISTS idx_shots_ts ON shots(ts);
 CREATE INDEX IF NOT EXISTS idx_interactions_uploaded_at ON interactions(uploaded_at);
 """
+
+# Columns added since the first release, added to an older index when it is opened.
+_ADDED_SHOT_COLUMNS = {"screen": "TEXT", "focused": "INTEGER"}
 
 _PENDING = "end IS NOT NULL AND uploaded_at IS NULL AND upload_error IS NULL"
 
@@ -55,6 +60,11 @@ class Store(CaptureIndex):
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        have = {r[1] for r in self._conn.execute("PRAGMA table_info(shots)")}
+        with self._conn:
+            for column, kind in _ADDED_SHOT_COLUMNS.items():
+                if column not in have:
+                    self._conn.execute(f"ALTER TABLE shots ADD COLUMN {column} {kind}")
 
     def insert_shot(self, shot: ShotRow, new_interaction: InteractionRow | None = None) -> None:
         with self._lock, self._conn:  # one transaction: commits on success, rolls back on error
@@ -66,10 +76,10 @@ class Store(CaptureIndex):
                     (i.name, i.source, i.start, i.local_start, i.tz),
                 )
             self._conn.execute(
-                "INSERT INTO shots (interaction, file, ts, trigger, width, height, bytes) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO shots (interaction, file, ts, trigger, width, height, bytes, "
+                "screen, focused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (shot.interaction, shot.file, shot.ts, shot.trigger,
-                 shot.width, shot.height, shot.bytes),
+                 shot.width, shot.height, shot.bytes, shot.screen, shot.focused),
             )
 
     def has_interaction(self, name: str) -> bool:
@@ -107,14 +117,15 @@ class Store(CaptureIndex):
             if head is None:
                 raise KeyError(name)
             shots = self._conn.execute(
-                "SELECT file, ts, trigger, width, height, bytes FROM shots "
+                "SELECT file, ts, trigger, width, height, bytes, screen, focused FROM shots "
                 "WHERE interaction = ? ORDER BY ts, rowid", (name,),
             ).fetchall()
         source, start, end, local_start, tz = head
         return Interaction(
             name=name, source=source, start=start, end=end, local_start=local_start, tz=tz,
-            shots=[Shot(file=f, ts=t, trigger=tr, width=w, height=h, bytes=b)
-                   for f, t, tr, w, h, b in shots],
+            shots=[Shot(file=f, ts=t, trigger=tr, width=w, height=h, bytes=b, screen=sc,
+                        focused=None if fo is None else bool(fo))
+                   for f, t, tr, w, h, b, sc, fo in shots],
         )
 
     def shot_paths(self) -> set[str]:

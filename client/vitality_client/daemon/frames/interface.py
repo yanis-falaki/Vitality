@@ -1,27 +1,47 @@
-"""The contract for getting whole-desktop images."""
+"""The contract for getting the newest image of each monitor."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol
 
 from PIL import Image
 
 
+@dataclass(frozen=True)
+class ScreenFrame:
+    """The newest image of one monitor. Position and size are logical (compositor) pixels;
+    the image is in the monitor's own physical pixels."""
+
+    name: str | None  # "left", "right", ... (see screens.py); None when there is one screen
+    image: Image.Image
+    position: tuple[int, int]
+    size: tuple[int, int]  # the image's size when the portal did not report one
+
+
 class FrameSource(Protocol):
-    """Keeps the newest image of the whole desktop available."""
+    """Keeps the newest image of every captured monitor available."""
 
     available: bool
     """False while no frames can be produced (not started, permission denied, stream lost)."""
 
-    async def start(self, on_restore_token: Callable[[str], None]) -> None:
-        """Begin producing frames. May wait for the user to approve screen sharing.
+    @property
+    def screens(self) -> int:
+        """How many monitors are being captured (0 while unavailable)."""
+        ...
 
-        When the system grants a screen-sharing permission token, `on_restore_token(token)`
-        is called so it can be saved and passed back on the next start (no dialog then).
+    async def start(self, on_restore_token: Callable[[int, str], None]) -> None:
+        """Begin producing frames. May wait for the user to approve screen sharing, once
+        per screen-sharing session.
+
+        When the system grants a screen-sharing permission token for session `i`,
+        `on_restore_token(i, token)` is called so it can be saved and passed back on the
+        next start (no dialog then).
         """
         ...
 
-    def latest_frame(self) -> Image.Image | None:
-        """The newest whole-desktop image, or None if none has arrived yet."""
+    def latest_frames(self) -> list[ScreenFrame] | None:
+        """The newest image of each monitor, named and ordered left to right, or None until
+        every monitor has delivered one."""
         ...
 
     async def close(self) -> None:

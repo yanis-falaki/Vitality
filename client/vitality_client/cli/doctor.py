@@ -1,4 +1,5 @@
-"""`vitality-client doctor`: check the setup and show whether capture is paused."""
+"""`vitality-client doctor`: check the setup, show whether capture is paused and how many
+screens are captured."""
 
 import asyncio
 from collections.abc import Mapping
@@ -6,6 +7,7 @@ from datetime import datetime
 
 from vitality_client.cli.common import local_time, path_lines, paths_from
 from vitality_client.shared.channel import DaemonNotRunning, Status, send_command
+from vitality_client.shared.config import load_config
 from vitality_client.shared.state import State, StateFile
 
 
@@ -22,9 +24,19 @@ def capture_state_line(status: Status | None, saved: State) -> str:
     return "daemon: not running; saved state: " + _pause_text(saved.paused, when)
 
 
+def screens_line(status: Status | None, saved: State, configured: int) -> str:
+    """One line on the screens: how many the running daemon captures, else how many of the
+    `configured` screen-sharing sessions have a saved permission (no dialog at start)."""
+    setting = f"screens = {configured} in client.toml"
+    if status is not None and "screens" in status:
+        return f"screens: {status['screens']} captured ({setting})"
+    kept = sum(1 for token in saved.restore_tokens[:configured] if token)
+    return f"screens: {setting}; {kept} of {configured} screen-sharing permission(s) saved"
+
+
 def doctor(env: Mapping[str, str]) -> int:
     """Print one line per setup check (`✓ name`, or `✗ name — what to do`), then whether
-    capture is paused and where the config, data and state live.
+    capture is paused, the screens line and where the config, data and state live.
 
     Works with the daemon stopped (it then reads the saved pause state). Returns 0 if every
     check passed, else 1. Raises RuntimeError if XDG_RUNTIME_DIR is not set.
@@ -40,7 +52,12 @@ def doctor(env: Mapping[str, str]) -> int:
     except DaemonNotRunning:
         reply = None
     status = reply if reply is not None and reply["ok"] and "state" in reply else None
-    print(capture_state_line(status, StateFile(paths.state_file).load()))
+    saved = StateFile(paths.state_file).load()
+    print(capture_state_line(status, saved))
+    try:
+        print(screens_line(status, saved, load_config(paths.config_file).screens))
+    except (ValueError, OSError):
+        pass  # the config check above already reports it
     print("\n".join(path_lines({
         "config": str(paths.config_file), "data": str(paths.data_dir),
         "state": str(paths.state_file),

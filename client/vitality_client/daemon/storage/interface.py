@@ -25,6 +25,8 @@ class ShotRow:
     width: int
     height: int
     bytes: int
+    screen: str | None = None    # "left", "right", ...; None when one screen is captured
+    focused: bool | None = None  # had the keyboard focus; None when unknown
 
     @property
     def path(self) -> str:
@@ -107,8 +109,12 @@ class CaptureWriter(Protocol):
     """Saves screenshots to disk, groups them into interactions and indexes them."""
 
     def write(self, image: Image.Image, start: float, ts: float,
-              trigger: Literal["activity", "manual"]) -> ShotRow:
+              trigger: Literal["activity", "manual"],
+              screen: str | None = None, focused: bool | None = None) -> ShotRow:
         """Save one screenshot crash-safely (file first, then index row); return its row.
+
+        `screen` and `focused` say which monitor it shows (see `ShotRow`); several screens
+        saved in the same second get the usual `-<n>` file name suffix.
 
         `start` (epoch seconds) identifies the interaction the shot belongs to; the first
         shot for a `start` opens the interaction, and records the system's time zone at

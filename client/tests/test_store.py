@@ -83,3 +83,17 @@ def test_last_uploaded_at(tmp_path):
     assert s.last_uploaded_at() is None
     s.mark_uploaded(late.name, "2025-10-25T18:01:00.000Z"); s.mark_uploaded(I.name, "2025-10-25T18:02:00.000Z")
     assert s.last_uploaded_at() == "2025-10-25T18:02:00.000Z"
+
+
+def test_an_older_index_gains_the_screen_columns(tmp_path):
+    import sqlite3
+    db = tmp_path / "index.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE shots (interaction TEXT NOT NULL, file TEXT NOT NULL, "
+                 "ts TEXT NOT NULL, trigger TEXT NOT NULL, width INTEGER NOT NULL, "
+                 "height INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY (interaction, file))")
+    conn.commit(); conn.close()
+    Store(db).close(); Store(db).close()                       # opening twice is fine
+    conn = sqlite3.connect(db)
+    assert {r[1] for r in conn.execute("PRAGMA table_info(shots)")} >= {"screen", "focused"}
+    conn.close()

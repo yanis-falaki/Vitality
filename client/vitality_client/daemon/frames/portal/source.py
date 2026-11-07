@@ -1,14 +1,17 @@
 """Implements `FrameSource` (see interface.py).
 
-PortalFrameSource: whole-desktop frames from the screen-capture portal, kept alive.
+PortalFrameSource: frames of every monitor from the screen-capture portal, kept alive.
 `PortalFrameSource` has no public methods beyond the Protocol's. The module's other public
 functions are the retry rules, `backoff_delay(failures)` and `should_retry(exc)`.
 
-Combines a `ScreenCastSession` (permission and PipeWire streams, over D-Bus) with
-`FrameStreams` (GStreamer pipelines holding the newest frame).
+Combines `sessions` `ScreenCastSession`s (permission and PipeWire streams, over D-Bus),
+opened one after the other, with `FrameStreams` (GStreamer pipelines holding the newest
+frame). Some portals (Hyprland's) share one monitor per session, others (GNOME, KDE) can
+share several in one: every stream of every session is one of the machine's screens.
+Each session has its own restore token.
 
-If the session cannot be opened, or later breaks, it is torn down and reopened with
-backoff (2, 4, 8 ... 60 s). If the user cancels the permission dialog, it stops
+If a session cannot be opened, or one later breaks, all are torn down and reopened with
+backoff (2, 4, 8 ... 60 s). If the user cancels a permission dialog, it stops
 retrying. A restore token the portal rejects is retried once without it.
 
 Never logged: image contents and the restore token value.
@@ -17,11 +20,9 @@ Never logged: image contents and the restore token value.
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
-from PIL import Image
-
-from vitality_client.daemon.frames.interface import FrameSource
+from vitality_client.daemon.frames.interface import FrameSource, ScreenFrame
 from vitality_client.daemon.frames.portal.session import (
     RESPONSE_CANCELLED,
     PortalError,
@@ -51,24 +52,32 @@ def should_retry(exc: Exception) -> bool:
 class PortalFrameSource(FrameSource):
     def __init__(
         self,
-        restore_token: str | None,
+        restore_tokens: Sequence[str | None],
+        sessions: int = 1,
         max_fps: int = 5,
         session_factory: Callable[[], PortalSession] = ScreenCastSession,
+        streams: Callable[[int], FrameStreams] = GstFrameStreams,
     ) -> None:
-        self._restore_token = restore_token
-        self._on_restore_token: Callable[[str], None] = lambda token: None  # set by start()
+        """`restore_tokens[i]` is session i's saved token (missing ones count as None)."""
+        self._restore_tokens = [*restore_tokens[:sessions],
+                                *[None] * (sessions - len(restore_tokens))]
+        self._on_restore_token: Callable[[int, str], None] = lambda i, token: None  # by start()
         self._session_factory = session_factory
         self.available = False
 
         self._task: asyncio.Task | None = None
         self._first_attempt = asyncio.Event()
-        self._session: PortalSession | None = None
-        self._streams: FrameStreams = GstFrameStreams(max_fps)
+        self._sessions: list[PortalSession] = []
+        self._streams: FrameStreams = streams(max_fps)
 
     # -- FrameSource -------------------------------------------------------------------
 
-    async def start(self, on_restore_token: Callable[[str], None]) -> None:
-        """Run the first session attempt (which may wait on the user's portal dialog).
+    @property
+    def screens(self) -> int:
+        return len(self._streams) if self.available else 0
+
+    async def start(self, on_restore_token: Callable[[int, str], None]) -> None:
+        """Run the first attempt to open every session (each may wait on a portal dialog).
 
         Returns once that attempt has succeeded or failed; failures and later stream
         errors are retried with backoff in the background until close(), except a
@@ -84,8 +93,8 @@ class PortalFrameSource(FrameSource):
             await self.close()
             raise
 
-    def latest_frame(self) -> Image.Image | None:
-        return self._streams.latest_frame()
+    def latest_frames(self) -> list[ScreenFrame] | None:
+        return self._streams.latest_frames()
 
     async def close(self) -> None:
         task, self._task = self._task, None
@@ -122,7 +131,8 @@ class PortalFrameSource(FrameSource):
                 self.available = True
                 self._first_attempt.set()
                 started = time.monotonic()
-                log.info("screen capture started (%d stream(s))", len(self._streams))
+                log.info("screen capture started (%d screen(s) from %d session(s))",
+                         len(self._streams), len(self._sessions))
                 reason = await self._watch()
                 log.warning("screen capture stopped: %s", reason)
                 self.available = False
@@ -137,37 +147,45 @@ class PortalFrameSource(FrameSource):
             await self._teardown()
 
     async def _open(self) -> None:
-        token = self._restore_token
+        """Open the sessions one after the other (so their dialogs never overlap)."""
+        for index in range(len(self._restore_tokens)):
+            streams = await self._open_one(index)
+            fd = self._sessions[-1].fd
+            if fd is None:
+                raise PortalError("portal session has no PipeWire connection")
+            self._streams.start(fd, streams)
+
+    async def _open_one(self, index: int) -> list[Stream]:
+        token = self._restore_tokens[index]
         try:
-            streams = await self._open_session(token)
+            return await self._open_session(index, token)
         except PortalResponseError as exc:
             if token is None or exc.response == RESPONSE_CANCELLED:
                 raise
-            log.info("portal rejected the saved restore token; asking again without it")
-            self._restore_token = None
-            await self._teardown()
-            streams = await self._open_session(None)
-        fd = self._session.fd if self._session else None
-        if fd is None:
-            raise PortalError("portal session has no PipeWire connection")
-        self._streams.start(fd, streams)
+            log.info("portal rejected the saved restore token of session %d; "
+                     "asking again without it", index + 1)
+            self._restore_tokens[index] = None
+            await self._sessions.pop().close()
+            return await self._open_session(index, None)
 
-    async def _open_session(self, token: str | None) -> list[Stream]:
-        self._session = self._session_factory()
-        return await self._session.open(token, self._save_restore_token)
+    async def _open_session(self, index: int, token: str | None) -> list[Stream]:
+        session = self._session_factory()
+        self._sessions.append(session)
+        return await session.open(token, lambda new: self._save_restore_token(index, new))
 
-    def _save_restore_token(self, token: str) -> None:
-        self._restore_token = token
+    def _save_restore_token(self, index: int, token: str) -> None:
+        self._restore_tokens[index] = token
         try:
-            self._on_restore_token(token)
+            self._on_restore_token(index, token)
         except Exception as exc:
             log.warning("could not save the portal restore token: %s", _describe(exc))
 
     async def _watch(self) -> str:
-        """Wait until a pipeline fails or the portal session goes away; return why."""
+        """Wait until a pipeline fails or a portal session goes away; return why."""
         while True:
-            reason = self._streams.failure() or (
-                self._session.lost() if self._session else "portal session missing")
+            reason = self._streams.failure() or next(
+                (lost for lost in (s.lost() for s in self._sessions) if lost), None,
+            ) or (None if self._sessions else "portal session missing")
             if reason:
                 return reason
             await asyncio.sleep(_WATCH_INTERVAL)
@@ -175,8 +193,8 @@ class PortalFrameSource(FrameSource):
     async def _teardown(self) -> None:
         self.available = False
         self._streams.stop()
-        session, self._session = self._session, None
-        if session is not None:
+        sessions, self._sessions = self._sessions, []
+        for session in sessions:
             await session.close()
 
 

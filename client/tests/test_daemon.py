@@ -16,6 +16,7 @@ from vitality_client.shared.config import Config, Paths
 from vitality_client.shared.channel import UploadStatus, send_command
 from vitality_client.shared.state import StateFile
 from vitality_client.daemon.daemon import CaptureDaemon
+from vitality_client.daemon.frames import ScreenFrame
 from vitality_client.daemon.storage import Store
 from vitality_client.daemon.storage import Writer
 from vitality_client.daemon.upload import HttpUploader
@@ -25,15 +26,21 @@ img = Image.new("RGB", (64, 40), "white")
 
 class FakeFrames:
     def __init__(self, frame):
-        self.frame = frame
+        self.frame = frame  # one screen's image, a list of ScreenFrames, or None
         self.available = True
         self.closed = False
+
+    @property
+    def screens(self):
+        return len(self.latest_frames() or [])
 
     async def start(self, on_restore_token):
         pass
 
-    def latest_frame(self):
-        return self.frame
+    def latest_frames(self):
+        if self.frame is None or isinstance(self.frame, list):
+            return self.frame
+        return [ScreenFrame(None, self.frame, (0, 0), self.frame.size)]
 
     async def close(self):
         self.closed = True
@@ -120,7 +127,7 @@ async def test_no_frame_drops_snapshot(daemon_env, caplog):                  # R
 
 async def test_frame_source_error_drops_snapshot(daemon_env, caplog):
     d, clock, data = daemon_env()
-    with patch.object(FakeFrames, "latest_frame", side_effect=ValueError("bad stride")):
+    with patch.object(FakeFrames, "latest_frames", side_effect=ValueError("bad stride")):
         d.handle_activity(100.0)  # must not raise into the activity watcher
     await d.drain()
     assert "bad stride" in caplog.text and sqlite_rows(data / "index.sqlite") == []
@@ -166,7 +173,7 @@ async def test_writes_are_serialized_in_request_order(daemon_env):
     order = []
     real_write, real_end = Writer.write, Writer.end
 
-    def slow_write(self, image, start, ts, trigger):
+    def slow_write(self, image, start, ts, trigger, screen=None, focused=None):
         nonlocal active, peak
         active += 1; peak = max(peak, active)
         time.sleep(0.02)
@@ -211,11 +218,11 @@ async def test_timed_pause_expiry_is_persisted(daemon_env):
 
 async def test_resume_persists_and_keeps_restore_token(daemon_env, tmp_path):
     d, clock, data = daemon_env()
-    d.save_restore_token("tok")
+    d.save_restore_token(1, "tok2"); d.save_restore_token(0, "tok1")
     await d.handle({"cmd": "pause", "seconds": None})
     assert (await d.handle({"cmd": "resume"}))["state"] == "idle"
     state = StateFile(tmp_path / "state/state.json").load()
-    assert (state.paused, state.restore_token) == (False, "tok")
+    assert (state.paused, state.restore_tokens) == (False, ["tok1", "tok2"])
 
 
 @pytest.mark.parametrize("request_,error", [
@@ -451,7 +458,7 @@ async def test_interaction_end_wakes_uploader(daemon_env):
 async def test_end_without_shots_does_not_wake_uploader(daemon_env):
     uploader = FakeUploader()
     d, clock, _ = daemon_env(uploader=lambda index: uploader)
-    with patch.object(FakeFrames, "latest_frame", return_value=None):
+    with patch.object(FakeFrames, "latest_frames", return_value=None):
         d.handle_activity(100.0); clock.t = 102.0; await d.tick_once()
     assert uploader.woken == []
 
@@ -571,3 +578,60 @@ async def test_failing_close_interrupted_is_logged_and_the_daemon_starts(daemon_
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+def two_screens(left="white", right="white"):
+    return [ScreenFrame("left", Image.new("RGB", (64, 36), left), (0, 0), (64, 36)),
+            ScreenFrame("right", Image.new("RGB", (64, 36), right), (64, 0), (64, 36))]
+
+
+class FixedFocus:
+    def __init__(self, name):
+        self.name = name
+
+    def focused_screen(self, screens):
+        return self.name
+
+
+def saved_shots(data):
+    folder = next((data / "captures").glob("*/*"))
+    shots = json.loads((folder / "interaction.json").read_text())["shots"]
+    return [(s["file"], s.get("screen"), s.get("focused")) for s in shots]
+
+
+async def test_two_screens_first_shot_both_then_only_changed(daemon_env):
+    d, clock, data = daemon_env(frame=two_screens())
+    d.handle_activity(100.0)                                     # both screens
+    clock.t = 110.0; d._frames.frame = two_screens(right="black")
+    d.handle_activity(110.0)                                     # max gap: only right changed
+    clock.t = 111.0; await d.tick_once()                         # nothing changed: no shot
+    clock.t = 112.0; await d.tick_once()                         # settle: nothing changed
+    assert saved_shots(data) == [("0000.webp", "left", None), ("0000-2.webp", "right", None),
+                                 ("0010.webp", "right", None)]
+
+
+async def test_two_screens_focused_one_always_and_marked(daemon_env):
+    d, clock, data = daemon_env(frame=two_screens())
+    d._focus = FixedFocus("left")
+    d.handle_activity(100.0)
+    clock.t = 102.0; await d.tick_once()                         # settle: the focused one
+    assert saved_shots(data) == [("0000.webp", "left", True), ("0000-2.webp", "right", False),
+                                 ("0002.webp", "left", True)]
+    assert d.status()["screens"] == 2
+
+
+async def test_two_screens_manual_capture_saves_both_and_returns_focused(daemon_env):
+    d, clock, data = daemon_env(frame=two_screens())
+    d._focus = FixedFocus("right")
+    reply = await d.handle({"cmd": "capture"})
+    assert reply["ok"] and reply["path"].endswith("0000-2.webp")
+    await d.drain()
+    assert saved_shots(data) == [("0000.webp", "left", False), ("0000-2.webp", "right", True)]
+
+
+async def test_one_screen_interaction_json_is_unchanged(daemon_env):
+    d, clock, data = daemon_env()
+    d.handle_activity(100.0); clock.t = 102.0; await d.tick_once()
+    folder = next((data / "captures").glob("*/*"))
+    assert '"screen":' not in (folder / "interaction.json").read_text()
+    assert saved_shots(data) == [("0000.webp", None, None), ("0002.webp", None, None)]

@@ -34,7 +34,7 @@ def format_status(status: Status) -> str:
         f"last {'never' if last is None else local_time(last)} · "
         f"{format_bytes(status['disk_bytes'])}",
         f"activity: {status['activity']}",
-        f"capture: {status['capture']}",
+        f"capture: {status['capture']}" + _screens_text(status.get("screens")),
         _upload_line(status["upload"]),
     ]
     if status["disk_warning"]:
@@ -42,6 +42,13 @@ def format_status(status: Status) -> str:
                      "captures are never deleted automatically")
     lines += path_lines(status["paths"])
     return "\n".join(lines)
+
+
+def _screens_text(screens: int | None) -> str:
+    # An older daemon does not report screens.
+    if screens is None:
+        return ""
+    return f" · {screens} screen{'' if screens == 1 else 's'}"
 
 
 def ask(env: Mapping[str, str], request: Request) -> Reply | None:

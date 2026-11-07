@@ -3,7 +3,7 @@ from collections.abc import Callable
 
 from PIL import Image
 
-from vitality_client.daemon.frames import composite, layout_frames
+from vitality_client.daemon.frames import named_frames, screen_names
 from vitality_client.daemon.frames.portal.session import (
     PortalError,
     PortalResponseError,
@@ -19,21 +19,24 @@ from vitality_client.daemon.frames.portal.stream import (
 )
 
 
-def test_composite_single_frame_unchanged():
-    a = Image.new("RGB", (10, 5), "red"); assert composite([(a, (0, 0))]) is a
+def test_screen_names_by_position():
+    assert screen_names([(0, 0)]) == [None]                                  # as before
+    assert screen_names([(1920, 0), (0, 0)]) == ["right", "left"]
+    assert screen_names([(0, 0), (-1280, 200), (1920, 0)]) == ["middle", "left", "right"]
+    assert screen_names([(3, 0), (0, 0), (2, 0), (1, 0)]) == [
+        "screen-4", "screen-1", "screen-3", "screen-2"]
 
 
-def test_composite_side_by_side():
-    a = Image.new("RGB", (10, 5), "red"); b = Image.new("RGB", (4, 8), "blue")
-    out = composite([(a, (0, 0)), (b, (10, 0))])
-    assert out.size == (14, 8) and out.getpixel((0, 0)) == (255, 0, 0) and out.getpixel((12, 7)) == (0, 0, 255)
-    assert out.getpixel((5, 7)) == (0, 0, 0)
+def test_screen_names_equal_positions_keep_session_order():
+    # e.g. a portal that reports no positions: the first session's monitor is "left".
+    assert screen_names([(0, 0), (0, 0)]) == ["left", "right"]
 
 
-def test_composite_negative_positions():
-    a = Image.new("RGB", (10, 5), "red"); b = Image.new("RGB", (10, 5), "blue")
-    out = composite([(a, (-10, 0)), (b, (0, 0))])
-    assert out.size == (20, 5) and out.getpixel((0, 0)) == (255, 0, 0) and out.getpixel((10, 0)) == (0, 0, 255)
+def test_named_frames_ordered_left_to_right_with_logical_size():
+    a = Image.new("RGB", (40, 20)); b = Image.new("RGB", (20, 10))
+    left, right = named_frames([(a, (20, 0), (20, 10)), (b, (0, 0), None)])
+    assert (left.name, left.image, left.size) == ("left", b, (20, 10))     # size from the image
+    assert (right.name, right.image, right.size, right.position) == ("right", a, (20, 10), (20, 0))
 
 
 def test_rgb_image_tight_rows():
@@ -82,43 +85,6 @@ def test_other_failures_keep_retrying():
     assert should_retry(OSError("bus gone")) is True
 
 
-def test_layout_single_monitor_is_noop():
-    a = Image.new("RGB", (20, 10), "red")
-    assert layout_frames([(a, (0, 0), (20, 10))]) == [(a, (0, 0))]
-
-
-def test_layout_hidpi_frame_alone_keeps_physical_pixels():
-    a = Image.new("RGB", (40, 20), "red")        # scale 2: logical 20x10
-    out = layout_frames([(a, (0, 0), (20, 10))])
-    assert out[0][0] is a and out[0][1] == (0, 0)
-
-
-def test_layout_mixed_scales_side_by_side_do_not_overlap():
-    a = Image.new("RGB", (40, 20), "red")        # scale 2, logical 20x10 at (0, 0)
-    b = Image.new("RGB", (20, 10), "blue")       # scale 1, logical 20x10 at (20, 0)
-    laid = layout_frames([(a, (0, 0), (20, 10)), (b, (20, 0), (20, 10))])
-    assert laid[0] == (a, (0, 0))
-    assert laid[1][0].size == (40, 20) and laid[1][1] == (40, 0)
-    out = composite(laid)
-    assert out.size == (80, 20)
-    assert out.getpixel((39, 19)) == (255, 0, 0) and out.getpixel((40, 0)) == (0, 0, 255)
-
-
-def test_layout_fractional_scale_rounds():
-    a = Image.new("RGB", (1920, 1080), "red")    # scale 1.5, logical 1280x720 at (0, 0)
-    b = Image.new("RGB", (1920, 1080), "blue")   # scale 1, logical 1920x1080 at (1280, 0)
-    laid = layout_frames([(a, (0, 0), (1280, 720)), (b, (1280, 0), (1920, 1080))])
-    assert laid[0] == (a, (0, 0))
-    assert laid[1][0].size == (2880, 1620) and laid[1][1] == (1920, 0)
-    assert composite(laid).size == (4800, 1620)
-
-
-def test_layout_odd_logical_size_maps_to_own_frame():
-    a = Image.new("RGB", (2560, 1440), "red")    # scale 1.5 with a rounded logical width
-    laid = layout_frames([(a, (0, 0), (1707, 960)), (Image.new("RGB", (8, 8)), (1707, 0), (8, 8))])
-    assert laid[0][0] is a and laid[1][1] == (2560, 0)
-
-
 def failing_sessions(calls, response_for):
     """A session_factory whose sessions record the token they were opened with, then fail."""
     class FailingSession(PortalSession):
@@ -140,9 +106,9 @@ def failing_sessions(calls, response_for):
 
 async def test_cancel_with_restore_token_stops_without_second_dialog():
     calls = []
-    src = PortalFrameSource("tok",
+    src = PortalFrameSource(["tok"],
                             session_factory=failing_sessions(calls, lambda token: 1))
-    await src.start(lambda token: None)
+    await src.start(lambda i, token: None)
     assert src._task is not None
     await asyncio.wait_for(src._task, 1)         # supervisor ended: no further attempts
     assert calls == ["tok"] and src.available is False
@@ -151,9 +117,9 @@ async def test_cancel_with_restore_token_stops_without_second_dialog():
 
 async def test_rejected_restore_token_retries_once_without_it():
     calls = []
-    src = PortalFrameSource("tok",
+    src = PortalFrameSource(["tok"],
                             session_factory=failing_sessions(calls, lambda token: 2 if token else 1))
-    await src.start(lambda token: None)
+    await src.start(lambda i, token: None)
     assert src._task is not None
     await asyncio.wait_for(src._task, 1)
     assert calls == ["tok", None]
@@ -223,6 +189,73 @@ def test_frames_are_converted_only_when_requested(monkeypatch):
         sink = type("Sink", (), {"emit": lambda self, name, s=sample: s})()
         src._on_sample(sink, 0)
     assert conversions == []
-    frame = src.latest_frame()
-    assert frame is not None and frame.getpixel((0, 0)) == (3, 3, 3)
+    frames = src.latest_frames()
+    assert frames is not None and frames[0].image.getpixel((0, 0)) == (3, 3, 3)
+    assert frames[0].name is None
     assert len(conversions) == 1
+
+
+class RecordingStreams:
+    """FrameStreams that records what it was asked to read (no GStreamer)."""
+
+    def __init__(self, max_fps):
+        self.started = []
+
+    def __len__(self):
+        return sum(len(streams) for _, streams in self.started)
+
+    def start(self, fd, streams):
+        self.started.append((fd, streams))
+
+    def latest_frames(self):
+        return None
+
+    def failure(self):
+        return None
+
+    def stop(self):
+        self.started = []
+
+
+def working_sessions(opened):
+    """A session_factory whose n-th session shares monitor n, issuing token `new-<n>`."""
+    class WorkingSession(PortalSession):
+        def __init__(self):
+            self.fd: int | None = None
+
+        async def open(self, restore_token, on_restore_token):
+            n = len(opened)
+            opened.append(restore_token)
+            on_restore_token(f"new-{n}")
+            self.fd = 100 + n
+            return [Stream(node_id=n, position=(1920 * n, 0), size=(1920, 1080))]
+
+        def lost(self):
+            return None
+
+        async def close(self):
+            pass
+
+    return WorkingSession
+
+
+async def test_one_session_per_screen_each_with_its_own_token():
+    opened, saved = [], []
+    src = PortalFrameSource(["tok-0"], sessions=2, session_factory=working_sessions(opened),
+                            streams=RecordingStreams)
+    await src.start(lambda i, token: saved.append((i, token)))
+    assert opened == ["tok-0", None]                   # session 2 has no token yet: picker
+    assert saved == [(0, "new-0"), (1, "new-1")]
+    assert src.available and src.screens == 2
+    assert [fd for fd, _ in src._streams.started] == [100, 101]   # type: ignore[attr-defined]
+    await src.close()
+    assert src.screens == 0
+
+
+async def test_more_saved_tokens_than_sessions_are_ignored():
+    opened = []
+    src = PortalFrameSource(["a", "b"], sessions=1, session_factory=working_sessions(opened),
+                            streams=RecordingStreams)
+    await src.start(lambda i, token: None)
+    assert opened == ["a"]
+    await src.close()

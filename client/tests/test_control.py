@@ -15,8 +15,21 @@ from vitality_client.shared.state import State, StateFile
 
 def test_state_file_roundtrip_and_defaults(tmp_path):
     f = StateFile(tmp_path / "s/state.json"); assert f.load() == State()
-    f.save(State(True, 123.0, "tok")); assert f.load() == State(True, 123.0, "tok")
+    f.save(State(True, 123.0, ["tok"])); assert f.load() == State(True, 123.0, ["tok"])
     (tmp_path / "s/state.json").write_text("{not json"); assert f.load() == State(paused=True)
+
+
+def test_state_file_reads_the_older_single_token_and_stays_readable_by_older_daemons(tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({"paused": False, "paused_until": None, "restore_token": "old"}))
+    f = StateFile(p)
+    assert f.load() == State(restore_tokens=["old"])                  # session 1's token
+    f.save(State(restore_tokens=["new1", None, "new3"]))
+    saved = json.loads(p.read_text())
+    assert saved["restore_tokens"] == ["new1", None, "new3"] and saved["restore_token"] == "new1"
+    assert f.load().restore_tokens == ["new1", None, "new3"]          # the list wins
+    p.write_text(json.dumps({"paused": False, "restore_token": None}))
+    assert f.load() == State()
 
 
 def test_state_file_ignores_unknown_keys(tmp_path):
@@ -27,6 +40,7 @@ def test_state_file_ignores_unknown_keys(tmp_path):
 
 @pytest.mark.parametrize("content", [
     {"paused": "yes"}, {"paused_until": "soon"}, {"restore_token": 5}, {"paused": 1},
+    {"restore_tokens": "tok"}, {"restore_tokens": [5]},
     [1, 2], "str",
 ])
 def test_state_file_wrong_types_are_corrupt(tmp_path, caplog, content):
@@ -46,7 +60,7 @@ def test_state_file_corrupt_log_has_no_token(tmp_path, caplog):
 
 
 def test_state_file_save_leaves_no_temp_files(tmp_path):
-    f = StateFile(tmp_path / "s/state.json"); f.save(State(restore_token="t"))
+    f = StateFile(tmp_path / "s/state.json"); f.save(State(restore_tokens=["t"]))
     assert [p.name for p in (tmp_path / "s").iterdir()] == ["state.json"]
 
 

@@ -10,6 +10,7 @@ Layout under the data directory (names are UTC; see `vitality_protocol.layout`):
     captures/2026-10-25/17-00-00/     one interaction
       0000.webp                       the screen just before the first input
       0014.webp                       a later shot, named by whole seconds since the start
+      0014-2.webp                     another monitor saved in the same second
       interaction.json                written when the interaction ends; present = complete
     index.sqlite
 

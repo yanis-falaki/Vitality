@@ -29,7 +29,7 @@ def test_old_layout_is_an_error_and_nothing_is_deleted(monkeypatch, tmp_path, ca
         monkeypatch.setenv(var, str(tmp_path / sub))
     monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
     monkeypatch.setattr("vitality_client.daemon.frames.portal.PortalFrameSource",
-                        lambda token: object())
+                        lambda tokens, sessions: object())
     monkeypatch.setattr("vitality_client.daemon.activity.ActivityWatcher", lambda: object())
     assert main([]) == 1
     err = capsys.readouterr().err

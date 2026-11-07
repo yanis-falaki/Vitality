@@ -26,8 +26,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         2. Require a Wayland session (`XDG_SESSION_TYPE`).
         3. Resolve the paths and load `client.toml`.
         4. Set up logging to stderr.
-        5. Read the saved screen-sharing token from the state file.
-        6. Build the parts: the portal frame source, the evdev activity watcher and, when
+        5. Read the saved screen-sharing tokens from the state file.
+        6. Build the parts: the portal frame source (`screens` sessions), the evdev activity
+           watcher, the focus hint (Hyprland's, if running there) and, when
            `upload_server` is configured, the HTTP uploader.
         7. Run a `CaptureDaemon` with them until SIGTERM/SIGINT, then shut down cleanly.
 
@@ -58,19 +59,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Imported here: they load GStreamer and evdev, which --help doesn't need.
     from vitality_client.daemon.activity import ActivityWatcher
     from vitality_client.daemon.daemon import CaptureDaemon
+    from vitality_client.daemon.focus import focus_hint
     from vitality_client.daemon.frames.portal import PortalFrameSource
     from vitality_client.daemon.storage import CaptureIndex
     from vitality_client.daemon.upload import HttpUploader, Uploader
 
-    token = StateFile(paths.state_file).load().restore_token
+    tokens = StateFile(paths.state_file).load().restore_tokens
 
     def make_uploader(server: str) -> Callable[[CaptureIndex], Uploader]:
         return lambda index: HttpUploader(server, index, paths.data_dir)
 
     async def run() -> None:
         daemon = CaptureDaemon(
-            config, paths, PortalFrameSource(token), ActivityWatcher(),
+            config, paths, PortalFrameSource(tokens, config.screens), ActivityWatcher(),
             uploader=None if config.upload_server is None else make_uploader(config.upload_server),
+            focus=focus_hint(os.environ),
         )
         await daemon.run()
 

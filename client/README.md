@@ -86,8 +86,11 @@ from this repo by `client/install.sh`; editing the repo never changes the runnin
    Once a token is saved (in the state file), later starts reuse it without a dialog. If the
    token is lost or rejected, the picker appears again.
 
+   With several monitors, see [Several monitors](#several-monitors): with `screens = 2` the
+   picker appears once per monitor the first time.
+
 7. Check that it works: `vitality-client status` should show `activity: available` and
-   `capture: available`, and `vitality-client capture` saves a screenshot and prints its
+   `capture: available · 1 screen`, and `vitality-client capture` saves a screenshot and prints its
    path.
 
    If it shows `activity: unavailable` right after you added yourself to the `input` group,
@@ -178,7 +181,7 @@ through `vitality-client`, which talks to the running daemon:
 | `vitality-client status` | State, captures today, last capture, disk use, upload state, warnings, paths |
 | `vitality-client status --json` | The same as one line of JSON |
 | `vitality-client doctor` | Check the setup (with `upload_server` set, also Tailscale and the server) |
-| `vitality-client capture` | Take a screenshot now (even while paused) and print its path. It joins the open interaction, or is its own one-shot interaction when idle |
+| `vitality-client capture` | Take a screenshot now (even while paused) and print its path (with several monitors: one per monitor; the path is the focused one's, else the first). It joins the open interaction, or is its own one-shot interaction when idle |
 | `vitality-client reset [--all] [--yes]` | Delete all captures and the index (asks first; the daemon must be stopped). `--all` also deletes state, so the screen-sharing picker appears again |
 | `vitality-client upgrade` | Reinstall the client from this repo's `main` (runs `client/install.sh`), then `doctor` |
 
@@ -190,7 +193,7 @@ content appears, not after.
 ```
 capturing · 42 captures today · last 17:00:41 · 38.2 MB
 activity: available
-capture: available
+capture: available · 1 screen
 upload: ok · 0 pending · last 17:00:43
 ```
 
@@ -239,8 +242,8 @@ Editing the repo never changes the running daemon; run `vitality-client upgrade`
 `./client/install.sh`) to install a new version.
 
 Layout: `daemon/` is `vitality-clientd` and the parts only it uses (policy, activity,
-frames, storage, upload); `cli/` is `vitality-client`; `shared/` holds what both use: `config.py`
-(paths and settings), `state.py` (saved pause state) and `channel.py` (the socket
+frames, focus, storage, upload); `cli/` is `vitality-client`; `shared/` holds what both use: `config.py`
+(paths and settings), `state.py` (saved pause state and restore tokens) and `channel.py` (the socket
 protocol). Neither `daemon/` nor `cli/` imports the other. The folder layout and the upload
 messages are shared with the server through the `protocol/` package at the repo root, a path
 dependency of this project.
@@ -249,12 +252,37 @@ Each package's `interface.py` holds its contract (`Protocol`s plus the data type
 the implementations inherit from it and pyright checks they match. Start reading at a
 package's `__init__.py`; `daemon/daemon.py` opens with the daemon's own contract.
 
+## Several monitors
+
+Set `screens` in `client.toml` to the number of screen-sharing sessions the daemon opens,
+one after the other, at start. Every monitor shared by any session is captured, each as its
+own image (no stitching):
+
+- **Hyprland** (its picker shares one monitor per session): set `screens` to the number of
+  monitors, e.g. `screens = 2`, and restart the daemon. The first time, the picker appears
+  once per session: pick a different monitor each time, and tick **"Allow a restore token"**
+  each time (or set `allow_token_by_default`, above). Each session's token is saved
+  separately, so later starts show no dialog.
+- **GNOME, KDE** (one picker can share several monitors): keep `screens = 1` and select all
+  monitors in the picker.
+
+Monitors are named by position, left to right: `left` and `right`; `left`, `middle` and
+`right`; or `screen-1`, `screen-2`, ... for more. If the portal reports no positions, the
+order you picked them in counts (pick the left one first). With one monitor nothing changes:
+one image per shot, no name.
+
+To avoid saving an idle monitor again and again, the first shot of an interaction (and a
+manual `capture`) saves every monitor; later shots save only the monitors whose content
+changed since their own last saved image, plus the focused monitor. A shot moment where
+nothing qualifies saves nothing. The focused monitor is known on Hyprland (from `hyprctl`)
+and marked `focused` in `interaction.json`; elsewhere there is no focus hint and only
+changes count. `status` and `doctor` show how many screens are captured.
+
 ## Known limitations
 
-- On Hyprland the portal's picker returns a single monitor, so only that monitor is
-  captured; other monitors do not appear in the screenshots.
 - After undocking (that output disappearing) the saved permission no longer matches, so the
   picker will appear again.
+- Picking the same monitor in two sessions captures it twice.
 
 ## Configuration
 
@@ -266,6 +294,7 @@ max_gap_seconds = 10   # longest gap between shots while activity continues
 webp_quality = 85
 disk_warning_gb = 20   # status and the log warn above this; nothing is deleted
 # upload_server = "http://vitality-librarian:8100"   # unset = no uploads (see above)
+screens = 1            # screen-sharing sessions to open, 1-8 (see Several monitors)
 ```
 
 Files follow the XDG convention; `status` and `doctor` print the exact paths.
@@ -274,7 +303,7 @@ Files follow the XDG convention; `status` and `doctor` print the exact paths.
 |---|---|
 | Config | `~/.config/vitality/client.toml` |
 | Captures and `index.sqlite` | `~/.local/share/vitality/client/` (layout below) |
-| Pause state, portal restore token | `~/.local/state/vitality/client/state.json` |
+| Pause state, portal restore tokens | `~/.local/state/vitality/client/state.json` |
 | Control socket | `$XDG_RUNTIME_DIR/vitality/client.sock` |
 
 ### Stored captures
@@ -288,7 +317,9 @@ Each burst of activity is one **interaction**, a folder named by its UTC start t
     0000.webp                      the screen just before the first input
     0004.webp                      later shots: whole seconds since the start
     0014.webp
+    0014-2.webp                    another monitor (or a manual capture) in the same second
     interaction.json               start/end, local time and zone, the list of shots
+                                   (with several monitors, each shot's screen and focus)
 ```
 
 `interaction.json` appears when the interaction ends, so a folder without one is still in

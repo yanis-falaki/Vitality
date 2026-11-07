@@ -110,7 +110,7 @@ def test_close_interrupted_ends_at_last_shot(tmp_path):
     w2.close_interrupted()
     data = json.loads((tmp_path / "captures/2025-10-25/17-00-00/interaction.json").read_text())
     assert data["end"] == data["shots"][-1]["ts"] == "2025-10-25T17:00:05.149Z"
-    assert data == json.loads(store.interaction("2025-10-25/17-00-00").model_dump_json())
+    assert data == json.loads(store.interaction("2025-10-25/17-00-00").model_dump_json(exclude_none=True))
 
 
 def test_cleanup_removes_unindexed_files_and_empty_folders(tmp_path):

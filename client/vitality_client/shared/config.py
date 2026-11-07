@@ -20,6 +20,7 @@ class Config:
     webp_quality: int = 85        # 1-100
     disk_warning_gb: float = 20   # status and the log warn above this; nothing is deleted
     upload_server: str | None = None  # http(s) URL of the server; None: nothing is uploaded
+    screens: int = 1              # screen-sharing sessions to open (1-8); see the README
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,8 @@ def load_config(path: Path) -> Config:
     """Load config from a TOML file; a missing file yields defaults.
 
     `settle_seconds` and `max_gap_seconds` must be numbers above 0, `disk_warning_gb` a
-    number of at least 0, `webp_quality` an integer from 1 to 100 (all finite), and
+    number of at least 0, `webp_quality` an integer from 1 to 100, `screens` an integer
+    from 1 to 8 (all finite), and
     `upload_server` an http:// or https:// URL with a host, saved without a trailing `/`.
 
     Raises ValueError, naming the key, for an unknown key or a value of the wrong type or
@@ -131,5 +133,7 @@ def _check_range(key: str, value: float) -> None:
         raise ValueError(f"config key {key} must be greater than 0, got {value!r}")
     if key == "disk_warning_gb" and value < 0:
         raise ValueError(f"config key {key} must not be negative, got {value!r}")
+    if key == "screens" and not 1 <= value <= 8:
+        raise ValueError(f"config key {key} must be between 1 and 8, got {value!r}")
     if key == "webp_quality" and not 1 <= value <= 100:
         raise ValueError(f"config key {key} must be between 1 and 100, got {value!r}")

@@ -148,7 +148,7 @@ class HttpUploader(Uploader):
         try:
             response = await self._http().post(
                 INTERACTIONS_PATH,
-                data={INTERACTION_FIELD: interaction.model_dump_json()},
+                data={INTERACTION_FIELD: interaction.model_dump_json(exclude_none=True)},
                 files=files,
                 timeout=REQUEST_TIMEOUT,
             )

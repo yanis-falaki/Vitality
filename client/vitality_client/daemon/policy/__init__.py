@@ -10,9 +10,13 @@ every `max_gap_seconds`; pausing mid-interaction takes a final `Snapshot` +
 `InteractionEnd`. A manual request joins the open interaction with one `Snapshot`,
 or, when idle or paused, is a one-shot interaction (`Snapshot` + `InteractionEnd`)
 and changes no state or timers.
+
+Which monitors a `Snapshot` saves, when several are captured: `screens_to_capture`
+(screens.py) — every screen first, then only changed ones and the focused one.
 """
 
 from vitality_client.daemon.policy.capture_policy import CapturePolicy
+from vitality_client.daemon.policy.screens import changed, screens_to_capture, thumbnail
 from vitality_client.daemon.policy.interface import (
     Action,
     InteractionEnd,
@@ -28,4 +32,7 @@ __all__ = [
     "InteractionRef",
     "Snapshot",
     "SnapshotPolicy",
+    "changed",
+    "screens_to_capture",
+    "thumbnail",
 ]

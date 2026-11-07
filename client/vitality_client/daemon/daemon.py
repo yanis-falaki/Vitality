@@ -6,10 +6,16 @@ since the CLI uses them too. CaptureDaemon wires the packages together: activity
 frame → writer (an interaction's shots, then its end) → uploader, plus a timer loop and the
 control socket. Everything runs on one asyncio loop; image encoding and disk writes run in
 a worker thread, one at a time, in request order.
+
+With several monitors, each snapshot saves one image per screen that qualifies
+(`screens_to_capture`: all at the first shot, then the changed and the focused ones), using
+the optional focus hint; the thumbnails of each screen's last saved image are kept per open
+interaction.
 """
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import math
 import signal
@@ -22,6 +28,7 @@ from typing import Literal, Protocol
 from PIL import Image
 
 from vitality_client.daemon.activity import ActivitySource
+from vitality_client.daemon.focus import FocusHint, NoFocus
 from vitality_client.shared.config import Config, Paths
 from vitality_client.shared.channel import (
     ControlServer,
@@ -32,13 +39,15 @@ from vitality_client.shared.channel import (
     UploadStatus,
 )
 from vitality_client.shared.state import State, StateFile, StateStore
-from vitality_client.daemon.frames import FrameSource
+from vitality_client.daemon.frames import FrameSource, ScreenFrame
 from vitality_client.daemon.policy import (
     Action,
     CapturePolicy,
     InteractionEnd,
     Snapshot,
     SnapshotPolicy,
+    screens_to_capture,
+    thumbnail,
 )
 from vitality_client.daemon.storage import (
     CaptureIndex,
@@ -57,9 +66,9 @@ from vitality_client.daemon.upload import Uploader
 class Daemon(Protocol):
     """Records interactions (screenshots around bursts of user activity) until stopped.
 
-    It is built from a frame source, an activity source and, optionally, an uploader
-    factory (given the capture index); it creates its own capture policy, writer and
-    control server. Building it raises `OldLayoutError` (storage) if the data directory
+    It is built from a frame source, an activity source and, optionally, a focus hint and
+    an uploader factory (given the capture index); it creates its own capture policy,
+    writer and control server. Building it raises `OldLayoutError` (storage) if the data directory
     still has the layout from before interactions; nothing is opened or touched then.
     When it runs, it hands each part a callback or drives it:
 
@@ -85,12 +94,13 @@ class Daemon(Protocol):
 
     async def handle(self, request: Request) -> Reply:
         """Answer one CLI request: `status`, `pause` and `resume` reply with the `Status`;
-        `capture` takes one screenshot now (even while paused) and replies with its path:
-        it joins the open interaction, or is an interaction of its own."""
+        `capture` takes one screenshot of every screen now (even while paused) and replies
+        with the path of the focused one (else the first): it joins the open interaction, or
+        is an interaction of its own."""
         ...
 
-    def save_restore_token(self, token: str) -> None:
-        """Keep a new screen-sharing permission token for the next start."""
+    def save_restore_token(self, session: int, token: str) -> None:
+        """Keep a new screen-sharing permission token of session `session` for the next start."""
         ...
 
     def status(self) -> Status:
@@ -114,6 +124,8 @@ class _Shot:
     start: float
     ts: float
     trigger: Literal["activity", "manual"]
+    screen: str | None = None
+    focused: bool | None = None
     saved: asyncio.Future[ShotRow] | None = None  # receives the saved row, for `capture`
 
 
@@ -133,10 +145,14 @@ class CaptureDaemon(Daemon):
         activity: ActivitySource,
         clock: Callable[[], float] = time.time,
         uploader: Callable[[CaptureIndex], Uploader] | None = None,
+        focus: FocusHint | None = None,
     ) -> None:
         self._config = config
         self._paths = paths
         self._frames = frames
+        self._focus: FocusHint = focus or NoFocus()
+        # Interaction start -> each screen's thumbnail at its last saved shot.
+        self._saved_thumbs: dict[float, dict[str | None, bytes]] = {}
         self._clock = clock
         # Before anything opens the index: on the old layout, startup cleanup would take
         # every old screenshot for an orphan and delete it.
@@ -278,8 +294,10 @@ class CaptureDaemon(Daemon):
         for action in actions:
             if isinstance(action, Snapshot):
                 self._snapshot(action)
-            elif not self._closing:  # an interaction left open is closed at the next start
-                self._enqueue(_End(action.interaction.start))
+            else:
+                self._saved_thumbs.pop(action.interaction.start, None)
+                if not self._closing:  # an interaction left open is closed at the next start
+                    self._enqueue(_End(action.interaction.start))
 
     def _snapshot(self, snap: Snapshot) -> None:
         if self._closing:
@@ -288,15 +306,34 @@ class CaptureDaemon(Daemon):
         # Runs inside the activity watcher's device reader: never let a frame-source
         # failure escape into it (the watcher would stop reading that device).
         try:
-            frame = self._frames.latest_frame()
+            frames = self._frames.latest_frames()
+            shots = self._choose(frames, snap, every=False) if frames else []
         except Exception as exc:
             log.error("snapshot dropped: reading the frame failed: %s",
                       str(exc) or type(exc).__name__)
             return
-        if frame is None:
+        if not frames:
             log.info("snapshot dropped: no frame available")
             return
-        self._enqueue(_Shot(frame, snap.interaction.start, snap.ts, snap.trigger))
+        if not shots:
+            log.debug("snapshot skipped: no screen changed")
+        for shot in shots:
+            self._enqueue(shot)
+
+    def _choose(self, frames: list[ScreenFrame], snap: Snapshot, every: bool) -> list[_Shot]:
+        """The shots to save of `frames` for `snap`: every screen if `every`, else those
+        `screens_to_capture` picks. Remembers their thumbnails for the next snapshot."""
+        start = snap.interaction.start
+        if len(frames) == 1:  # one screen: every shot, as before several monitors
+            return [_Shot(frames[0].image, start, snap.ts, snap.trigger)]
+        thumbs = {f.name: thumbnail(f.image) for f in frames}
+        focused = self._focus.focused_screen(frames)
+        saved = self._saved_thumbs.setdefault(start, {})
+        chosen = screens_to_capture(thumbs, {} if every else saved, focused)
+        saved.update((name, thumbs[name]) for name in chosen)
+        return [_Shot(f.image, start, snap.ts, snap.trigger, f.name,
+                      None if focused is None else f.name == focused)
+                for f in frames if f.name in chosen]
 
     def _enqueue(self, item: _Shot | _End) -> None:
         self._writes.put_nowait(item)
@@ -318,7 +355,8 @@ class CaptureDaemon(Daemon):
         saved = shot.saved
         try:
             row = await asyncio.to_thread(
-                self._writer.write, shot.frame, shot.start, shot.ts, shot.trigger)
+                self._writer.write, shot.frame, shot.start, shot.ts, shot.trigger,
+                shot.screen, shot.focused)
         except Exception as exc:
             log.error("capture write failed: %s", str(exc) or type(exc).__name__)
             if saved is not None and not saved.done():
@@ -366,23 +404,31 @@ class CaptureDaemon(Daemon):
         return {"ok": False, "error": f"unknown command: {cmd}"}
 
     async def _capture_now(self) -> Reply:
-        """One screenshot on request: saved like any other, its path returned.
+        """One screenshot of every screen on request: saved like any other; the path of the
+        focused screen's (else the first) is returned.
 
         It joins the open interaction, or (idle or paused) is a one-shot interaction."""
         if self._closing:
             return {"ok": False, "error": "the daemon is shutting down"}
         try:
-            frame = self._frames.latest_frame()
+            frames = self._frames.latest_frames()
         except Exception as exc:
             return {"ok": False, "error": f"reading the frame failed: {str(exc) or type(exc).__name__}"}
-        if frame is None:
+        if not frames:
             return {"ok": False, "error": "no screen frame available yet"}
         saved: asyncio.Future[ShotRow] = asyncio.get_running_loop().create_future()
         for action in self._policy.manual(self._clock()):
             if isinstance(action, Snapshot):
-                self._enqueue(_Shot(frame, action.interaction.start, action.ts, action.trigger,
-                                    saved))
+                try:
+                    shots = self._choose(frames, action, every=True)
+                except Exception as exc:
+                    return {"ok": False, "error": f"reading the frame failed: {str(exc) or type(exc).__name__}"}
+                reply_with = next((s for s in shots if s.focused), shots[0])
+                for shot in shots:
+                    self._enqueue(shot if shot is not reply_with else
+                                  dataclasses.replace(shot, saved=saved))
             elif isinstance(action, InteractionEnd):
+                self._saved_thumbs.pop(action.interaction.start, None)
                 self._enqueue(_End(action.interaction.start))
         try:
             row = await asyncio.wait_for(asyncio.shield(saved), CAPTURE_TIMEOUT)
@@ -392,16 +438,19 @@ class CaptureDaemon(Daemon):
             return {"ok": False, "error": f"capture failed: {str(exc) or type(exc).__name__}"}
         return {"ok": True, "path": str((self._paths.data_dir / row.path).resolve())}
 
-    def save_restore_token(self, token: str) -> None:
-        """Persist a new portal restore token (the PortalFrameSource callback)."""
-        self._state.restore_token = token
+    def save_restore_token(self, session: int, token: str) -> None:
+        """Persist a new portal restore token of one session (the PortalFrameSource callback)."""
+        tokens = list(self._state.restore_tokens)
+        tokens += [None] * (session + 1 - len(tokens))
+        tokens[session] = token
+        self._state.restore_tokens = tokens
         self._save_state()
 
     def _save_state(self) -> None:
         self._state = State(
             paused=self._policy.state == "paused",
             paused_until=self._policy.paused_until,
-            restore_token=self._state.restore_token,
+            restore_tokens=self._state.restore_tokens,
         )
         try:
             self._state_file.save(self._state)
@@ -435,6 +484,7 @@ class CaptureDaemon(Daemon):
             "disk_warning": disk > self._config.disk_warning_gb * 1e9,
             "activity": "available" if self._watcher.available else "unavailable",
             "capture": "available" if self._frames.available else "unavailable",
+            "screens": self._frames.screens,
             "paths": {
                 "config": str(self._paths.config_file),
                 "data": str(self._paths.data_dir),

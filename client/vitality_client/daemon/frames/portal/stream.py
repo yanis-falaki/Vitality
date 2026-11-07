@@ -4,7 +4,7 @@ The contract (`FrameStreams`) comes first; the implementation (`GstFrameStreams`
 follows, after the helpers that turn GStreamer samples into images.
 
 The appsink callback runs on a GStreamer thread and only stores a reference to the
-newest sample under a lock. Conversion to RGB happens in `latest_frame()`, i.e. only
+newest sample under a lock. Conversion to RGB happens in `latest_frames()`, i.e. only
 when a snapshot needs an image. Never logged: image contents.
 """
 
@@ -19,7 +19,8 @@ gi.require_version("GstVideo", "1.0")
 from gi.repository import Gst, GstVideo  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from vitality_client.daemon.frames.compose import composite, layout_frames  # noqa: E402
+from vitality_client.daemon.frames.interface import ScreenFrame  # noqa: E402
+from vitality_client.daemon.frames.screens import named_frames  # noqa: E402
 from vitality_client.daemon.frames.portal.session import Stream  # noqa: E402
 
 
@@ -33,11 +34,14 @@ class FrameStreams(Protocol):
         ...
 
     def start(self, fd: int, streams: list[Stream]) -> None:
-        """Build and start one pipeline per stream, reading from the PipeWire connection `fd`."""
+        """Build and start one pipeline per stream, reading from the PipeWire connection `fd`.
+
+        Called once per portal session; the pipelines add up until `stop`."""
         ...
 
-    def latest_frame(self) -> Image.Image | None:
-        """The whole desktop as one RGB image, or None until every stream has a frame."""
+    def latest_frames(self) -> list[ScreenFrame] | None:
+        """Each monitor's newest RGB image, named and ordered left to right, or None until
+        every stream has a frame."""
         ...
 
     def failure(self) -> str | None:
@@ -124,9 +128,9 @@ class GstFrameStreams(FrameStreams):
     def start(self, fd: int, streams: list[Stream]) -> None:
         Gst.init(None)
         with self._lock:
-            self._streams = list(streams)
-            self._samples = {}
-        for index, stream in enumerate(streams):
+            first = len(self._streams)
+            self._streams = [*self._streams, *streams]
+        for index, stream in enumerate(streams, start=first):
             pipeline = Gst.parse_launch(pipeline_description(fd, stream.node_id, self._max_fps))
             sink = pipeline.get_by_name("sink") if isinstance(pipeline, Gst.Pipeline) else None
             if not isinstance(pipeline, Gst.Pipeline) or sink is None:
@@ -136,7 +140,7 @@ class GstFrameStreams(FrameStreams):
             if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
                 raise StreamError(f"could not start the pipeline for stream {index}")
 
-    def latest_frame(self) -> Image.Image | None:
+    def latest_frames(self) -> list[ScreenFrame] | None:
         with self._lock:
             if not self._streams or len(self._samples) < len(self._streams):
                 return None
@@ -145,11 +149,11 @@ class GstFrameStreams(FrameStreams):
             frames = []
             for sample, stream in samples:
                 image = sample_to_image(sample)
-                frames.append((image, stream.position, stream.size or image.size))
+                frames.append((image, stream.position, stream.size))
         except Exception as exc:
             log.debug("could not convert the latest frame: %s", str(exc) or type(exc).__name__)
             return None
-        return composite(layout_frames(frames))
+        return named_frames(frames)
 
     def failure(self) -> str | None:
         """A pipeline error or end of stream since the last call, or None."""

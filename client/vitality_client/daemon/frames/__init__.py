@@ -1,13 +1,13 @@
-"""Where the daemon gets its whole-desktop images from.
+"""Where the daemon gets its images of the monitors from.
 
-Contract: `FrameSource` (interface.py). `composite` / `layout_frames` (compose.py)
-combine several monitors into one image.
+Contract: `FrameSource` and `ScreenFrame` (interface.py). `screen_names` / `named_frames`
+(screens.py) name monitors by position: `left`, `right`, ...
 
 The implementation is `vitality_client.daemon.frames.portal.PortalFrameSource`, imported
 separately because it loads GStreamer.
 """
 
-from vitality_client.daemon.frames.compose import composite, layout_frames
-from vitality_client.daemon.frames.interface import FrameSource
+from vitality_client.daemon.frames.interface import FrameSource, ScreenFrame
+from vitality_client.daemon.frames.screens import named_frames, screen_names
 
-__all__ = ["FrameSource", "composite", "layout_frames"]
+__all__ = ["FrameSource", "ScreenFrame", "named_frames", "screen_names"]
