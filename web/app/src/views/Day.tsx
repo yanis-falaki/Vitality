@@ -327,10 +327,11 @@ function EvidenceList({ interactions, sel }: { interactions: DayInteraction[] | 
       <div className="day-list" ref={box} data-testid="day-evidence">
         {!interactions && <p className="day-list-note">Reading the day's evidence…</p>}
         {interactions && !all.some(shown) && <p className="day-list-note">No interactions to show.</p>}
-        {sits.filter((s) => s.actions.some(shown)).map((s) => (
+        {/* Newest first: the latest sitting on top, and within each sitting the latest interaction. */}
+        {sits.filter((s) => s.actions.some(shown)).reverse().map((s) => (
           <Fragment key={s.start}>
             <h3 className="day-sitting">{partOfDay(s.start)} · {clock(s.start)} – {clock(s.end)}</h3>
-            {s.actions.filter(shown).map((i) => <EvidenceRow key={i.interaction} i={i} on={sel === i.interaction} onClick={() => select(i.interaction)} />)}
+            {s.actions.filter(shown).reverse().map((i) => <EvidenceRow key={i.interaction} i={i} on={sel === i.interaction} onClick={() => select(i.interaction)} />)}
           </Fragment>
         ))}
       </div>
