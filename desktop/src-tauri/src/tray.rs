@@ -5,7 +5,8 @@
 //! something needs attention. Left click toggles pause. The menu: the state line, Pause for
 //! 30 min / 1 h / until tomorrow (or Resume), Open Vitality, Quit. `look(status, shots_today)`
 //! (pure) decides icon and line; `start(core, act)` shows the icon and keeps it current; menu
-//! choices come back as `TrayAction`s to `act`.
+//! choices come back as `TrayAction`s to `act`. The icon registers whenever a tray host
+//! (`org.kde.StatusNotifierWatcher`) appears, also if it starts after the app (Waybar).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,17 +34,24 @@ pub enum TrayAction {
 }
 
 /// What needs the owner, if anything (the first of: input, screens, the server).
-pub fn attention(s: &StatusView) -> Option<&'static str> {
+pub fn attention(s: &StatusView) -> Option<String> {
+    let names = s.screens_attention.join(", ");
+    attention_kind(s).map(|why| if why.starts_with("a screen") && !names.is_empty() { format!("{names}: pick again in Vitality") } else { why.to_string() })
+}
+
+fn attention_kind(s: &StatusView) -> Option<&'static str> {
     if s.input == "permission_denied" {
         Some("no access to keyboard and mouse")
     } else if s.input == "no_devices" {
         Some("no keyboard or mouse found")
     } else if s.screens == 0 {
         Some("no screen set up")
-    } else if s.screens_live < s.screens {
-        Some("a screen needs to be picked again")
+    } else if !s.screens_attention.is_empty() || s.screens_live < s.screens {
+        Some("a screen needs to be picked again or has stopped")
     } else if matches!(s.upload.state, UploadState::Rejected { .. }) {
         Some("the server refuses this device")
+    } else if s.upload.last_failure.is_some() {
+        Some("the server refused an interaction for good")
     } else {
         None
     }
@@ -90,6 +98,15 @@ impl ksni::Tray for VitalityTray {
         ksni::ToolTip { title: "Vitality".into(), description: self.line.clone(), ..Default::default() }
     }
 
+    fn watcher_online(&self) {
+        eprintln!("vitality-client: a tray host appeared; the tray icon is shown");
+    }
+
+    fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
+        eprintln!("vitality-client: no tray host for now ({reason:?}); the icon appears when one starts");
+        true // keep waiting for one
+    }
+
     fn activate(&mut self, _x: i32, _y: i32) {
         (self.act)(TrayAction::TogglePause);
     }
@@ -128,7 +145,7 @@ pub async fn start(core: Arc<Core>, act: Arc<dyn Fn(TrayAction) + Send + Sync>) 
     let status = core.status();
     let (icon, line) = look(&status, core.store.today().shots);
     let tray = VitalityTray { icon, line, paused: status.pause.paused, act };
-    let handle = match tray.spawn().await {
+    let handle = match tray.assume_sni_available(true).spawn().await {
         Ok(h) => h,
         Err(e) => {
             eprintln!("vitality-client: no tray icon ({e}); open the window from the app launcher");
@@ -201,7 +218,7 @@ mod tests {
     #[test]
     fn the_icon_and_line_follow_the_status() {
         let mut s = samples::status();
-        s.screens_live = 2;
+        (s.screens_live, s.screens_attention) = (2, vec![]);
         assert_eq!(look(&s, 214), (TrayIcon::Recording, "Recording · 214 shots today".into()));
         assert_eq!(look(&s, 1).1, "Recording · 1 shot today");
         let paused = samples::status_paused();
@@ -212,7 +229,11 @@ mod tests {
         assert_eq!(look(&idle, 0), (TrayIcon::Attention, "Needs attention: no keyboard or mouse found".into()));
         idle.input = "ok".into();
         assert_eq!(look(&idle, 0).1, "Needs attention: no screen set up");
-        assert_eq!(look(&samples::status(), 0).1, "Needs attention: a screen needs to be picked again");
+        assert_eq!(look(&samples::status(), 0).1, "Needs attention: Screen 2: pick again in Vitality");
+        let mut s = samples::status();
+        (s.screens_live, s.screens_attention) = (2, vec![]);
+        s.upload.last_failure = Some("x: too large for the server (413)".into());
+        assert_eq!(look(&s, 0).1, "Needs attention: the server refused an interaction for good");
     }
 
     fn alpha_at(icon: &ksni::Icon, x: i32, y: i32) -> u8 {

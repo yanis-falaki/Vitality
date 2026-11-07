@@ -45,6 +45,10 @@ impl Received {
 /// Answers each request with the next scripted status (then `then`), recording what came.
 #[derive(Clone, Default)]
 pub struct FakeServer {
+    /// Interactions (by name) answered with a fixed status, whatever the script says.
+    pub fixed: Arc<Mutex<std::collections::HashMap<String, u16>>>,
+    /// Interactions (by name) whose reply never comes (a stalled upload).
+    pub stall: Arc<Mutex<std::collections::HashSet<String>>>,
     pub script: Arc<Mutex<VecDeque<u16>>>,
     pub then: Arc<Mutex<u16>>,
     pub received: Arc<Mutex<Vec<Received>>>,
@@ -76,7 +80,17 @@ async fn handle(State(server): State<FakeServer>, headers: HeaderMap, mut multip
             bytes: field.bytes().await.unwrap().to_vec(),
         });
     }
-    let status = server.script.lock().unwrap().pop_front().unwrap_or(*server.then.lock().unwrap());
+    let name = parts
+        .iter()
+        .find(|p| p.name == "interaction")
+        .and_then(|p| serde_json::from_slice::<serde_json::Value>(&p.bytes).ok())
+        .and_then(|j| j["name"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    if server.stall.lock().unwrap().contains(&name) {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+    let fixed = server.fixed.lock().unwrap().get(&name).copied();
+    let status = fixed.unwrap_or_else(|| server.script.lock().unwrap().pop_front().unwrap_or(*server.then.lock().unwrap()));
     server.received.lock().unwrap().push(Received {
         status,
         content_length: headers.get("content-length").map(|v| v.to_str().unwrap().to_string()),
@@ -92,7 +106,10 @@ pub fn fast() -> UploadTimings {
         backoff_max: Duration::from_millis(80),
         rejected_retry: Duration::from_millis(60),
         idle_poll: Duration::from_millis(40),
-        request_timeout: Duration::from_secs(5),
+        connect_timeout: Duration::from_secs(2),
+        request_base: Duration::from_millis(300),
+        request_per_mib: Duration::from_millis(100),
+        request_max: Duration::from_secs(2),
     }
 }
 
@@ -170,32 +187,93 @@ async fn a_refused_device_stays_pending_and_is_retried() {
 
 #[tokio::test]
 async fn hours_offline_then_back_uploads_everything_in_order_once() {
-    // Review Focus 3: the server fails (500, 507, 411, then nothing listening) and comes back.
+    // Review Focus 3: nothing listens for a while (the server is unreachable), then it is back.
     let (_d, store) = setup();
     let folders: Vec<_> = (0..5).map(|m| interaction(&store, m, &[None])).collect();
-    // First nothing listens at all.
     let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let dead_addr = dead.local_addr().unwrap();
     drop(dead);
     let up = Uploader::start(store.clone(), Some(format!("http://{dead_addr}")), "desk".into(), fast());
     eventually("offline", || up.status().state == UploadState::Offline).await;
+    tokio::time::sleep(Duration::from_millis(200)).await; // several attempts
     assert_eq!(up.status().pending, 5);
     drop(up);
-    // Then a server that fails for a while: each failure keeps everything pending.
     let server = FakeServer::default();
     let url = server.serve().await;
-    server.script.lock().unwrap().extend([500, 507, 411, 500, 201, 500, 201, 201, 201]);
     let up = Uploader::start(store.clone(), Some(url), "desk".into(), fast());
     eventually("all uploaded", || folders.iter().all(|f| f.join(UPLOADED).exists())).await;
-    let received = server.received.lock().unwrap().clone();
-    let successes: Vec<String> = received.iter().filter(|r| r.status == 201).map(Received::name).collect();
     let expected: Vec<String> = (0..5).map(|m| format!("2026-11-07/17-0{m}-00")).collect();
-    assert_eq!(successes, expected, "uploaded in order, each once");
-    // Each attempt was the oldest still pending: nothing is sent again after it succeeded.
-    for (i, r) in received.iter().enumerate() {
-        assert!(!received[..i].iter().any(|e| e.status == 201 && e.name() == r.name()), "{} sent again", r.name());
-    }
+    assert_eq!(server.names(), expected, "in order, each once");
     eventually("ok", || up.status().state == UploadState::Ok && up.status().pending == 0).await;
+}
+
+#[tokio::test]
+async fn a_failing_interaction_waits_its_turn_while_newer_ones_go_on() {
+    // A 500 (or 507, 411…) for one interaction does not hold up the queue.
+    let (_d, store) = setup();
+    let folders: Vec<_> = (0..3).map(|m| interaction(&store, m, &[None])).collect();
+    let server = FakeServer::default();
+    let url = server.serve().await;
+    server.fixed.lock().unwrap().insert("2026-11-07/17-00-00".into(), 500);
+    let up = Uploader::start(store.clone(), Some(url), "desk".into(), fast());
+    eventually("the newer ones uploaded", || folders[1..].iter().all(|f| f.join(UPLOADED).exists())).await;
+    assert!(!folders[0].join(UPLOADED).exists() && !folders[0].join(FAILED).exists());
+    eventually("offline while it waits", || up.status().state == UploadState::Offline).await;
+    server.fixed.lock().unwrap().clear(); // the server is fixed
+    eventually("the old one too", || folders[0].join(UPLOADED).exists()).await;
+    eventually("ok", || up.status().state == UploadState::Ok).await;
+    let names = server.names();
+    assert_eq!(names.iter().filter(|n| n.ends_with("17-01-00")).count(), 1, "{names:?}");
+}
+
+#[tokio::test]
+async fn a_stalled_upload_times_out_and_does_not_block_newer_ones() {
+    let (_d, store) = setup();
+    let folders: Vec<_> = (0..3).map(|m| interaction(&store, m, &[None])).collect();
+    let server = FakeServer::default();
+    let url = server.serve().await;
+    server.stall.lock().unwrap().insert("2026-11-07/17-00-00".into());
+    let _up = Uploader::start(store.clone(), Some(url), "desk".into(), fast());
+    eventually("the newer ones uploaded", || folders[1..].iter().all(|f| f.join(UPLOADED).exists())).await;
+    assert!(!folders[0].join(UPLOADED).exists());
+    server.stall.lock().unwrap().clear();
+    eventually("the stalled one on a later try", || folders[0].join(UPLOADED).exists()).await;
+}
+
+#[tokio::test]
+async fn refusals_for_good_are_counted_and_the_last_one_shown() {
+    let (_d, store) = setup();
+    let folders: Vec<_> = (0..2).map(|m| interaction(&store, m, &[None])).collect();
+    let server = FakeServer::default();
+    let url = server.serve().await;
+    server.script.lock().unwrap().extend([400, 413]);
+    let up = Uploader::start(store.clone(), Some(url), "desk".into(), fast());
+    eventually("both failed", || folders.iter().all(|f| f.join(FAILED).exists())).await;
+    eventually("counted", || up.status().failed == 2).await;
+    let statuses: Vec<u16> = server.received.lock().unwrap().iter().map(|r| r.status).collect();
+    assert_eq!(statuses, [400, 413]);
+    assert_eq!(up.status().last_failure.as_deref(), Some("2026-11-07/17-01-00: too large for the server (413)"));
+}
+
+#[tokio::test]
+async fn an_unreadable_interaction_json_is_rebuilt_and_uploaded() {
+    let (_d, store) = setup();
+    let folder = interaction(&store, 0, &[Some("Main"), Some("Side")]);
+    std::fs::write(folder.join(INTERACTION_FILE), b"{\"name\": \"2026-11-0").unwrap(); // torn
+    let server = FakeServer::default();
+    let url = server.serve().await;
+    let up = Uploader::start(store.clone(), Some(url), "desk".into(), fast());
+    eventually("uploaded", || folder.join(UPLOADED).exists()).await;
+    assert_eq!(server.received.lock().unwrap()[0].parts.len(), 3);
+    assert_eq!(up.status().failed, 0);
+}
+
+#[test]
+fn the_request_timeout_grows_with_the_body() {
+    let t = UploadTimings::default();
+    assert_eq!(t.request_timeout(0), Duration::from_secs(60));
+    assert_eq!(t.request_timeout(35 * 1024 * 1024), Duration::from_secs(95));
+    assert_eq!(t.request_timeout(u64::MAX / 2), Duration::from_secs(900));
 }
 
 #[tokio::test]

@@ -203,3 +203,59 @@ fn time_zone_name_is_an_iana_name() {
     let tz = local_tz_name();
     assert!(tz == "UTC" || tz.contains('/'), "{tz}");
 }
+
+#[test]
+fn an_empty_interaction_json_after_a_power_loss_is_rebuilt() {
+    let (_d, s) = store();
+    let mut h = s.begin(t(17, 0, 0, 449), pacific(), "America/Vancouver").unwrap();
+    h.add_shot(Some("Main"), &img(1), t(17, 0, 0, 449), Trigger::Passive).unwrap();
+    let folder = h.folder().to_path_buf();
+    drop(h);
+    fs::write(folder.join(INTERACTION_FILE), b"").unwrap(); // what delayed allocation can leave
+    assert_eq!(s.finish_interrupted().unwrap(), vec![folder.clone()]);
+    let json = read_json(&folder);
+    assert_eq!(json["shots"][0]["screen_name"], "Main");
+    assert_eq!(s.pending(), vec![folder]);
+}
+
+#[test]
+fn a_truncated_shot_is_described_from_its_file_and_a_broken_one_dropped() {
+    let (_d, s) = store();
+    let mut h = s.begin(t(17, 0, 0, 0), pacific(), "UTC").unwrap();
+    h.add_shot(None, &img(1), t(17, 0, 0, 0), Trigger::Passive).unwrap();
+    h.add_shot(None, &img(2), t(17, 0, 5, 0), Trigger::Passive).unwrap();
+    h.add_shot(None, &img(3), t(17, 0, 9, 0), Trigger::Passive).unwrap();
+    let folder = h.folder().to_path_buf();
+    drop(h);
+    let five = fs::read(folder.join("0005.webp")).unwrap();
+    fs::write(folder.join("0005.webp"), &five[..five.len() - 3]).unwrap(); // cut short
+    fs::write(folder.join("0009.webp"), b"").unwrap(); // empty
+    s.finish_interrupted().unwrap();
+    let json = read_json(&folder);
+    let shots = json["shots"].as_array().unwrap();
+    let files: Vec<&str> = shots.iter().map(|s| s["file"].as_str().unwrap()).collect();
+    assert_eq!(files, ["0000.webp", "0005.webp"]);
+    assert_eq!(shots[1]["bytes"], five.len() - 3, "the size the server will see");
+    assert_eq!(shots[1]["trigger"], "passive", "the kind of the interaction's other shots");
+}
+
+#[test]
+fn bytes_so_far_and_failed_count() {
+    let (_d, s) = store();
+    let mut h = s.begin(t(17, 0, 0, 0), pacific(), "UTC").unwrap();
+    h.add_shot(None, &img(1), t(17, 0, 0, 0), Trigger::Activity).unwrap();
+    h.add_shot(None, &img(2), t(17, 0, 1, 0), Trigger::Activity).unwrap();
+    let on_disk: u64 = ["0000.webp", "0001.webp"].iter().map(|f| fs::metadata(h.folder().join(f)).unwrap().len()).sum();
+    assert_eq!(h.bytes(), on_disk);
+    let folder = h.finish().unwrap().unwrap();
+    assert_eq!(s.failed_count(), 0);
+    s.mark(&folder, FAILED).unwrap();
+    assert_eq!(s.failed_count(), 1);
+}
+
+#[test]
+fn an_unencodable_image_is_an_error_not_a_panic() {
+    let (_d, s) = store();
+    let mut h = s.begin(t(17, 0, 0, 0), pacific(), "UTC").unwrap();
+    assert!(h.add_shot(None, &RgbImage::new(0, 0), t(17, 0, 0, 0), Trigger::Activity).is_err());
+}

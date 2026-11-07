@@ -23,7 +23,7 @@ impl Setup {
         Setup { _dir: dir, path, portal: Arc::default(), feeds: Arc::default() }
     }
 
-    fn screens(&self) -> Screens {
+    fn screens(&self) -> Arc<Screens> {
         Screens::new(&self.path, self.portal.clone(), self.feeds.clone(), Threshold::default())
     }
 }
@@ -159,4 +159,97 @@ async fn preview_is_a_jpeg_about_480_wide() {
     assert_eq!(&jpeg[..2], &[0xff, 0xd8]);
     let decoded = image::load_from_memory(&jpeg).unwrap();
     assert_eq!((decoded.width(), decoded.height()), (480, 270));
+}
+
+#[tokio::test]
+async fn at_start_a_screen_without_a_token_needs_a_pick_and_no_picker_is_shown() {
+    // I4: the picker opens only from Add and Re-pick.
+    let setup = Setup::new();
+    {
+        let s = setup.screens();
+        s.add().await.unwrap();
+        s.add().await.unwrap();
+    }
+    let mut r = Registry::load(&setup.path);
+    let second = r.entries()[1].id.clone();
+    r.set_token(&second, None).unwrap();
+    let calls_before = setup.portal.calls.lock().unwrap().len();
+    let s = setup.screens();
+    s.open_all().await;
+    assert_eq!(states(&s), vec![("Screen 1".into(), ScreenState::Live), ("Screen 2".into(), ScreenState::NeedsPick)]);
+    let calls = setup.portal.calls.lock().unwrap()[calls_before..].to_vec();
+    assert_eq!(calls, vec![Some("tok-1".to_string())], "no call without a token, and never a picker (None)");
+    assert_eq!(s.needing_attention(), vec!["Screen 2".to_string()]);
+}
+
+#[tokio::test]
+async fn a_restore_that_hangs_gives_up_and_the_others_still_open() {
+    let setup = Setup::new();
+    {
+        let s = setup.screens();
+        s.add().await.unwrap();
+    }
+    setup.portal.hang.store(true, Ordering::SeqCst);
+    let s = setup.screens();
+    s.set_waits(Duration::from_millis(100), Duration::from_millis(50));
+    s.open_all().await;
+    assert_eq!(states(&s)[0].1, ScreenState::NeedsPick);
+    assert_eq!(Registry::load(&setup.path).entries()[0].restore_token.as_deref(), Some("tok-1"), "the token is kept");
+}
+
+#[tokio::test]
+async fn a_feed_that_ends_is_stopped_its_frame_never_shot_and_it_is_reopened() {
+    // I3.
+    let setup = Setup::new();
+    let s = setup.screens();
+    s.set_waits(Duration::from_secs(1), Duration::from_millis(50));
+    let a = s.add().await.unwrap();
+    setup.feeds.push(1, gray(80));
+    assert!(s.latest(&a).is_some());
+    setup.feeds.end(1);
+    assert_eq!(states(&s)[0].1, ScreenState::Stopped);
+    assert!(s.latest(&a).is_none() && s.thumbs().is_empty(), "the stale frame is gone");
+    assert_eq!(s.needing_attention(), vec!["Screen 1".to_string()]);
+    s.reopen_due(Instant::now()); // too early: nothing
+    assert_eq!(states(&s)[0].1, ScreenState::Stopped);
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    s.reopen_due(Instant::now());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while states(&s)[0].1 != ScreenState::Live {
+        assert!(Instant::now() < deadline, "not reopened");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(setup.portal.calls.lock().unwrap().last().unwrap().as_deref(), Some("tok-1"), "from its token");
+    setup.feeds.push(1, gray(90));
+    assert!(s.latest(&a).is_some());
+}
+
+#[tokio::test]
+async fn a_stopped_screen_waits_longer_while_the_portal_is_gone_and_needs_a_pick_if_refused() {
+    let setup = Setup::new();
+    let s = setup.screens();
+    s.set_waits(Duration::from_secs(1), Duration::from_millis(20));
+    s.add().await.unwrap();
+    setup.feeds.end(1);
+    setup.portal.unavailable.store(true, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    s.reopen_due(Instant::now());
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(states(&s)[0].1, ScreenState::Stopped, "still waiting for the portal");
+    setup.portal.unavailable.store(false, Ordering::SeqCst);
+    setup.portal.refused.lock().unwrap().insert("tok-1".into());
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    s.reopen_due(Instant::now());
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(states(&s)[0].1, ScreenState::NeedsPick);
+}
+
+#[tokio::test]
+async fn a_late_end_of_an_old_feed_does_not_stop_the_new_one() {
+    let setup = Setup::new();
+    let s = setup.screens();
+    let a = s.add().await.unwrap();
+    s.repick(&a).await.unwrap(); // node 2 replaces node 1
+    setup.feeds.end(1);
+    assert_eq!(states(&s)[0].1, ScreenState::Live);
 }

@@ -110,7 +110,10 @@ where
     let screens = match (s.screens, s.screens_live) {
         (0, _) => "Screens: none set up (open Vitality to add one)".to_string(),
         (n, live) if live == n => format!("Screens: {n}, all live"),
-        (n, live) => format!("Screens: {n}, {live} live ({} to pick again in Vitality)", n - live),
+        (n, live) if !s.screens_attention.is_empty() => {
+            format!("Screens: {n}, {live} live (to pick again in Vitality or stopped: {})", s.screens_attention.join(", "))
+        }
+        (n, live) => format!("Screens: {n}, {live} live"),
     };
     let input = match s.input.as_str() {
         "ok" => "Input: ok".to_string(),
@@ -126,7 +129,12 @@ where
         }
         UploadState::Disabled => format!("Upload: off (no server set) · {} kept here", s.upload.pending),
     };
-    [capture, screens, input, upload].join("\n")
+    let mut lines = vec![capture, screens, input, upload];
+    if s.upload.failed > 0 {
+        let last = s.upload.last_failure.as_ref().map(|f| format!(" · latest: {f}")).unwrap_or_default();
+        lines.push(format!("Warning: {} interaction(s) refused by the server for good{last}", s.upload.failed));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -161,12 +169,13 @@ mod tests {
         let utc = Utc;
         assert_eq!(
             summary(&samples::status(), &utc),
-            "Recording · active interaction since 20:02 · 14 shots\nScreens: 2, 1 live (1 to pick again in Vitality)\n\
+            "Recording · active interaction since 20:02 · 14 shots\nScreens: 2, 1 live (to pick again in Vitality or stopped: Screen 2)\n\
              Input: ok\nUpload: ok · 0 pending · last 20:01"
         );
         let paused = summary(&samples::status_paused(), &utc);
         assert!(paused.starts_with("Paused until 21:00\nScreens: 2, all live\nInput: no access"), "{paused}");
-        assert!(paused.ends_with("Upload: refused · allow the device \"desktop\" on the server · 3 pending"), "{paused}");
+        assert!(paused.contains("Upload: refused · allow the device \"desktop\" on the server · 3 pending\n"), "{paused}");
+        assert!(paused.ends_with("Warning: 1 interaction(s) refused by the server for good · latest: 2026-11-07/17-00-00: too large for the server (413)"), "{paused}");
         let idle = summary(&samples::status_idle(), &utc);
         assert!(idle.starts_with("Recording · idle · passive check at 20:03:15\nScreens: none set up"), "{idle}");
         assert!(idle.contains("Input: no keyboard or mouse found\nUpload: server unreachable"), "{idle}");

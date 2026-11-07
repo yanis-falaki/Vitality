@@ -165,29 +165,46 @@ impl Store {
         Ok(InteractionHandle { folder, header, start, shots: vec![], quality: self.quality })
     }
 
-    /// Completes every folder left without `interaction.json` (a crash), from its shots: the
-    /// notes in `.shots.jsonl`, or else the shot files themselves. Folders without any shot
-    /// are removed. Returns the folders completed.
+    /// Completes every folder left without a readable `interaction.json` (a crash or a power
+    /// loss), from its shots: the notes in `.shots.jsonl`, checked against the files, or else
+    /// the shot files themselves. Folders without any shot are removed. Returns the folders
+    /// completed.
     pub fn finish_interrupted(&self) -> io::Result<Vec<PathBuf>> {
         let mut done = vec![];
         for folder in self.folders()? {
-            let partial = folder.join(PARTIAL);
-            if folder.join(INTERACTION_FILE).exists() {
-                let _ = fs::remove_file(&partial); // a crash between the two writes
+            if folder.join(UPLOADED).exists() || folder.join(FAILED).exists() {
                 continue;
             }
-            match recover(&self.root, &folder)? {
-                Some(json) => {
-                    write_atomic(&folder.join(INTERACTION_FILE), &serde_json::to_vec_pretty(&json)?)?;
-                    let _ = fs::remove_file(&partial);
-                    done.push(folder);
-                }
-                None => {
-                    fs::remove_dir_all(&folder)?;
-                }
+            if readable(&folder) {
+                let _ = fs::remove_file(folder.join(PARTIAL)); // a crash between the two writes
+                continue;
+            }
+            if self.repair(&folder)?.is_some() {
+                done.push(folder);
             }
         }
         Ok(done)
+    }
+
+    /// Rebuilds `folder`'s `interaction.json` from its notes and shots; `None` (and the folder
+    /// removed) when it holds no usable shot.
+    pub fn repair(&self, folder: &Path) -> io::Result<Option<PathBuf>> {
+        match recover(&self.root, folder)? {
+            Some(json) => {
+                write_atomic(&folder.join(INTERACTION_FILE), &serde_json::to_vec_pretty(&json)?)?;
+                let _ = fs::remove_file(folder.join(PARTIAL));
+                Ok(Some(folder.to_path_buf()))
+            }
+            None => {
+                fs::remove_dir_all(folder)?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Interactions marked `failed` (refused for good by the server).
+    pub fn failed_count(&self) -> u32 {
+        self.folders().unwrap_or_default().iter().filter(|f| f.join(FAILED).exists()).count() as u32
     }
 
     /// Complete interactions not yet uploaded or failed, oldest first.
@@ -296,12 +313,19 @@ impl InteractionHandle {
         self.shots.len()
     }
 
+    /// The bytes of its shots so far.
+    pub fn bytes(&self) -> u64 {
+        self.shots.iter().map(|s| s.bytes).sum()
+    }
+
     /// Writes one shot (WebP) taken at `ts`; returns its file name.
     pub fn add_shot(&mut self, screen_name: Option<&str>, image: &RgbImage, ts: DateTime<Utc>, trigger: Trigger) -> io::Result<String> {
         let offset = (ts - self.start).num_seconds().max(0) as u64;
         let taken: HashSet<&str> = self.shots.iter().map(|s| s.file.as_str()).collect();
         let file = first_free(&format!("{offset:04}"), ".webp", &taken);
-        let webp = webp::Encoder::from_rgb(image.as_raw(), image.width(), image.height()).encode(self.quality);
+        let webp = webp::Encoder::from_rgb(image.as_raw(), image.width(), image.height())
+            .encode_simple(false, self.quality)
+            .map_err(|e| io::Error::other(format!("cannot encode a {}×{} shot as WebP: {e:?}", image.width(), image.height())))?;
         write_atomic(&self.folder.join(&file), &webp)?;
         let shot = ShotJson {
             file: file.clone(),
@@ -363,21 +387,25 @@ fn recover(root: &Path, folder: &Path) -> io::Result<Option<InteractionJson>> {
         return Ok(None);
     }
     let (header, mut shots) = read_partial(&folder.join(PARTIAL)).unwrap_or_else(|| (header_from_name(root, folder), vec![]));
-    // Notes for files that are missing are dropped; files without a note are described from
-    // the file itself.
-    shots.retain(|s| files.contains(&s.file));
+    // Notes whose file is missing, cut short or not a WebP are dropped; files without a
+    // (good) note are described from the file itself.
+    shots.retain(|s| files.contains(&s.file) && is_webp_of(&folder.join(&s.file), s.bytes));
+    let trigger = shots.first().map(|s| s.trigger.clone()).unwrap_or_else(|| "activity".into());
     let start = DateTime::parse_from_rfc3339(&header.start).map(|t| t.with_timezone(&Utc)).unwrap_or_else(|_| Utc::now());
     for file in &files {
         if shots.iter().any(|s| &s.file == file) {
             continue;
         }
         let bytes = fs::read(folder.join(file))?;
+        if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+            continue;
+        }
         let Some(features) = webp::BitstreamFeatures::new(&bytes) else { continue };
         let secs: i64 = file.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
         shots.push(ShotJson {
             file: file.clone(),
             ts: format_utc(start + chrono::Duration::seconds(secs)),
-            trigger: "activity".into(),
+            trigger: trigger.clone(),
             width: features.width(),
             height: features.height(),
             bytes: bytes.len() as u64,
@@ -388,6 +416,22 @@ fn recover(root: &Path, folder: &Path) -> io::Result<Option<InteractionJson>> {
         return Ok(None);
     }
     Ok(Some(assemble(&header, shots)))
+}
+
+/// Whether `folder`'s `interaction.json` exists and parses.
+fn readable(folder: &Path) -> bool {
+    fs::read(folder.join(INTERACTION_FILE)).ok().and_then(|b| serde_json::from_slice::<InteractionJson>(&b).ok()).is_some()
+}
+
+/// Whether `path` is a WebP of exactly `bytes` bytes.
+fn is_webp_of(path: &Path, bytes: u64) -> bool {
+    use std::io::Read;
+    let Ok(meta) = fs::metadata(path) else { return false };
+    let mut head = [0u8; 12];
+    meta.len() == bytes
+        && fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)).is_ok()
+        && &head[0..4] == b"RIFF"
+        && &head[8..12] == b"WEBP"
 }
 
 fn read_partial(path: &Path) -> Option<(PartialHeader, Vec<ShotJson>)> {
@@ -415,7 +459,8 @@ fn append_line(path: &Path, value: &impl Serialize) -> io::Result<()> {
     let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
     let mut line = serde_json::to_vec(value)?;
     line.push(b'\n');
-    f.write_all(&line)
+    f.write_all(&line)?;
+    f.sync_data()
 }
 
 fn first_free(base: &str, ext: &str, taken: &HashSet<&str>) -> String {

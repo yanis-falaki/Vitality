@@ -29,6 +29,8 @@ pub enum ScreenState {
     NeedsPick,
     /// Its screen-share is being opened (the portal's picker may be showing).
     Opening,
+    /// Its stream ended or failed; it is being reopened from its saved permission.
+    Stopped,
 }
 
 /// One screen as the Screens page shows it.
@@ -110,6 +112,11 @@ pub struct UploadStatus {
     /// Finished interactions not yet uploaded.
     pub pending: u32,
     pub last_upload: Option<DateTime<Utc>>,
+    /// Interactions the server refused for good (marked `failed`: 400, 409, 413, 422).
+    pub failed: u32,
+    /// The latest such refusal since the app started ("2026-11-07/17-00-00: too large for the
+    /// server (413)"): a warning on Status and the tray.
+    pub last_failure: Option<String>,
 }
 
 /// The reply of `status` (the interface, the tray, `vitality-client status`).
@@ -121,6 +128,8 @@ pub struct StatusView {
     /// Screens set up, and how many of them are live.
     pub screens: u32,
     pub screens_live: u32,
+    /// The screens that need the owner: to be picked again, or stopped.
+    pub screens_attention: Vec<String>,
     /// Input devices readable ("ok", "no_devices", "permission_denied").
     pub input: String,
 }
@@ -141,6 +150,7 @@ pub mod samples {
                 ScreenStatus { id: ScreenId("s1".into()), name: "Main".into(), state: ScreenState::Live, last_frame_age_s: Some(0.4) },
                 ScreenStatus { id: ScreenId("s2".into()), name: "Screen 2".into(), state: ScreenState::NeedsPick, last_frame_age_s: None },
                 ScreenStatus { id: ScreenId("s3".into()), name: "Screen 3".into(), state: ScreenState::Opening, last_frame_age_s: None },
+                ScreenStatus { id: ScreenId("s4".into()), name: "Screen 4".into(), state: ScreenState::Stopped, last_frame_age_s: None },
             ],
             duplicates: vec![(ScreenId("s1".into()), ScreenId("s3".into()))],
         }
@@ -150,9 +160,10 @@ pub mod samples {
         StatusView {
             capture: CaptureView { mode: CaptureMode::Active, since: Some(at(20, 2, 0)), shots: 14, next_check_at: None, stopped_by: None },
             pause: PauseView { paused: false, until: None },
-            upload: UploadStatus { state: UploadState::Ok, pending: 0, last_upload: Some(at(20, 1, 30)) },
+            upload: UploadStatus { state: UploadState::Ok, pending: 0, last_upload: Some(at(20, 1, 30)), failed: 0, last_failure: None },
             screens: 2,
             screens_live: 1,
+            screens_attention: vec!["Screen 2".into()],
             input: "ok".into(),
         }
     }
@@ -161,9 +172,16 @@ pub mod samples {
         StatusView {
             capture: CaptureView { mode: CaptureMode::Stopped, since: None, shots: 0, next_check_at: None, stopped_by: Some(StopReason::Paused) },
             pause: PauseView { paused: true, until: Some(at(21, 0, 0)) },
-            upload: UploadStatus { state: UploadState::Rejected { device: "desktop".into() }, pending: 3, last_upload: None },
+            upload: UploadStatus {
+                state: UploadState::Rejected { device: "desktop".into() },
+                pending: 3,
+                last_upload: None,
+                failed: 1,
+                last_failure: Some("2026-11-07/17-00-00: too large for the server (413)".into()),
+            },
             screens: 2,
             screens_live: 2,
+            screens_attention: vec![],
             input: "permission_denied".into(),
         }
     }
@@ -172,9 +190,10 @@ pub mod samples {
         StatusView {
             capture: CaptureView { mode: CaptureMode::Idle, since: None, shots: 0, next_check_at: Some(at(20, 3, 15)), stopped_by: None },
             pause: PauseView::default(),
-            upload: UploadStatus { state: UploadState::Offline, pending: 1, last_upload: None },
+            upload: UploadStatus { state: UploadState::Offline, pending: 1, last_upload: None, failed: 0, last_failure: None },
             screens: 0,
             screens_live: 0,
+            screens_attention: vec![],
             input: "no_devices".into(),
         }
     }

@@ -34,6 +34,10 @@ fn quick() -> PolicySettings {
 }
 
 async fn rig_in(dir: tempfile::TempDir) -> Rig {
+    rig_with(dir, quick()).await
+}
+
+async fn rig_with(dir: tempfile::TempDir, policy: PolicySettings) -> Rig {
     let paths = Paths::under(dir.path());
     let server = FakeServer::default();
     let url = server.serve().await;
@@ -42,7 +46,7 @@ async fn rig_in(dir: tempfile::TempDir) -> Rig {
     let feeds = Arc::new(FakeFeeds::default());
     let core = Runtime::start(Parts {
         paths: paths.clone(),
-        policy: quick(),
+        policy,
         webp_quality: 75.0,
         server: Some(url),
         upload_timings: fast(),
@@ -172,10 +176,10 @@ async fn lock_ends_the_interaction_and_unlock_resumes() {
     tokio::time::sleep(Duration::from_millis(60)).await;
     r.input();
     eventually("active", || r.core.status().capture.mode == CaptureMode::Active).await;
-    r.session.send(SessionEvent::Locked(true));
+    r.session.lock(true);
     eventually("stopped by the lock", || r.core.status().capture.stopped_by == Some(StopReason::Locked)).await;
     assert_eq!(r.complete().len(), 1);
-    r.session.send(SessionEvent::Locked(false));
+    r.session.lock(false);
     eventually("idle", || r.core.status().capture.mode == CaptureMode::Idle).await;
 }
 
@@ -234,4 +238,46 @@ pub async fn bare_core() -> BareCore {
         tick: Duration::from_millis(20),
     });
     BareCore { dir, core }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_full_interaction_is_split_and_every_part_is_uploaded() {
+    // R9 end to end: a tiny budget, so the second shot of an interaction passes it.
+    let dir = tempfile::tempdir().unwrap();
+    let r = rig_with(dir, PolicySettings { max_interaction_bytes: 1, ..quick() }).await;
+    r.add_screen(40).await;
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    r.input();
+    eventually("active", || r.core.status().capture.mode == CaptureMode::Active).await;
+    r.frame(1, 200); // the settle shot has something to take
+    eventually("two interactions uploaded", || {
+        let c = r.complete();
+        c.len() >= 2 && c.iter().all(|f| f.join(UPLOADED).exists())
+    })
+    .await;
+    let log = r.core.recent_decisions(50).join("\n");
+    assert!(log.contains("R9 end") && log.contains("R9 shot"), "{log}");
+    let second = json(&r.complete()[1]);
+    assert!(!second["shots"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn started_while_locked_captures_nothing() {
+    // I6: the lock state from before the runtime subscribed is not lost.
+    let dir = tempfile::tempdir().unwrap();
+    let session = Arc::new(FakeSession::default());
+    session.lock(true);
+    let core = Runtime::start(Parts {
+        paths: Paths::under(dir.path()),
+        policy: quick(),
+        webp_quality: 75.0,
+        server: None,
+        upload_timings: fast(),
+        input: Arc::new(FakeInput::default()),
+        session,
+        portal: Arc::new(FakePortal::default()),
+        feeds: Arc::new(FakeFeeds::default()),
+        tick: Duration::from_millis(20),
+    });
+    eventually("stopped by the lock", || core.status().capture.stopped_by == Some(StopReason::Locked)).await;
 }

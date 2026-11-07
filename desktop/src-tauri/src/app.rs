@@ -23,10 +23,14 @@ use crate::upload::UploadTimings;
 
 pub fn run() {
     let paths = Paths::from_env();
-    if control::request(&paths.socket, &ControlRequest::Show).is_ok() {
-        eprintln!("vitality-client: already running; its window is shown");
-        return;
-    }
+    let _instance = match control::lock_instance(&paths.socket) {
+        Ok(lock) => lock,
+        Err(_) => {
+            let shown = control::request(&paths.socket, &ControlRequest::Show).is_ok();
+            eprintln!("vitality-client: already running{}", if shown { "; its window is shown" } else { "" });
+            return;
+        }
+    };
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             crate::commands::status,

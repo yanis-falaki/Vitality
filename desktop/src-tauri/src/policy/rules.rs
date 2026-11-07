@@ -8,6 +8,8 @@
 //! R7 passive shots form one passive interaction; it ends on input, after
 //!    `passive_quiet_checks` checks without change, or when capture stops.
 //! R8 paused, locked, asleep: an open interaction ends; nothing is captured, no checks run.
+//! R9 an interaction whose shots reach `max_interaction_bytes` (or `max_interaction_shots`)
+//!    ends, and one of the same kind starts at once with a shot of every screen.
 //!
 //! In idle every input starts an interaction: an interaction only ends after `settle` +
 //! `start_gap` without input, so R1's gap has always passed by then (and after a resume the
@@ -109,6 +111,37 @@ impl Policy {
                 vec![self.shoot(screens, Trigger::Activity, rule)]
             }
         }
+    }
+
+    /// The open interaction now holds `bytes` in `shots` shots (R9: past the budget it is split).
+    pub fn on_written(&mut self, now: Instant, bytes: u64, shots: u32) -> Vec<Decision> {
+        let s = &self.settings;
+        // An interaction of one shot cannot be split any further.
+        if shots <= 1 || (bytes < s.max_interaction_bytes && shots < s.max_interaction_shots) {
+            return vec![];
+        }
+        let (kind, trigger) = match self.mode {
+            Mode::Active { .. } => (InteractionKind::Active, Trigger::Activity),
+            Mode::Passive { .. } => (InteractionKind::Passive, Trigger::Passive),
+            _ => return vec![],
+        };
+        let screens: Vec<ScreenId> = self.current.keys().cloned().collect();
+        let first = u32::from(!screens.is_empty());
+        match &mut self.mode {
+            Mode::Active { since, shots, last_shot_at, .. } => {
+                (*since, *shots, *last_shot_at) = (now, first, now);
+            }
+            Mode::Passive { since, shots, quiet, .. } => {
+                (*since, *shots, *quiet) = (now, first, 0);
+            }
+            _ => {}
+        }
+        let shot = if screens.is_empty() {
+            skipped(Rule::R9, "no screen has a frame")
+        } else {
+            self.shoot(screens, trigger, Rule::R9)
+        };
+        vec![Decision::EndInteraction { rule: Rule::R9 }, Decision::StartInteraction { kind }, shot]
     }
 
     /// Capture must stop (R8; for lock and sleep also R7). Ends an open interaction.

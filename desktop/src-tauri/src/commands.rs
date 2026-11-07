@@ -46,9 +46,8 @@ pub async fn screens_add(core: CoreState<'_>) -> Result<ScreensView, String> {
 
 #[tauri::command]
 pub async fn screens_repick(core: CoreState<'_>, id: ScreenId) -> Result<ScreensView, String> {
-    let picked = core.screens.repick(&id).await;
-    core.forget_screen(&id); // its next shot is a fresh start
-    picked.map_err(|e| e.to_string())?;
+    core.screens.repick(&id).await.map_err(|e| e.to_string())?;
+    core.forget_screen(&id); // a new share: its next shot is a fresh start
     Ok(core.screens.view())
 }
 
@@ -58,8 +57,9 @@ pub fn screens_rename(core: CoreState<'_>, id: ScreenId, name: String) -> Result
     Ok(core.screens.view())
 }
 
+/// Async so the share is closed on the runtime, not on the interface's thread.
 #[tauri::command]
-pub fn screens_remove(core: CoreState<'_>, id: ScreenId) -> Result<ScreensView, String> {
+pub async fn screens_remove(core: CoreState<'_>, id: ScreenId) -> Result<ScreensView, String> {
     core.screens.remove(&id).map_err(|e| e.to_string())?;
     core.forget_screen(&id);
     Ok(core.screens.view())

@@ -2,8 +2,9 @@
 //! PipeWire's buffer as it arrives (`always-copy=true`, the buffer released at once), at most 2
 //! a second, and keeps only the newest as `Latest` (an RGB image, its thumb, its arrival time).
 //!
-//! `FeedFactory::start(node_id, fd, slot)` starts a feed writing into `slot`; dropping the
-//! returned `Feed` stops it. `GstFeeds` is the real factory; `to_rgb` (pure) turns the packed
+//! `FeedFactory::start(node_id, fd, slot, on_end)` starts a feed writing into `slot` and calls
+//! `on_end` if the stream ends or fails; dropping the returned `Feed` stops it. There is no
+//! keepalive (it would repeat the last buffer), so a frame's time is when it really arrived. `GstFeeds` is the real factory; `to_rgb` (pure) turns the packed
 //! pixel formats PipeWire offers into RGB.
 
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -35,8 +36,11 @@ pub type Slot = Arc<Mutex<Option<Latest>>>;
 /// A running feed; dropping it stops it.
 pub trait Feed: Send + Sync {}
 
+/// Called once when a feed ends or fails, with the reason.
+pub type OnEnd = Box<dyn Fn(String) + Send + Sync>;
+
 pub trait FeedFactory: Send + Sync {
-    fn start(&self, node_id: u32, fd: OwnedFd, slot: Slot) -> Result<Box<dyn Feed>, String>;
+    fn start(&self, node_id: u32, fd: OwnedFd, slot: Slot, on_end: OnEnd) -> Result<Box<dyn Feed>, String>;
 }
 
 /// The packed formats asked for, by the order of their bytes in memory.
@@ -95,7 +99,7 @@ impl GstFeeds {
 /// system-memory formats, the newest sample only).
 pub fn pipeline_description(fd: i32, node_id: u32) -> String {
     format!(
-        "pipewiresrc fd={fd} path={node_id} always-copy=true keepalive-time=1000 \
+        "pipewiresrc fd={fd} path={node_id} always-copy=true \
          ! video/x-raw,max-framerate=2/1,format={{BGRx,RGBx,xRGB,xBGR,BGRA,RGBA,ARGB,ABGR,BGR,RGB}} \
          ! appsink name=sink max-buffers=1 drop=true sync=false"
     )
@@ -118,7 +122,7 @@ impl Drop for GstFeed {
 }
 
 impl FeedFactory for GstFeeds {
-    fn start(&self, node_id: u32, fd: OwnedFd, slot: Slot) -> Result<Box<dyn Feed>, String> {
+    fn start(&self, node_id: u32, fd: OwnedFd, slot: Slot, on_end: OnEnd) -> Result<Box<dyn Feed>, String> {
         use gstreamer::prelude::*;
         use gstreamer_app::{AppSink, AppSinkCallbacks};
 
@@ -154,7 +158,7 @@ impl FeedFactory for GstFeeds {
         );
         pipeline.set_state(gstreamer::State::Playing).map_err(|e| format!("cannot start the frame pipeline: {e}"))?;
         let stop = Arc::new(AtomicBool::new(false));
-        watch_bus(&pipeline, node_id, stop.clone());
+        watch_bus(&pipeline, node_id, stop.clone(), on_end);
         Ok(Box::new(GstFeed { pipeline, stop, _fd: fd }))
     }
 }
@@ -178,23 +182,25 @@ fn sample_to_rgb(sample: &gstreamer::Sample) -> Option<RgbImage> {
     to_rgb(format, frame.width(), frame.height(), stride, frame.plane_data(0).ok()?)
 }
 
-/// Logs the pipeline's errors (a stuck feed shows as an old "last frame" on the Screens page;
-/// there are no automatic restarts).
-fn watch_bus(pipeline: &gstreamer::Pipeline, node_id: u32, stop: Arc<AtomicBool>) {
+/// Watches the pipeline: an error or the end of the stream calls `on_end` (once). A feed that
+/// merely stalls shows as an old "last frame" on the Screens page.
+fn watch_bus(pipeline: &gstreamer::Pipeline, node_id: u32, stop: Arc<AtomicBool>, on_end: OnEnd) {
     use gstreamer::prelude::*;
     let Some(bus) = pipeline.bus() else { return };
     let _ = std::thread::Builder::new().name(format!("feed-{node_id}")).spawn(move || {
         use gstreamer::MessageView;
         while !stop.load(Ordering::Relaxed) {
             let Some(msg) = bus.timed_pop(gstreamer::ClockTime::from_seconds(1)) else { continue };
-            match msg.view() {
-                MessageView::Error(e) => eprintln!("vitality-client: screen feed {node_id}: {} ({:?})", e.error(), e.debug()),
-                MessageView::Eos(_) => {
-                    eprintln!("vitality-client: screen feed {node_id} ended");
-                    return;
-                }
-                _ => {}
+            let why = match msg.view() {
+                MessageView::Error(e) => format!("{} ({:?})", e.error(), e.debug()),
+                MessageView::Eos(_) => "the stream ended".to_string(),
+                _ => continue,
+            };
+            eprintln!("vitality-client: screen feed {node_id}: {why}");
+            if !stop.load(Ordering::Relaxed) {
+                on_end(why);
             }
+            return;
         }
     });
 }
@@ -238,7 +244,8 @@ mod tests {
     #[test]
     fn the_pipeline_is_the_specs() {
         let d = pipeline_description(7, 42);
-        assert!(d.starts_with("pipewiresrc fd=7 path=42 always-copy=true keepalive-time=1000 ! video/x-raw,max-framerate=2/1,format={BGRx,"));
+        assert!(d.starts_with("pipewiresrc fd=7 path=42 always-copy=true ! video/x-raw,max-framerate=2/1,format={BGRx,"));
+        assert!(!d.contains("keepalive"), "a keepalive repeats the last buffer and hides a stall");
         assert!(d.ends_with("! appsink name=sink max-buffers=1 drop=true sync=false"));
     }
 

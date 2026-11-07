@@ -1,12 +1,12 @@
 // A fake core for screenshots and manual checks in a browser (`npm run dev`, then
-// /mock.html?scenario=two|duplicate|needs-pick|empty|paused): answers the app's Tauri commands
+// /mock.html?scenario=two|duplicate|needs-pick|stopped|empty|paused): answers the app's Tauri commands
 // from the fixtures (fixtures.ts, written from the Rust types) and draws made-up previews.
 // Never shipped: only mock.html loads it.
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { ScreensView, StatusView } from "../core";
 import { statusActive, statusPaused } from "../fixtures";
 
-type Scenario = "two" | "duplicate" | "needs-pick" | "empty" | "paused";
+type Scenario = "two" | "duplicate" | "needs-pick" | "empty" | "paused" | "stopped";
 
 /** A made-up desktop: a window with a title bar and lines of "text", in the given hue. */
 function fakeScreen(hue: number, seed: number): string {
@@ -37,6 +37,8 @@ function screensFor(s: Scenario): ScreensView {
       return { screens: [], duplicates: [] };
     case "duplicate":
       return { screens: [live("s1", "Main"), live("s2", "Screen 2", 0.6)], duplicates: [["s1", "s2"]] };
+    case "stopped":
+      return { screens: [live("s1", "Main"), { id: "s2", name: "Side", state: "stopped", last_frame_age_s: null }], duplicates: [] };
     case "needs-pick":
       return {
         screens: [live("s1", "Main"), { id: "s2", name: "Side", state: "needs_pick", last_frame_age_s: null }, live("s3", "Laptop", 42)],
@@ -49,7 +51,11 @@ function screensFor(s: Scenario): ScreensView {
 
 export function installFakeCore(scenario: Scenario) {
   let screens = screensFor(scenario);
-  let status: StatusView = scenario === "paused" ? statusPaused : { ...statusActive, screens: screens.screens.length };
+  const attention = screens.screens.filter((s) => s.state === "needs_pick" || s.state === "stopped").map((s) => s.name);
+  let status: StatusView =
+    scenario === "paused"
+      ? statusPaused
+      : { ...statusActive, screens: screens.screens.length, screens_live: screens.screens.length - attention.length, screens_attention: attention };
   const previews: Record<string, string> = {
     s1: fakeScreen(200, 1),
     s2: scenario === "duplicate" ? fakeScreen(200, 1) : fakeScreen(30, 2),

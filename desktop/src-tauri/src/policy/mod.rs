@@ -4,7 +4,8 @@
 //! - `Policy::on_input(now)` for keyboard or mouse input,
 //! - `Policy::on_tick(now, thumbs)` every 250 ms with each screen's newest thumb,
 //! - `Policy::on_stop(now, why)` when capture must stop (pause, lock, sleep, quit),
-//! - `Policy::on_resume(now)` when nothing stops it any more.
+//! - `Policy::on_resume(now)` when nothing stops it any more,
+//! - `Policy::on_written(now, bytes, shots)` after each shot, with the open interaction's size (R9).
 //!
 //! Each returns `Decision`s in order: start an interaction, take a shot of some screens, end the
 //! interaction, or a skipped shot (for the decisions log). `Policy::state()` says what it is doing.
@@ -37,6 +38,10 @@ pub struct PolicySettings {
     pub passive_every: Duration,
     /// R7: a passive interaction ends after this many checks in a row without change.
     pub passive_quiet_checks: u32,
+    /// R9: an interaction whose shots reach this many bytes ends, and a new one starts.
+    pub max_interaction_bytes: u64,
+    /// R9: … or this many shots (the server takes at most 1000 files in one upload).
+    pub max_interaction_shots: u32,
 }
 
 impl Default for PolicySettings {
@@ -48,6 +53,8 @@ impl Default for PolicySettings {
             threshold: Threshold::default(),
             passive_every: Duration::from_secs(45),
             passive_quiet_checks: 3,
+            max_interaction_bytes: 40 * 1024 * 1024,
+            max_interaction_shots: 900,
         }
     }
 }
@@ -79,6 +86,7 @@ pub enum Rule {
     R6,
     R7,
     R8,
+    R9,
 }
 
 /// What the runtime should do.
@@ -156,7 +164,8 @@ impl Policy {
         }
     }
 
-    /// Forget a screen (it was removed), so a new screen with its id would count as changed.
+    /// Forget a screen's last shot (it was removed, re-picked, or its shot could not be written),
+    /// so it counts as changed next time.
     pub fn forget_screen(&mut self, id: &ScreenId) {
         self.current.remove(id);
         self.last_shot.remove(id);

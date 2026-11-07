@@ -54,15 +54,25 @@ impl Paths {
     }
 }
 
-/// Writes `bytes` to `path` atomically (a temporary file beside it, then a rename).
+/// Writes `bytes` to `path` atomically and durably: a temporary file beside it, synced, renamed
+/// over `path`, then the folder synced, so a power loss leaves the old file or the new one.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
+    use std::io::Write;
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
+    let mut f = std::fs::File::create(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)?;
+    sync_dir(dir)
+}
+
+/// Syncs a folder's entries (after a rename or a new file in it).
+pub fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::File::open(dir)?.sync_all()
 }
 
 #[cfg(test)]

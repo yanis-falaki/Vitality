@@ -65,6 +65,10 @@ impl Registry {
         if name.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "a screen's name cannot be empty"));
         }
+        if self.entries.iter().any(|e| &e.id != id && e.name == name) {
+            // The name goes into shots: two screens with one name could not be told apart.
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("another screen is already called {name:?}")));
+        }
         let Some(entry) = self.entries.iter_mut().find(|e| &e.id == id) else { return Ok(false) };
         entry.name = name;
         self.save()?;
@@ -107,12 +111,7 @@ impl Registry {
     }
 
     fn save(&self) -> io::Result<()> {
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(&self.entries)?)?;
-        std::fs::rename(&tmp, &self.path)
+        crate::paths::write_atomic(&self.path, &serde_json::to_vec_pretty(&self.entries)?)
     }
 }
 
@@ -154,6 +153,8 @@ mod tests {
         let mut r = Registry::load(&dir.path().join("screens.json"));
         let a = r.add(None).unwrap();
         assert!(r.rename(&a.id, "   ").is_err());
+        let b = r.add(None).unwrap();
+        assert!(r.rename(&b.id, "Screen 1").is_err(), "names stay unique");
         assert!(!r.rename(&ScreenId("nope".into()), "X").unwrap());
         assert!(!r.remove(&ScreenId("nope".into())).unwrap());
         assert!(r.rename(&a.id, &"x".repeat(100)).unwrap());

@@ -31,6 +31,15 @@ export function CaptureState() {
   return (
     <div className="capture">
       <p className="capture-line"><span className={`dot tone-${tone}`} aria-hidden />{text}</p>
+      {status.data.screens_attention.length > 0 && (
+        <p className="capture-warning">{status.data.screens_attention.join(", ")}: see Screens</p>
+      )}
+      {status.data.upload.failed > 0 && (
+        <p className="capture-warning" title={status.data.upload.last_failure ?? undefined}>
+          {status.data.upload.failed === 1 ? "1 interaction" : `${status.data.upload.failed} interactions`} refused by the
+          server for good{status.data.upload.last_failure ? ` · latest: ${status.data.upload.last_failure}` : ""}
+        </p>
+      )}
       <div className="capture-actions">
         {status.data.pause.paused ? (
           <button className="button button-wide" disabled={change.isPending} onClick={() => change.mutate("resume")}>Resume</button>

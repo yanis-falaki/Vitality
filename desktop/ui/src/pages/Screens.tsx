@@ -27,6 +27,10 @@ export function Screens() {
         <div>
           <h1>Screens</h1>
           <p className="lede">Each screen is one screen share, named by you. Vitality captures what is on them.</p>
+          <p className="hint">
+            When your desktop asks which screen to share, tick <b>Allow a restore token</b> (or “Remember”) if it offers
+            it: Vitality then reopens the screen at login without asking again.
+          </p>
         </div>
         {view && view.screens.length > 0 && (
           <button className="button button-primary" disabled={add.isPending} onClick={() => add.mutate()}>

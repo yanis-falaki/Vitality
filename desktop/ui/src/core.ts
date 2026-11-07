@@ -5,7 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type ScreenId = string;
-export type ScreenState = "live" | "needs_pick" | "opening";
+/** `stopped`: its stream ended or failed; it is being reopened from its saved permission. */
+export type ScreenState = "live" | "needs_pick" | "opening" | "stopped";
 
 export interface ScreenStatus {
   id: ScreenId;
@@ -44,7 +45,14 @@ export type UploadState =
   | { state: "rejected"; device: string }
   | { state: "disabled" };
 
-export type UploadStatus = UploadState & { pending: number; last_upload: string | null };
+export type UploadStatus = UploadState & {
+  pending: number;
+  last_upload: string | null;
+  /** Interactions the server refused for good (400, 409, 413, 422). */
+  failed: number;
+  /** The latest such refusal since the app started, e.g. "2026-11-07/17-00-00: too large for the server (413)". */
+  last_failure: string | null;
+};
 
 export interface StatusView {
   capture: CaptureView;
@@ -52,6 +60,8 @@ export interface StatusView {
   upload: UploadStatus;
   screens: number;
   screens_live: number;
+  /** Names of the screens to pick again, or stopped. */
+  screens_attention: string[];
   input: "ok" | "no_devices" | "permission_denied";
 }
 

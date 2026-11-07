@@ -28,6 +28,12 @@ export const screens: ScreensView = {
       "last_frame_age_s": null,
       "name": "Screen 3",
       "state": "opening"
+    },
+    {
+      "id": "s4",
+      "last_frame_age_s": null,
+      "name": "Screen 4",
+      "state": "stopped"
     }
   ]
 };
@@ -46,8 +52,13 @@ export const statusActive: StatusView = {
     "until": null
   },
   "screens": 2,
+  "screens_attention": [
+    "Screen 2"
+  ],
   "screens_live": 1,
   "upload": {
+    "failed": 0,
+    "last_failure": null,
     "last_upload": "2026-11-07T20:01:30Z",
     "pending": 0,
     "state": "ok"
@@ -68,9 +79,12 @@ export const statusPaused: StatusView = {
     "until": "2026-11-07T21:00:00Z"
   },
   "screens": 2,
+  "screens_attention": [],
   "screens_live": 2,
   "upload": {
     "device": "desktop",
+    "failed": 1,
+    "last_failure": "2026-11-07/17-00-00: too large for the server (413)",
     "last_upload": null,
     "pending": 3,
     "state": "rejected"
@@ -91,8 +105,11 @@ export const statusIdle: StatusView = {
     "until": null
   },
   "screens": 0,
+  "screens_attention": [],
   "screens_live": 0,
   "upload": {
+    "failed": 0,
+    "last_failure": null,
     "last_upload": null,
     "pending": 1,
     "state": "offline"

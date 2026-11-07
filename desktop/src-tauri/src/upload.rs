@@ -2,20 +2,26 @@
 //! (`protocol/vitality_protocol/routes.py`): `POST /interactions`, multipart, part
 //! `interaction` (the `interaction.json` text) and one part `shots` per file, named by its file.
 //!
-//! What each reply does (as `routes.py` documents):
-//!   201, 200          → `uploaded` marker, go on with the next
-//!   403               → keep pending, state "rejected", retry every 5 min
-//!   409, 413, 422     → `failed` marker (never retried), go on with the next
-//!   anything else, a timeout, no connection → keep pending, state "offline", retry after
-//!                       5 s, doubling up to 5 min
-//! Retries are safe: the server answers 200 for an interaction it already has.
+//! What each reply does:
+//!   201, 200            → `uploaded` marker, go on with the next
+//!   403                 → keep pending, state "rejected", retry every 5 min
+//!   400, 409, 413, 422  → `failed` marker for that interaction only (never retried; counted and
+//!                         shown in Status), go on with the next
+//!   no connection       → the server is unreachable: state "offline", wait 5 s doubling to 5 min
+//!   anything else, a timeout → that interaction waits with its own backoff (5 s doubling to
+//!                         5 min) while newer ones go on; state "offline"
+//! Among the interactions that are due, the oldest goes first. A request may take 60 s plus 1 s
+//! per MiB of body (at most 15 min); connecting at most 10 s. Retries are safe: the server answers
+//! 200 for an interaction it already has. A folder whose `interaction.json` cannot be read is
+//! rebuilt from its shots (`Store::repair`), not failed.
 //!
 //! `Uploader::start(store, server, device, timings)` runs it as a tokio task; `wake()` (a new
 //! interaction finished) tries at once; `status()` is its state for Status and the tray.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use tokio::sync::Notify;
@@ -32,7 +38,11 @@ pub struct UploadTimings {
     pub rejected_retry: Duration,
     /// How often to look for pending interactions with nothing else to do.
     pub idle_poll: Duration,
-    pub request_timeout: Duration,
+    pub connect_timeout: Duration,
+    /// A request may take `request_base + request_per_mib × MiB`, at most `request_max`.
+    pub request_base: Duration,
+    pub request_per_mib: Duration,
+    pub request_max: Duration,
 }
 
 impl Default for UploadTimings {
@@ -42,8 +52,19 @@ impl Default for UploadTimings {
             backoff_max: Duration::from_secs(300),
             rejected_retry: Duration::from_secs(300),
             idle_poll: Duration::from_secs(60),
-            request_timeout: Duration::from_secs(120),
+            connect_timeout: Duration::from_secs(10),
+            request_base: Duration::from_secs(60),
+            request_per_mib: Duration::from_secs(1),
+            request_max: Duration::from_secs(15 * 60),
         }
+    }
+}
+
+impl UploadTimings {
+    /// How long a request with a body of `bytes` may take.
+    pub fn request_timeout(&self, bytes: u64) -> Duration {
+        let mib = bytes.div_ceil(1024 * 1024).min(1 << 20) as u32;
+        (self.request_base + self.request_per_mib * mib).min(self.request_max)
     }
 }
 
@@ -57,9 +78,21 @@ pub struct Uploader {
 #[derive(Debug, PartialEq)]
 enum Outcome {
     Uploaded,
-    Failed(String),
+    /// Refused for good (400, 409, 413, 422).
+    Failed(u16, String),
     Rejected,
-    Offline(String),
+    /// The server could not be reached at all: wait for it.
+    Unreachable(String),
+    /// This interaction did not go through (a 5xx, a timeout…): retry it later.
+    Retry(String),
+    /// The folder cannot be read as it is: rebuild it.
+    Unreadable(String),
+}
+
+/// One interaction's own wait after a retryable failure.
+struct Retry {
+    due: Instant,
+    backoff: Duration,
 }
 
 impl Uploader {
@@ -70,7 +103,13 @@ impl Uploader {
         let server = server.map(|s| s.trim().trim_end_matches('/').to_string()).filter(|s| !s.is_empty());
         let initial = if server.is_some() { UploadState::Ok } else { UploadState::Disabled };
         let uploader = Uploader {
-            status: Arc::new(Mutex::new(UploadStatus { state: initial, pending: store.pending().len() as u32, last_upload: None })),
+            status: Arc::new(Mutex::new(UploadStatus {
+                state: initial,
+                pending: store.pending().len() as u32,
+                last_upload: None,
+                failed: store.failed_count(),
+                last_failure: None,
+            })),
             wake: Arc::new(Notify::new()),
         };
         let u = uploader.clone();
@@ -88,7 +127,7 @@ impl Uploader {
     }
 
     async fn run(&self, store: Arc<Store>, server: Option<String>, device: String, t: UploadTimings) {
-        let client = match reqwest::Client::builder().timeout(t.request_timeout).build() {
+        let client = match reqwest::Client::builder().connect_timeout(t.connect_timeout).build() {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("vitality-client: cannot make an HTTP client: {e}");
@@ -96,45 +135,90 @@ impl Uploader {
             }
         };
         let mut backoff = t.backoff_start;
+        let mut retries: HashMap<PathBuf, Retry> = HashMap::new();
         loop {
             let pending = store.pending();
-            self.set(|s| s.pending = pending.len() as u32);
+            retries.retain(|f, _| pending.contains(f));
+            self.set(|s| {
+                s.pending = pending.len() as u32;
+                s.failed = store.failed_count();
+            });
             let Some(server) = server.as_deref() else {
                 self.wake.notified().await;
                 continue;
             };
             let mut wait = t.idle_poll;
+            let (mut rejected, mut unreachable) = (false, false);
+            let now = Instant::now();
             for folder in pending {
-                match upload_one(&client, server, &folder).await {
+                if retries.get(&folder).is_some_and(|r| r.due > now) {
+                    continue; // waiting its own turn; newer ones go on
+                }
+                match upload_one(&client, server, &folder, &t).await {
                     Outcome::Uploaded => {
                         mark(&store, &folder, UPLOADED);
+                        retries.remove(&folder);
                         backoff = t.backoff_start;
                         self.set(|s| {
-                            s.state = UploadState::Ok;
                             s.pending = s.pending.saturating_sub(1);
                             s.last_upload = Some(Utc::now());
                         });
                     }
-                    Outcome::Failed(why) => {
-                        eprintln!("vitality-client: {} was refused for good: {why}", folder.display());
+                    Outcome::Failed(code, why) => {
+                        let name = folder_name(&store, &folder);
+                        eprintln!("vitality-client: {name} was refused for good ({code}): {why}");
                         mark(&store, &folder, FAILED);
-                        self.set(|s| s.pending = s.pending.saturating_sub(1));
+                        let what = match code {
+                            413 => "too large for the server",
+                            409 => "stored differently on the server",
+                            _ => "refused as invalid",
+                        };
+                        self.set(|s| {
+                            s.pending = s.pending.saturating_sub(1);
+                            s.failed += 1;
+                            s.last_failure = Some(format!("{name}: {what} ({code})"));
+                        });
+                    }
+                    Outcome::Unreadable(why) => {
+                        eprintln!("vitality-client: {} is unreadable ({why}); rebuilding it from its shots", folder.display());
+                        if let Err(e) = store.repair(&folder) {
+                            eprintln!("vitality-client: cannot rebuild {}: {e}", folder.display());
+                            retries.insert(folder.clone(), Retry { due: Instant::now() + t.backoff_max, backoff: t.backoff_max });
+                        }
                     }
                     Outcome::Rejected => {
-                        self.set(|s| s.state = UploadState::Rejected { device: device.clone() });
+                        rejected = true;
                         wait = t.rejected_retry;
                         break;
                     }
-                    Outcome::Offline(why) => {
+                    Outcome::Unreachable(why) => {
                         if self.status().state != UploadState::Offline {
                             eprintln!("vitality-client: the server is unreachable ({why}); retrying");
                         }
-                        self.set(|s| s.state = UploadState::Offline);
+                        unreachable = true;
                         wait = backoff;
                         backoff = (backoff * 2).min(t.backoff_max);
                         break;
                     }
+                    Outcome::Retry(why) => {
+                        let r = retries.entry(folder.clone()).or_insert(Retry { due: now, backoff: t.backoff_start / 2 });
+                        r.backoff = (r.backoff * 2).clamp(t.backoff_start, t.backoff_max);
+                        r.due = Instant::now() + r.backoff;
+                        eprintln!("vitality-client: {} did not go through ({why}); again in {:?}", folder.display(), r.backoff);
+                    }
                 }
+            }
+            let now = Instant::now();
+            let state = if rejected {
+                UploadState::Rejected { device: device.clone() }
+            } else if unreachable || !retries.is_empty() {
+                UploadState::Offline
+            } else {
+                UploadState::Ok
+            };
+            self.set(|s| s.state = state);
+            if let Some(next) = retries.values().map(|r| r.due).min() {
+                wait = wait.min(next.saturating_duration_since(now));
             }
             tokio::select! {
                 _ = tokio::time::sleep(wait) => {}
@@ -148,40 +232,49 @@ impl Uploader {
     }
 }
 
+fn folder_name(store: &Store, folder: &Path) -> String {
+    folder.strip_prefix(store.root()).unwrap_or(folder).to_string_lossy().into_owned()
+}
+
 fn mark(store: &Store, folder: &Path, marker: &str) {
     if let Err(e) = store.mark(folder, marker) {
         eprintln!("vitality-client: cannot mark {} {marker}: {e}", folder.display());
     }
 }
 
-/// The multipart form for one interaction folder.
-async fn form(folder: &Path) -> Result<reqwest::multipart::Form, String> {
+/// The multipart form for one interaction folder, and its size.
+async fn form(folder: &Path) -> Result<(reqwest::multipart::Form, u64), String> {
     let json = tokio::fs::read(folder.join(INTERACTION_FILE)).await.map_err(|e| format!("cannot read {INTERACTION_FILE}: {e}"))?;
     let interaction: InteractionJson = serde_json::from_slice(&json).map_err(|e| format!("{INTERACTION_FILE} is invalid: {e}"))?;
     let text = String::from_utf8(json).map_err(|_| format!("{INTERACTION_FILE} is not UTF-8"))?;
+    let mut size = text.len() as u64;
     let mut form = reqwest::multipart::Form::new().text("interaction", text);
     for shot in interaction.shots {
         let bytes = tokio::fs::read(folder.join(&shot.file)).await.map_err(|e| format!("cannot read {}: {e}", shot.file))?;
+        if bytes.len() as u64 != shot.bytes {
+            return Err(format!("{} is {} bytes, not {}", shot.file, bytes.len(), shot.bytes));
+        }
+        size += bytes.len() as u64;
         let part = reqwest::multipart::Part::bytes(bytes).file_name(shot.file).mime_str("image/webp").map_err(|e| e.to_string())?;
         form = form.part("shots", part);
     }
-    Ok(form)
+    Ok((form, size))
 }
 
-async fn upload_one(client: &reqwest::Client, server: &str, folder: &Path) -> Outcome {
-    let form = match form(folder).await {
+async fn upload_one(client: &reqwest::Client, server: &str, folder: &Path, t: &UploadTimings) -> Outcome {
+    let (form, size) = match form(folder).await {
         Ok(f) => f,
-        // A folder that cannot be sent as it is would fail the same way every time.
-        Err(why) => return Outcome::Failed(why),
+        Err(why) => return Outcome::Unreadable(why),
     };
-    let reply = client.post(format!("{server}{INTERACTIONS_PATH}")).multipart(form).send().await;
+    let reply = client.post(format!("{server}{INTERACTIONS_PATH}")).timeout(t.request_timeout(size)).multipart(form).send().await;
     match reply {
-        Err(e) => Outcome::Offline(e.to_string()),
+        Err(e) if e.is_connect() => Outcome::Unreachable(e.to_string()),
+        Err(e) => Outcome::Retry(e.to_string()),
         Ok(r) => match r.status().as_u16() {
             200 | 201 => Outcome::Uploaded,
             403 => Outcome::Rejected,
-            code @ (409 | 413 | 422) => Outcome::Failed(format!("{code} {}", r.text().await.unwrap_or_default())),
-            code => Outcome::Offline(format!("the server answered {code}")),
+            code @ (400 | 409 | 413 | 422) => Outcome::Failed(code, r.text().await.unwrap_or_default()),
+            code => Outcome::Retry(format!("the server answered {code}")),
         },
     }
 }

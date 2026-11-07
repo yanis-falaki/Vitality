@@ -1,9 +1,14 @@
 //! Screens: the owner's screen-shares, each one portal session plus a name.
 //!
 //! `Screens` is shared (`Arc`) by the runtime and the interface's commands:
-//! - `open_all()` at start reopens each saved screen from its token; a refusal marks only that
-//!   screen `NeedsPick`, the others keep capturing;
-//! - `add()` (the portal's picker; the new screen is named "Screen N"), `repick(id)`,
+//! - `open_all()` at start reopens each saved screen from its token, never showing the picker:
+//!   a screen without a token, whose token is refused, or whose restore takes longer than 8 s
+//!   (the portal may be showing a picker) becomes `NeedsPick`; the others keep capturing;
+//! - a feed that ends or fails makes its screen `Stopped` (its last frame is dropped, so it is
+//!   never shot); `reopen_due(now)`, on every tick, reopens it from its token with a backoff
+//!   (5 s doubling to 5 min);
+//! - `add()` (the portal's picker, the only way besides `repick` that it is shown; the new
+//!   screen is named "Screen N"), `repick(id)`,
 //!   `rename(id, name)`, `remove(id)`;
 //! - `latest(id)`, `thumbs()`, `statuses()`, `preview(id)` (JPEG about 480 px wide),
 //!   `shot_name(id)` (the name to write in a shot: only with more than one screen);
@@ -20,7 +25,7 @@ pub mod registry;
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use crate::policy::change::{changed, Thumb, Threshold};
@@ -31,6 +36,10 @@ use registry::Registry;
 
 /// How long two screens must look the same to be reported as duplicates.
 pub const DUPLICATE_AFTER: Duration = Duration::from_secs(10);
+/// How long a restore from a saved token may take at start before the screen needs a pick.
+pub const RESTORE_TIMEOUT: Duration = Duration::from_secs(8);
+const REOPEN_FIRST: Duration = Duration::from_secs(5);
+const REOPEN_MAX: Duration = Duration::from_secs(300);
 
 pub struct Screens {
     registry: Mutex<Registry>,
@@ -42,18 +51,30 @@ pub struct Screens {
     last_tracked: Mutex<Option<Instant>>,
     opened_all: std::sync::atomic::AtomicBool,
     threshold: Threshold,
+    restore_timeout: Mutex<Duration>,
+    reopen_first: Mutex<Duration>,
+    me: Weak<Screens>,
+    generation: std::sync::atomic::AtomicU64,
+    /// The runtime to close portal sessions on (feeds end on threads of their own).
+    rt: Option<tokio::runtime::Handle>,
 }
 
 struct Live {
     state: ScreenState,
     slot: Slot,
+    /// Which feed this is (a late end of an older feed must not stop a newer one).
+    generation: u64,
+    /// While `Stopped`: when to reopen, the wait after that, and whether a reopen is running.
+    reopen_at: Option<Instant>,
+    backoff: Duration,
+    reopening: bool,
     _feed: Option<Box<dyn feed::Feed>>,
     _keep: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl Live {
     fn with_state(state: ScreenState) -> Live {
-        Live { state, slot: Slot::default(), _feed: None, _keep: None }
+        Live { state, slot: Slot::default(), generation: 0, reopen_at: None, backoff: Duration::ZERO, reopening: false, _feed: None, _keep: None }
     }
 }
 
@@ -79,8 +100,8 @@ fn io_err(e: std::io::Error) -> ScreensError {
 }
 
 impl Screens {
-    pub fn new(registry_path: &Path, portal: Arc<dyn Portal>, feeds: Arc<dyn FeedFactory>, threshold: Threshold) -> Screens {
-        Screens {
+    pub fn new(registry_path: &Path, portal: Arc<dyn Portal>, feeds: Arc<dyn FeedFactory>, threshold: Threshold) -> Arc<Screens> {
+        Arc::new_cyclic(|me| Screens {
             registry: Mutex::new(Registry::load(registry_path)),
             portal,
             feeds,
@@ -89,6 +110,39 @@ impl Screens {
             last_tracked: Mutex::new(None),
             opened_all: Default::default(),
             threshold,
+            restore_timeout: Mutex::new(RESTORE_TIMEOUT),
+            reopen_first: Mutex::new(REOPEN_FIRST),
+            me: me.clone(),
+            generation: Default::default(),
+            rt: tokio::runtime::Handle::try_current().ok(),
+        })
+    }
+
+    /// Shorter waits, for tests.
+    #[cfg(test)]
+    pub fn set_waits(&self, restore_timeout: Duration, reopen_first: Duration) {
+        *self.restore_timeout.lock().unwrap() = restore_timeout;
+        *self.reopen_first.lock().unwrap() = reopen_first;
+    }
+
+    /// Reopens a saved screen from its token without ever showing the picker: no token, a
+    /// refusal or a restore slower than the timeout leave it `NeedsPick`.
+    async fn restore(&self, id: &ScreenId, name: &str, token: Option<&str>) -> Result<Opened, PortalError> {
+        let Some(token) = token else {
+            eprintln!("vitality-client: screen {name:?} has no saved permission: pick it again");
+            return Err(PortalError::Refused);
+        };
+        let timeout = *self.restore_timeout.lock().unwrap();
+        match tokio::time::timeout(timeout, self.portal.open(Some(token))).await {
+            Ok(Ok(opened)) => Ok(opened),
+            Ok(Err(e)) => {
+                eprintln!("vitality-client: screen {name:?} ({id}) could not be reopened: {e}");
+                Err(e)
+            }
+            Err(_) => {
+                eprintln!("vitality-client: reopening screen {name:?} took over {timeout:?} (a picker?): pick it again");
+                Err(PortalError::Refused)
+            }
         }
     }
 
@@ -103,10 +157,7 @@ impl Screens {
             self.live.lock().unwrap().insert(entry.id.clone(), Live::with_state(ScreenState::Opening));
         }
         for entry in entries {
-            let result = self.portal.open(entry.restore_token.as_deref()).await;
-            if let Err(e) = &result {
-                eprintln!("vitality-client: screen {:?} needs to be picked again: {e}", entry.name);
-            }
+            let result = self.restore(&entry.id, &entry.name, entry.restore_token.as_deref()).await;
             // A refusal (or any failure) leaves the saved token: the owner may fix the portal.
             let _ = self.attach(&entry.id, result);
         }
@@ -154,7 +205,8 @@ impl Screens {
     }
 
     pub fn remove(&self, id: &ScreenId) -> Result<(), ScreensError> {
-        self.live.lock().unwrap().remove(id); // stops its feed and closes its portal session
+        let gone = self.live.lock().unwrap().remove(id);
+        drop(gone); // stops its feed and closes its portal session (outside the lock)
         self.same_since.lock().unwrap().retain(|(a, b), _| a != id && b != id);
         match self.registry.lock().unwrap().remove(id) {
             Ok(true) => Ok(()),
@@ -168,10 +220,20 @@ impl Screens {
     fn attach(&self, id: &ScreenId, result: Result<Opened, PortalError>) -> Result<(), ScreensError> {
         let live = match result {
             Ok(opened) => {
-                self.registry.lock().unwrap().set_token(id, opened.restore_token.clone()).map_err(io_err)?;
+                if opened.restore_token.is_some() {
+                    // Never replace a saved permission with none.
+                    self.registry.lock().unwrap().set_token(id, opened.restore_token.clone()).map_err(io_err)?;
+                }
                 let slot = Slot::default();
-                match self.feeds.start(opened.node_id, opened.fd, slot.clone()) {
-                    Ok(feed) => Live { state: ScreenState::Live, slot, _feed: Some(feed), _keep: Some(opened.keep) },
+                let generation = self.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                let (me, who) = (self.me.clone(), id.clone());
+                let on_end: feed::OnEnd = Box::new(move |why: String| {
+                    if let Some(screens) = me.upgrade() {
+                        screens.feed_ended(&who, generation, &why);
+                    }
+                });
+                match self.feeds.start(opened.node_id, opened.fd, slot.clone(), on_end) {
+                    Ok(feed) => Live { state: ScreenState::Live, slot, generation, _feed: Some(feed), _keep: Some(opened.keep), ..Live::with_state(ScreenState::Live) },
                     Err(why) => {
                         eprintln!("vitality-client: cannot read frames of screen {id}: {why}");
                         Live::with_state(ScreenState::NeedsPick)
@@ -184,9 +246,74 @@ impl Screens {
         Ok(())
     }
 
-    /// The screen's newest frame.
+    /// A feed ended or failed: the screen is `Stopped`, its last frame dropped, and it is
+    /// reopened from its token later (`reopen_due`).
+    fn feed_ended(&self, id: &ScreenId, generation: u64, why: &str) {
+        let first = *self.reopen_first.lock().unwrap();
+        let old = {
+            let mut live = self.live.lock().unwrap();
+            let Some(l) = live.get_mut(id).filter(|l| l.generation == generation && l.state == ScreenState::Live) else { return };
+            eprintln!("vitality-client: the share of screen {id} stopped ({why}); reopening it");
+            *l.slot.lock().unwrap() = None;
+            l.state = ScreenState::Stopped;
+            l.reopen_at = Some(Instant::now() + first);
+            l.backoff = first;
+            (l._feed.take(), l._keep.take())
+        };
+        // Dropped elsewhere: the feed's own thread may be the one calling. On the runtime when
+        // there is one, so the portal session is closed too.
+        match &self.rt {
+            Some(rt) => drop(rt.spawn_blocking(move || drop(old))),
+            None => drop(std::thread::spawn(move || drop(old))),
+        }
+    }
+
+    /// Reopens `Stopped` screens whose wait is over (from their tokens, never with a picker).
+    pub fn reopen_due(&self, now: Instant) {
+        let due: Vec<ScreenId> = {
+            let mut live = self.live.lock().unwrap();
+            live.iter_mut()
+                .filter(|(_, l)| l.state == ScreenState::Stopped && !l.reopening && l.reopen_at.is_some_and(|t| t <= now))
+                .map(|(id, l)| {
+                    l.reopening = true;
+                    id.clone()
+                })
+                .collect()
+        };
+        for id in due {
+            let Some(me) = self.me.upgrade() else { return };
+            let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
+            rt.spawn(async move {
+                let entry = me.registry.lock().unwrap().get(&id).cloned();
+                let Some(entry) = entry else { return };
+                match me.restore(&id, &entry.name, entry.restore_token.as_deref()).await {
+                    Ok(opened) => {
+                        let _ = me.attach(&id, Ok(opened));
+                    }
+                    Err(PortalError::Refused) => {
+                        let _ = me.attach(&id, Err(PortalError::Refused));
+                    }
+                    Err(_) => {
+                        // The portal is not back yet: wait longer.
+                        if let Some(l) = me.live.lock().unwrap().get_mut(&id) {
+                            l.reopening = false;
+                            l.backoff = (l.backoff * 2).min(REOPEN_MAX);
+                            l.reopen_at = Some(Instant::now() + l.backoff);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /// The screen's newest frame (only while it is live: a stopped feed's frame is stale).
     pub fn latest(&self, id: &ScreenId) -> Option<Latest> {
-        self.live.lock().unwrap().get(id).and_then(|l| l.slot.lock().unwrap().clone())
+        self.live.lock().unwrap().get(id).filter(|l| l.state == ScreenState::Live).and_then(|l| l.slot.lock().unwrap().clone())
+    }
+
+    /// The names of the screens that need the owner (to be picked again, or stopped).
+    pub fn needing_attention(&self) -> Vec<String> {
+        self.statuses().into_iter().filter(|s| matches!(s.state, ScreenState::NeedsPick | ScreenState::Stopped)).map(|s| s.name).collect()
     }
 
     /// The newest thumb of every live screen that has a frame.

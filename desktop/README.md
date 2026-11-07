@@ -41,3 +41,17 @@ the interface). Each file starts with its contract.
 
 `vitality-client` without arguments is the app. With arguments: `status`, `pause [MINUTES]`,
 `resume` (through the running app's socket) and `doctor`.
+
+## Setup notes for some desktops
+
+- **Saved screen permissions (Hyprland, xdg-desktop-portal-hyprland):** tick "Allow a restore
+  token" in the share picker, or set `screencopy { allow_token_by_default = true }` in
+  `~/.config/hypr/xdph.conf`. Without a token, a screen needs a new pick after each login (the app
+  never opens the picker by itself at start).
+- **Lock:** capture stops on logind's `Lock` signal or `LockedHint`, or an active
+  `org.freedesktop.ScreenSaver`. With hypridle, `lock_cmd = loginctl lock-session` sends the
+  first; while locked the app checks `LockedHint` every 5 s and resumes when it is false and no
+  screensaver is active. Each change is written to `capture.log` with the signal behind it.
+- **Tray:** the icon appears whenever a tray host (e.g. Waybar's tray) starts, also after the app.
+- **WebKit on Wayland/NVIDIA:** the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` unless it is
+  already set (the DMA-BUF renderer crashed with "Error 71 (Protocol error)").

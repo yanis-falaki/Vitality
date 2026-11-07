@@ -1,5 +1,5 @@
 // One screen's card on the Screens page: live preview, name (renamed in place), its state
-// ("Live · last frame 2 s ago", "Needs to be picked again", "Opening…"), Re-pick and Remove
+// ("Live · last frame 2 s ago", "Needs to be picked again", "Stopped…", "Opening…"), Re-pick and Remove
 // (with an inline confirmation). Calls `onRename`, `onRepick`, `onRemove`.
 import { useState } from "react";
 import type { ScreenStatus } from "../core";
@@ -13,6 +13,7 @@ const STALE_S = 10;
 function stateLine(s: ScreenStatus): { text: string; tone: string } {
   if (s.state === "needs_pick") return { text: "Needs to be picked again", tone: "warn" };
   if (s.state === "opening") return { text: "Opening…", tone: "off" };
+  if (s.state === "stopped") return { text: "Stopped · the share ended; reopening it", tone: "warn" };
   if (s.last_frame_age_s === null) return { text: "Live · waiting for the first frame", tone: "ok" };
   const stale = s.last_frame_age_s > STALE_S;
   return { text: `Live · ${frameAge(s.last_frame_age_s)}`, tone: stale ? "warn" : "ok" };
@@ -35,7 +36,15 @@ export function ScreenCard({ screen, busy, onRename, onRepick, onRemove }: Props
       <Preview
         id={screen.id}
         live={screen.state === "live"}
-        empty={needsPick ? "The screen-share permission was refused" : screen.state === "opening" ? "Opening…" : "No frame yet"}
+        empty={
+          needsPick
+            ? "No saved permission for this screen: pick it again"
+            : screen.state === "stopped"
+              ? "The screen share stopped. Vitality is reopening it."
+              : screen.state === "opening"
+                ? "Opening…"
+                : "No frame yet"
+        }
       />
       <div className="card-body">
         <NameEdit name={screen.name} onSave={onRename} />

@@ -97,6 +97,24 @@ async fn answer(core: &Core, line: &str) -> ControlReply {
     ControlReply { ok: true, status: Some(status), error: None }
 }
 
+/// Holds the one-instance lock (`client.lock` beside the socket) for as long as the returned
+/// file lives; fails with `WouldBlock` while another instance holds it. Taken before the core
+/// starts, so a second instance never touches the first one's open interaction.
+pub fn lock_instance(socket: &Path) -> io::Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    let path = socket.with_file_name("client.lock");
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path)?;
+    // SAFETY: flock on a file descriptor we own.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
 /// Sends one request to the running app and returns its reply (blocking, 5 s at most).
 pub fn request(path: &Path, request: &ControlRequest) -> io::Result<ControlReply> {
     let mut stream = UnixStream::connect(path)?;
@@ -160,6 +178,16 @@ mod tests {
         .await
         .unwrap();
         assert!(reply.contains("\"ok\":false") && reply.contains("bad request"), "{reply}");
+    }
+
+    #[test]
+    fn only_one_instance_holds_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("vitality/client.sock");
+        let first = lock_instance(&socket).unwrap();
+        assert_eq!(lock_instance(&socket).unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        drop(first);
+        assert!(lock_instance(&socket).is_ok());
     }
 
     #[test]

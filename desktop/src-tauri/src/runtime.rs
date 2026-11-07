@@ -136,7 +136,6 @@ pub struct Runtime {
     locked: bool,
     sleeping: bool,
     quit: bool,
-    tz: String,
     /// Decisions from `on_stop`, carried out by the next `finish_stop`.
     pending_stop: Vec<Decision>,
 }
@@ -150,7 +149,7 @@ impl Runtime {
             Err(e) => eprintln!("vitality-client: cannot finish interrupted interactions: {e}"),
         }
         let uploader = Uploader::start(store.clone(), parts.server.clone(), device_name(), parts.upload_timings.clone());
-        let screens = Arc::new(Screens::new(&parts.paths.screens, parts.portal.clone(), parts.feeds.clone(), parts.policy.threshold));
+        let screens = Screens::new(&parts.paths.screens, parts.portal.clone(), parts.feeds.clone(), parts.policy.threshold);
         let (requests, rx) = mpsc::channel(16);
         let pause = PauseState::load(&parts.paths.state);
         let core = Arc::new(Core {
@@ -173,7 +172,6 @@ impl Runtime {
             locked: false,
             sleeping: false,
             quit: false,
-            tz: local_tz_name(),
             pending_stop: vec![],
         };
         runtime.update_stop(Instant::now());
@@ -203,9 +201,9 @@ impl Runtime {
                 }
                 Some(event) = session.recv() => {
                     match event {
-                        SessionEvent::Locked(l) if l != self.locked => {
-                            self.locked = l;
-                            self.log(if l { "locked" } else { "unlocked" });
+                        SessionEvent::Locked { locked, by } if locked != self.locked => {
+                            self.locked = locked;
+                            self.log(&format!("{} ({by})", if locked { "locked" } else { "unlocked" }));
                         }
                         SessionEvent::Sleeping(s) if s != self.sleeping => {
                             self.sleeping = s;
@@ -224,6 +222,7 @@ impl Runtime {
                         self.update_stop(now);
                     }
                     self.core.screens.track_duplicates(now);
+                    self.core.screens.reopen_due(now);
                     let thumbs = self.core.screens.thumbs();
                     let ds = self.policy.on_tick(now, &thumbs);
                     self.execute(ds).await;
@@ -310,7 +309,8 @@ impl Runtime {
     }
 
     async fn execute(&mut self, decisions: Vec<Decision>) {
-        for d in decisions {
+        let mut queue: std::collections::VecDeque<Decision> = decisions.into();
+        while let Some(d) = queue.pop_front() {
             match d {
                 Decision::StartInteraction { kind } => {
                     if self.open.is_some() {
@@ -318,7 +318,8 @@ impl Runtime {
                     }
                     let now = Utc::now();
                     let offset = Local::now().offset().fix();
-                    match self.core.store.begin(now, offset, &self.tz) {
+                    let tz = local_tz_name(); // per interaction: the zone may change (travel)
+                    match self.core.store.begin(now, offset, &tz) {
                         Ok(h) => {
                             self.log(&format!("start {} interaction {}", kind_name(kind), h.name()));
                             self.open = Some(h);
@@ -327,27 +328,50 @@ impl Runtime {
                     }
                 }
                 Decision::Shot { screens, trigger, rule } => {
-                    let Some(mut handle) = self.open.take() else { continue };
+                    let Some(mut handle) = self.open.take() else {
+                        screens.iter().for_each(|id| self.policy.forget_screen(id));
+                        continue;
+                    };
                     let order = self.core.screens.ids();
                     let mut taken = vec![];
                     for id in order.iter().filter(|id| screens.contains(id)) {
-                        let Some(latest) = self.core.screens.latest(id) else { continue };
-                        let name = self.core.screens.shot_name(id);
                         let label = self.core.screens.statuses().into_iter().find(|s| &s.id == id).map(|s| s.name).unwrap_or_default();
-                        let (h, result) = tokio::task::spawn_blocking(move || {
+                        let Some(latest) = self.core.screens.latest(id) else {
+                            self.policy.forget_screen(id); // not shot: its change is still to come
+                            continue;
+                        };
+                        let name = self.core.screens.shot_name(id);
+                        let written = tokio::task::spawn_blocking(move || {
                             let r = handle.add_shot(name.as_deref(), &latest.image, Utc::now(), trigger);
                             (handle, r)
                         })
-                        .await
-                        .expect("the shot task panicked");
+                        .await;
+                        let (h, result) = match written {
+                            Ok(done) => done,
+                            Err(e) => {
+                                // The interaction is lost from memory; its folder is finished at
+                                // the next start.
+                                self.log(&format!("error: writing a shot of {label} failed: {e}"));
+                                return;
+                            }
+                        };
                         handle = h;
                         match result {
                             Ok(file) => taken.push(format!("{label} ({file})")),
-                            Err(e) => self.log(&format!("error: cannot write a shot of {label}: {e}")),
+                            Err(e) => {
+                                self.policy.forget_screen(id);
+                                self.log(&format!("error: cannot write a shot of {label}: {e}"));
+                            }
                         }
                     }
+                    let (bytes, count) = (handle.bytes(), handle.shot_count() as u32);
                     self.open = Some(handle);
                     self.log(&format!("{rule:?} shot {} · {}", store_trigger(trigger), taken.join(", ")));
+                    // R9: past the size budget, the policy splits the interaction.
+                    let split = self.policy.on_written(Instant::now(), bytes, count);
+                    for d in split.into_iter().rev() {
+                        queue.push_front(d);
+                    }
                 }
                 Decision::EndInteraction { rule } => self.end(rule).await,
                 Decision::Skipped { rule, why } => self.log(&format!("{rule:?} skipped: {why}")),
@@ -358,14 +382,15 @@ impl Runtime {
     async fn end(&mut self, rule: Rule) {
         let Some(handle) = self.open.take() else { return };
         let name = handle.name().to_string();
-        let shots = handle.shot_count();
-        match tokio::task::spawn_blocking(move || handle.finish()).await.expect("the finish task panicked") {
-            Ok(Some(_)) => {
-                self.log(&format!("{rule:?} end {name} · {shots} shots"));
+        let (shots, bytes) = (handle.shot_count(), handle.bytes());
+        match tokio::task::spawn_blocking(move || handle.finish()).await {
+            Ok(Ok(Some(_))) => {
+                self.log(&format!("{rule:?} end {name} · {shots} shots, {:.1} MiB", bytes as f64 / 1048576.0));
                 self.core.uploader.wake();
             }
-            Ok(None) => self.log(&format!("{rule:?} end {name} · no shots, nothing kept")),
-            Err(e) => self.log(&format!("error: cannot finish {name}: {e}")),
+            Ok(Ok(None)) => self.log(&format!("{rule:?} end {name} · no shots, nothing kept")),
+            Ok(Err(e)) => self.log(&format!("error: cannot finish {name}: {e}")),
+            Err(e) => self.log(&format!("error: finishing {name} failed: {e}")),
         }
     }
 
@@ -402,9 +427,10 @@ fn blank_status() -> StatusView {
     StatusView {
         capture: CaptureView { mode: crate::types::CaptureMode::Idle, since: None, shots: 0, next_check_at: None, stopped_by: None },
         pause: Default::default(),
-        upload: crate::types::UploadStatus { state: crate::types::UploadState::Ok, pending: 0, last_upload: None },
+        upload: crate::types::UploadStatus { state: crate::types::UploadState::Ok, pending: 0, last_upload: None, failed: 0, last_failure: None },
         screens: 0,
         screens_live: 0,
+        screens_attention: vec![],
         input: "ok".into(),
     }
 }
@@ -423,6 +449,7 @@ fn status_view(state: &PolicyState, pause: &PauseState, core: &Core) -> StatusVi
         upload: core.uploader.status(),
         screens: statuses.len() as u32,
         screens_live: statuses.iter().filter(|s| s.state == ScreenState::Live).count() as u32,
+        screens_attention: core.screens.needing_attention(),
         input: core.input.accessible().as_str().into(),
     }
 }

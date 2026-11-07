@@ -3,7 +3,8 @@
 //!
 //! `InputSource` is what the runtime uses: `subscribe()` gives a stream of input times (at most
 //! ten a second), `accessible()` says whether any device could be read. `EvdevInput` is the real
-//! one: it opens every device that reports keys or pointer axes, re-scans every 30 s for new
+//! one: it opens every device that reports keys or pointer axes (absolute axes only on
+//! touchpads, touch screens and tablets, not accelerometers or joysticks), re-scans every 30 s for new
 //! ones (hotplug), and reads each on its own thread. Device listing and opening go through
 //! `Devices`, so tests inject their own. `FakeInput` is for tests of the runtime.
 
@@ -220,11 +221,23 @@ impl Devices for SystemDevices {
 
     fn open(&self, path: &Path) -> io::Result<Option<Box<dyn Device>>> {
         let device = evdev::raw_stream::RawDevice::open(path)?;
-        let keys = device.supported_keys().is_some_and(|k| k.iter().next().is_some());
+        use evdev::KeyCode;
+        let keys = device.supported_keys();
+        let has = |k: KeyCode| keys.is_some_and(|set| set.contains(k));
+        let any_key = keys.is_some_and(|k| k.iter().next().is_some());
         let rel = device.supported_relative_axes().is_some_and(|a| a.iter().next().is_some());
         let abs = device.supported_absolute_axes().is_some_and(|a| a.iter().next().is_some());
-        Ok(if keys || rel || abs { Some(Box::new(EvdevDevice(device))) } else { None })
+        // Absolute axes count only on pointers (touchpads, touch screens, tablets): an
+        // accelerometer or a joystick moves by itself and would never let an interaction end.
+        let pointer = [KeyCode::BTN_TOUCH, KeyCode::BTN_LEFT, KeyCode::BTN_TOOL_PEN, KeyCode::BTN_TOOL_FINGER].into_iter().any(has);
+        Ok(if counts_as_input(any_key, rel, abs, pointer) { Some(Box::new(EvdevDevice(device))) } else { None })
     }
+}
+
+/// Whether a device with these capabilities is a keyboard or a pointer (`pointer`: it has a
+/// touch, left-button or tool button).
+fn counts_as_input(keys: bool, rel: bool, abs: bool, pointer: bool) -> bool {
+    rel || (abs && pointer) || (keys && !abs)
 }
 
 struct EvdevDevice(evdev::raw_stream::RawDevice);
@@ -314,6 +327,15 @@ mod tests {
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(format!("/dev/input/{s}"))
+    }
+
+    #[test]
+    fn keyboards_mice_and_touchpads_count_accelerometers_and_joysticks_do_not() {
+        assert!(counts_as_input(true, false, false, false)); // keyboard
+        assert!(counts_as_input(true, true, false, true)); // mouse
+        assert!(counts_as_input(true, false, true, true)); // touchpad, touch screen, tablet
+        assert!(!counts_as_input(false, false, true, false)); // accelerometer
+        assert!(!counts_as_input(true, false, true, false)); // joystick, gamepad
     }
 
     #[test]

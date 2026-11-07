@@ -441,3 +441,47 @@ fn settings_defaults_are_the_specs() {
     assert_eq!(s.passive_quiet_checks, 3);
     assert_eq!(s.threshold, Threshold { fraction: 0.005, levels: 16 });
 }
+
+// --- R9 · size budget -------------------------------------------------------------------------
+
+#[test]
+fn r9_a_full_active_interaction_ends_and_a_new_one_starts_with_every_screen() {
+    let mut tl = Timeline::new(vec![("a", video()), ("b", still())]);
+    tl.run(3.0, &Timeline::burst(1.0, 3.0));
+    let mib = 1024 * 1024;
+    assert!(tl.policy.on_written(tl.at(3.0), 39 * mib, 10).is_empty());
+    let ds = tl.policy.on_written(tl.at(3.0), 40 * mib, 11);
+    assert_eq!(ds[0], Decision::EndInteraction { rule: Rule::R9 });
+    assert_eq!(ds[1], Decision::StartInteraction { kind: InteractionKind::Active });
+    assert_eq!(ds[2], Decision::Shot { screens: vec![id("a"), id("b")], trigger: Trigger::Activity, rule: Rule::R9 });
+    let s = tl.policy.state();
+    assert_eq!((s.mode, s.since, s.shots), (CaptureMode::Active, Some(tl.at(3.0)), 1));
+    // The burst goes on in the new interaction, which ends by R5 as usual.
+    tl.clear();
+    tl.run(10.0, &Timeline::burst(3.1, 4.0));
+    assert_eq!(tl.ends().last().map(|e| e.1), Some(Rule::R5));
+    assert!(tl.starts().is_empty());
+}
+
+#[test]
+fn r9_a_full_passive_interaction_continues_as_a_passive_one() {
+    let mut tl = Timeline::new(vec![("a", video())]);
+    tl.run(10.0, &[1.0]).run(60.0, &[]);
+    let ds = tl.policy.on_written(tl.at(60.0), 1, 900); // the shot count limit
+    assert_eq!(ds[1], Decision::StartInteraction { kind: InteractionKind::Passive });
+    assert!(matches!(&ds[2], Decision::Shot { trigger: Trigger::Passive, rule: Rule::R9, .. }));
+    assert_eq!(tl.policy.state().mode, CaptureMode::Passive);
+}
+
+#[test]
+fn r9_does_nothing_without_an_open_interaction() {
+    let mut tl = Timeline::new(vec![("a", video())]);
+    assert!(tl.policy.on_written(tl.at(0.0), u64::MAX, 5).is_empty());
+}
+
+#[test]
+fn r9_never_splits_a_single_shot() {
+    let mut tl = Timeline::new(vec![("a", video())]);
+    tl.run(1.5, &[1.0]);
+    assert!(tl.policy.on_written(tl.at(1.5), u64::MAX, 1).is_empty());
+}
