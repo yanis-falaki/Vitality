@@ -10,6 +10,7 @@ when a snapshot needs an image. Never logged: image contents.
 
 import logging
 import threading
+import time
 from typing import Protocol
 
 import gi
@@ -45,7 +46,8 @@ class FrameStreams(Protocol):
         ...
 
     def failure(self) -> str | None:
-        """A pipeline error or end of stream since the last call, or None."""
+        """A pipeline error or end of stream since the last call, or a frozen feed (`stalled_stream`),
+        or None."""
         ...
 
     def stop(self) -> None:
@@ -56,6 +58,20 @@ class FrameStreams(Protocol):
 # == Implementation =======================================================================
 
 log = logging.getLogger(__name__)
+
+# A feed that has sent nothing for this long while another feed kept sending has frozen (seen on
+# Hyprland after the portal's dialogs): `failure` reports it, and the source reopens the capture.
+STALL_SECONDS = 120.0
+
+
+def stalled_stream(last_frame: dict[int, float], now: float, limit: float = STALL_SECONDS) -> int | None:
+    """The index of a stream whose last frame (monotonic time) is older than `limit` while another
+    stream sent one within `limit`, or None. The portal sends frames only on change, so streams quiet
+    together are idle screens, not a fault; one stream alone is never judged."""
+    if len(last_frame) < 2 or now - max(last_frame.values()) > limit:
+        return None
+    return next((i for i, t in sorted(last_frame.items()) if now - t > limit), None)
+
 
 # Packed formats the stream may arrive in, and the Pillow raw mode that reads each as RGB.
 # Alpha is read as padding: screen frames are opaque.
@@ -121,6 +137,7 @@ class GstFrameStreams(FrameStreams):
         self._lock = threading.Lock()
         self._streams: list[Stream] = []
         self._samples: dict[int, Gst.Sample] = {}  # newest sample per stream, converted lazily
+        self._last_frame: dict[int, float] = {}    # when each stream last sent a sample (monotonic)
 
     def __len__(self) -> int:
         return len(self._pipelines)
@@ -156,7 +173,8 @@ class GstFrameStreams(FrameStreams):
         return numbered_frames(frames)
 
     def failure(self) -> str | None:
-        """A pipeline error or end of stream since the last call, or None."""
+        """A pipeline error or end of stream since the last call, or a frozen feed (`stalled_stream`),
+        or None."""
         for pipeline in self._pipelines:
             msg = pipeline.get_bus().timed_pop_filtered(
                 0, Gst.MessageType.ERROR | Gst.MessageType.EOS
@@ -167,6 +185,10 @@ class GstFrameStreams(FrameStreams):
                 err, _debug = msg.parse_error()
                 return f"pipeline error: {err.message}"
             return "stream ended"
+        with self._lock:
+            stalled = stalled_stream(dict(self._last_frame), time.monotonic())
+        if stalled is not None:
+            return f"screen feed {stalled + 1} sent no frame for {STALL_SECONDS:.0f} s while another did"
         return None
 
     def stop(self) -> None:
@@ -176,6 +198,7 @@ class GstFrameStreams(FrameStreams):
         with self._lock:
             self._streams = []
             self._samples = {}
+            self._last_frame = {}
 
     def _on_sample(self, sink, index: int) -> Gst.FlowReturn:
         # GStreamer streaming thread: no asyncio here, and never log image data.
@@ -185,4 +208,5 @@ class GstFrameStreams(FrameStreams):
         with self._lock:
             if index < len(self._streams):
                 self._samples[index] = sample
+                self._last_frame[index] = time.monotonic()
         return Gst.FlowReturn.OK

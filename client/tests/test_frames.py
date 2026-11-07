@@ -13,6 +13,7 @@ from vitality_client.daemon.frames.portal.session import (
 )
 from vitality_client.daemon.frames.portal.source import PortalFrameSource, backoff_delay, should_retry
 from vitality_client.daemon.frames.portal.stream import (
+    stalled_stream,
     pipeline_description,
     raw_mode_for,
     rgb_image_from_bytes,
@@ -258,3 +259,18 @@ async def test_more_saved_tokens_than_sessions_are_ignored():
     await src.start(lambda i, token: None)
     assert opened == ["a"]
     await src.close()
+
+
+def test_a_stream_silent_while_another_sends_is_stalled():
+    # Screen 1 sent its last frame 200 s ago, screen 2 one second ago: screen 1's feed froze.
+    assert stalled_stream({0: 800.0, 1: 999.0}, now=1000.0, limit=120.0) == 0
+
+
+def test_streams_quiet_together_are_not_stalled():
+    # Nothing on either screen changed (the portal sends frames on change): no stall.
+    assert stalled_stream({0: 800.0, 1: 790.0}, now=1000.0, limit=120.0) is None
+
+
+def test_one_stream_or_recent_frames_are_not_stalled():
+    assert stalled_stream({0: 500.0}, now=1000.0, limit=120.0) is None
+    assert stalled_stream({0: 950.0, 1: 999.0}, now=1000.0, limit=120.0) is None
