@@ -103,8 +103,6 @@ where
             Some(u) => format!("Paused until {}", at(u)),
             None => "Paused until resumed".into(),
         },
-        (CaptureMode::Stopped, Some(StopReason::Locked)) => "Stopped · the session is locked".into(),
-        (CaptureMode::Stopped, Some(StopReason::Sleeping)) => "Stopped · the system is asleep".into(),
         (CaptureMode::Stopped, _) => "Stopping".into(),
     };
     let screens = match (s.screens, s.screens_live) {

@@ -33,11 +33,7 @@ export function captureLine(s: StatusView, now: number): CaptureLine {
         tone: "busy",
       };
     case "stopped":
-      return c.stopped_by === "locked"
-        ? { text: "Stopped · the session is locked", detail: "Capture resumes when you unlock (R8).", tone: "off" }
-        : c.stopped_by === "sleeping"
-          ? { text: "Stopped · the system is going to sleep", detail: "Capture resumes when it wakes (R8).", tone: "off" }
-          : { text: "Stopping", detail: "Vitality is quitting.", tone: "off" };
+      return { text: "Stopping", detail: "Vitality is quitting.", tone: "off" };
     default:
       return {
         text: c.next_check_at ? `Idle · passive check ${until(c.next_check_at, now)}` : "Idle",

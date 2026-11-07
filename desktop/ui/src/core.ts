@@ -23,7 +23,7 @@ export interface ScreensView {
 }
 
 export type CaptureMode = "idle" | "active" | "passive" | "stopped";
-export type StopReason = "paused" | "locked" | "sleeping" | "quit";
+export type StopReason = "paused" | "quit";
 
 export interface CaptureView {
   mode: CaptureMode;

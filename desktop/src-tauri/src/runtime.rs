@@ -1,4 +1,4 @@
-//! The runtime: wires input, the session, the screens and the clock to the policy, and carries
+//! The runtime: wires input, the screens and the clock to the policy, and carries
 //! out its decisions with the store and the uploader.
 //!
 //! `Runtime::start(parts)` (inside the tokio runtime) finishes interrupted interactions, starts
@@ -7,9 +7,10 @@
 //! `status()`, `pause(how)`, `resume()`, `quit()`, `recent_decisions(n)`, `subscribe()`
 //! (a notice whenever the status changes), `notify_changed()`, `forget_screen(id)`.
 //!
-//! The loop: every input goes to `Policy::on_input`; lock and sleep from the session and the
-//! owner's pause go to `on_stop`/`on_resume`; a tick (250 ms) passes the screens' thumbs to
-//! `on_tick` and expires a timed pause. Every decision is carried out and written to the
+//! The loop: every input goes to `Policy::on_input`; the owner's pause goes to
+//! `on_stop`/`on_resume`; a tick (250 ms) passes the screens' thumbs to `on_tick`, expires a
+//! timed pause, and tells the policy when the machine slept (`on_slept`: the wall clock jumped
+//! further than the monotonic one, which stops during a suspend). Lock is not watched. Every decision is carried out and written to the
 //! decisions log. Shots are encoded off the loop's thread.
 
 use std::sync::{Arc, Mutex};
@@ -25,7 +26,6 @@ use crate::policy::{Decision, InteractionKind, Policy, PolicySettings, PolicySta
 use crate::screens::feed::FeedFactory;
 use crate::screens::portal::Portal;
 use crate::screens::Screens;
-use crate::session::{SessionEvent, SessionWatch};
 use crate::state::{PauseFor, PauseState};
 use crate::store::{local_tz_name, InteractionHandle, Store};
 use crate::types::{Check, CaptureView, DecisionLine, DiskView, ScreenId, ScreenState, StatusPage, StatusView, StopReason, TodayCounts};
@@ -39,7 +39,6 @@ pub struct Parts {
     pub server: Option<String>,
     pub upload_timings: UploadTimings,
     pub input: Arc<dyn InputSource>,
-    pub session: Arc<dyn SessionWatch>,
     pub portal: Arc<dyn Portal>,
     pub feeds: Arc<dyn FeedFactory>,
     pub tick: Duration,
@@ -179,8 +178,8 @@ pub struct Runtime {
     open: Option<InteractionHandle>,
     pause: PauseState,
     pause_path: std::path::PathBuf,
-    locked: bool,
-    sleeping: bool,
+    /// The last tick, by both clocks (to see a suspend).
+    last_tick: Option<(Instant, DateTime<Utc>)>,
     quit: bool,
     /// Decisions from `on_stop`, carried out by the next `finish_stop`.
     pending_stop: Vec<Decision>,
@@ -218,25 +217,22 @@ impl Runtime {
             open: None,
             pause,
             pause_path: parts.paths.state.clone(),
-            locked: false,
-            sleeping: false,
+            last_tick: None,
             quit: false,
             pending_stop: vec![],
         };
         runtime.update_stop(Instant::now());
         runtime.publish();
         let inputs = parts.input.subscribe();
-        let session = parts.session.subscribe();
         let tick = parts.tick;
         tokio::spawn(async move { screens.open_all().await });
-        tokio::spawn(async move { runtime.run(inputs, session, rx, tick).await });
+        tokio::spawn(async move { runtime.run(inputs, rx, tick).await });
         core
     }
 
     async fn run(
         mut self,
         mut inputs: mpsc::Receiver<Instant>,
-        mut session: mpsc::Receiver<SessionEvent>,
         mut requests: mpsc::Receiver<Request>,
         tick: Duration,
     ) {
@@ -248,24 +244,17 @@ impl Runtime {
                     let ds = self.policy.on_input(at);
                     self.execute(ds).await;
                 }
-                Some(event) = session.recv() => {
-                    match event {
-                        SessionEvent::Locked { locked, by } if locked != self.locked => {
-                            self.locked = locked;
-                            self.log(&format!("{} ({by})", if locked { "locked" } else { "unlocked" }));
-                        }
-                        SessionEvent::Sleeping(s) if s != self.sleeping => {
-                            self.sleeping = s;
-                            self.log(if s { "going to sleep" } else { "woke up" });
-                        }
-                        _ => {}
-                    }
-                    self.update_stop(Instant::now());
-                    self.finish_stop().await;
-                }
                 Some(request) = requests.recv() => self.handle(request).await,
                 _ = ticks.tick() => {
                     let now = Instant::now();
+                    let wall = Utc::now();
+                    if let Some((then, then_wall)) = self.last_tick.replace((now, wall)) {
+                        if slept(wall - then_wall, now - then) {
+                            self.log("the machine slept");
+                            let ds = self.policy.on_slept(now);
+                            self.execute(ds).await;
+                        }
+                    }
                     if self.pause.paused && !self.pause.active(Utc::now()) {
                         self.set_pause(PauseState::default());
                         self.update_stop(now);
@@ -327,10 +316,6 @@ impl Runtime {
             Some(StopReason::Quit)
         } else if self.pause.active(Utc::now()) {
             Some(StopReason::Paused)
-        } else if self.locked {
-            Some(StopReason::Locked)
-        } else if self.sleeping {
-            Some(StopReason::Sleeping)
         } else {
             None
         }
@@ -452,6 +437,12 @@ impl Runtime {
         let view = status_view(&self.policy.state(), &self.pause, &self.core);
         self.core.publish(view);
     }
+}
+
+/// Whether the machine slept between two ticks: the wall clock moved over 30 s further than
+/// the monotonic clock (which stands still during a suspend).
+fn slept(wall: chrono::TimeDelta, monotonic: Duration) -> bool {
+    wall.to_std().is_ok_and(|w| w.saturating_sub(monotonic) > Duration::from_secs(30))
 }
 
 /// "2026-11-07T20:02:03Z<TAB>text" as a `DecisionLine`.

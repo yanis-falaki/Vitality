@@ -32,8 +32,8 @@ Tests: `cargo test` and `cargo clippy -- -D warnings` in `desktop/`; `npm run ty
 
 ## The parts
 
-The core (`src-tauri/src/`): `policy` (rules R1–R8, pure), `activity` (`/dev/input`), `session`
-(logind lock and sleep), `screens` (portal screen-shares, frames, names), `store` (interaction
+The core (`src-tauri/src/`): `policy` (rules R1–R9, pure), `activity` (`/dev/input`),
+`screens` (portal screen-shares, frames, names), `store` (interaction
 folders), `upload`, `runtime` (wires them), `control` (the CLI's socket), `tray`, `commands` (for
 the interface). Each file starts with its contract.
 
@@ -48,10 +48,9 @@ the interface). Each file starts with its contract.
   token" in the share picker, or set `screencopy { allow_token_by_default = true }` in
   `~/.config/hypr/xdph.conf`. Without a token, a screen needs a new pick after each login (the app
   never opens the picker by itself at start).
-- **Lock:** capture stops on logind's `Lock` signal or `LockedHint`, or an active
-  `org.freedesktop.ScreenSaver`. With hypridle, `lock_cmd = loginctl lock-session` sends the
-  first; while locked the app checks `LockedHint` every 5 s and resumes when it is false and no
-  screensaver is active. Each change is written to `capture.log` with the signal behind it.
+- **Lock and sleep** are not watched: capture goes on while the screen is locked (pause it if
+  you want it to stop). After a system sleep, an interaction left open ends at once, with no
+  shot for the gap.
 - **Tray:** the icon appears whenever a tray host (e.g. Waybar's tray) starts, also after the app.
 - **WebKit on Wayland/NVIDIA:** the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` unless it is
   already set (the DMA-BUF renderer crashed with "Error 71 (Protocol error)").

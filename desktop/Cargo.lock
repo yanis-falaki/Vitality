@@ -4724,7 +4724,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "evdev",
- "futures-util",
  "gstreamer",
  "gstreamer-app",
  "gstreamer-video",
@@ -4740,7 +4739,6 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "webp",
- "zbus",
 ]
 
 [[package]]

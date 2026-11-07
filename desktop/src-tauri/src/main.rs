@@ -13,7 +13,6 @@ mod paths;
 mod policy;
 mod runtime;
 mod screens;
-mod session;
 mod settings;
 mod state;
 mod store;

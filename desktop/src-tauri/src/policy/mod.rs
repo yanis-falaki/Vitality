@@ -1,9 +1,9 @@
-//! The capture policy: rules R1–R8 (spec §6) as a pure state machine. No I/O, no clock of its own.
+//! The capture policy: rules R1–R9 (spec §6) as a pure state machine. No I/O, no clock of its own.
 //!
 //! The runtime feeds it events and executes what it returns:
 //! - `Policy::on_input(now)` for keyboard or mouse input,
 //! - `Policy::on_tick(now, thumbs)` every 250 ms with each screen's newest thumb,
-//! - `Policy::on_stop(now, why)` when capture must stop (pause, lock, sleep, quit),
+//! - `Policy::on_stop(now, why)` when capture must stop (pause, quit),
 //! - `Policy::on_resume(now)` when nothing stops it any more,
 //! - `Policy::on_written(now, bytes, shots)` after each shot, with the open interaction's size (R9).
 //!
@@ -120,6 +120,8 @@ pub struct Policy {
     settings: PolicySettings,
     mode: Mode,
     last_input: Option<Instant>,
+    /// The last tick (a long gap since it means the machine slept).
+    last_tick: Option<Instant>,
     /// Each screen's newest thumb, from the last tick.
     current: BTreeMap<ScreenId, Thumb>,
     /// Each screen's thumb when it was last shot (kept across interactions).
@@ -147,6 +149,7 @@ impl Policy {
             settings,
             mode: Mode::Idle { next_check: None },
             last_input: None,
+            last_tick: None,
             current: BTreeMap::new(),
             last_shot: BTreeMap::new(),
         }

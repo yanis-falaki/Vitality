@@ -60,13 +60,11 @@ pub enum CaptureMode {
     Stopped,
 }
 
-/// Why capture is stopped (R8), when it is.
+/// Why capture is stopped (R8, or the app quitting), when it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     Paused,
-    Locked,
-    Sleeping,
     Quit,
 }
 

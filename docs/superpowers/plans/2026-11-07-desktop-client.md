@@ -18,7 +18,7 @@
 - Paths (§10): captures `~/.local/share/vitality/client/captures/`; settings `~/.config/vitality/client.toml`; screens `~/.local/state/vitality/client/screens.json`; pause state `~/.local/state/vitality/client/state.json`; decisions log `~/.local/state/vitality/client/capture.log` (last 500 lines); socket `$XDG_RUNTIME_DIR/vitality/client.sock`.
 - Policy defaults (§6): start gap 2 s, settle 2 s, max gap 10 s, change threshold: >0.5 % of a 64×36 grayscale thumbnail differing by >16 levels, passive check every 45 s, passive end after 3 checks without change, size budget (R9) 40 MiB per interaction (`max_interaction_mib`; also at most 900 shots). All are settings.
 - Frames (§5): `pipewiresrc ... always-copy=true`, cap 2 fps per feed, newest frame per screen in memory only.
-- Portable only: no compositor-specific code (no hyprctl, no grim). Lock and system sleep from logind (`LockedHint`, `PrepareForSleep`); display-only sleep is not detectable portably and is out of scope (documented).
+- Portable only: no compositor-specific code (no hyprctl, no grim). Lock and sleep are not watched (owner's decision): R8 is pause only; an interaction left open across a system sleep ends at the first tick after waking, with no shots for the gap.
 - The app never runs `sudo`. No self-updater. Nothing published.
 - Rust modules and TS components start with a short contract comment (what it does, its interface); small focused files; match the repo's comment style. Commits on branch `desktop`, messages `desktop: …` / `protocol: …` / `server: …` / `observer: …`; never any Co-Authored-By or AI attribution.
 - Tests never touch real data, the VM, the laptop or the desktop.

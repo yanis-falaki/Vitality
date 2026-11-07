@@ -345,11 +345,11 @@ fn r7_a_change_resets_the_quiet_count() {
 }
 
 #[test]
-fn r7_lock_ends_the_passive_interaction() {
+fn r7_pause_ends_the_passive_interaction() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(10.0, &[1.0]).run(60.0, &[]);
     tl.clear();
-    tl.stop(StopReason::Locked);
+    tl.stop(StopReason::Paused);
     assert_eq!(tl.ends(), vec![(60.0, Rule::R8)]);
 }
 
@@ -400,17 +400,69 @@ fn r8_pause_ends_an_open_interaction_at_once_and_captures_nothing_until_resume()
 }
 
 #[test]
-fn r8_lock_and_sleep_stop_checks_too() {
-    for why in [StopReason::Locked, StopReason::Sleeping] {
-        let mut tl = Timeline::new(vec![("a", video())]);
-        tl.stop(why);
-        tl.run(200.0, &[]);
-        assert!(tl.log.is_empty(), "{why:?}");
-        tl.resume();
-        assert_eq!(tl.policy.state().mode, CaptureMode::Idle);
-        tl.run(246.0, &[]);
-        assert_eq!(tl.starts(), vec![(245.0, InteractionKind::Passive)], "{why:?}");
+fn r8_quit_stops_checks_too() {
+    let mut tl = Timeline::new(vec![("a", video())]);
+    tl.stop(StopReason::Quit);
+    tl.run(200.0, &[]);
+    assert!(tl.log.is_empty());
+}
+
+// --- a system sleep -----------------------------------------------------------------------------
+
+impl Timeline {
+    /// The machine sleeps for `secs`: no ticks, then the clock is that much later.
+    fn sleep(&mut self, secs: f64) {
+        self.now += secs;
     }
+}
+
+#[test]
+fn a_sleep_ends_an_open_active_interaction_with_no_shot_for_the_gap() {
+    let mut tl = Timeline::new(vec![("a", video())]);
+    tl.run(1.5, &Timeline::burst(1.0, 1.4));
+    assert_eq!(tl.policy.state().mode, CaptureMode::Active);
+    tl.clear();
+    tl.sleep(2.0 * 3600.0);
+    tl.run(tl.now + 1.0, &[]);
+    assert_eq!(tl.ends(), vec![(7201.75, Rule::R5)]);
+    assert!(tl.shots().is_empty(), "no shot for the gap: {:?}", tl.log);
+    assert_eq!(tl.policy.state().mode, CaptureMode::Idle);
+}
+
+#[test]
+fn input_right_after_a_sleep_starts_a_new_interaction() {
+    let mut tl = Timeline::new(vec![("a", video())]);
+    tl.run(1.5, &Timeline::burst(1.0, 1.4));
+    tl.clear();
+    tl.sleep(2.0 * 3600.0);
+    let t = tl.now + 0.1;
+    tl.run(t + 0.5, &[t]);
+    assert_eq!(tl.ends()[0].1, Rule::R5);
+    assert_eq!(tl.starts().len(), 1);
+    assert_eq!(tl.shots()[0].3, Rule::R1);
+}
+
+#[test]
+fn a_suspend_seen_by_the_runtime_ends_the_interaction_too() {
+    // During a suspend the monotonic clock stops, so the ticks show no gap: the runtime tells.
+    let mut tl = Timeline::new(vec![("a", video())]);
+    tl.run(1.5, &Timeline::burst(1.0, 1.4));
+    tl.clear();
+    let ds = tl.policy.on_slept(tl.at(1.5));
+    assert_eq!(ds, vec![Decision::EndInteraction { rule: Rule::R5 }]);
+    assert!(tl.policy.on_slept(tl.at(1.6)).is_empty(), "nothing open any more");
+}
+
+#[test]
+fn a_sleep_ends_an_open_passive_interaction_too() {
+    let mut tl = Timeline::new(vec![("a", video())]);
+    tl.run(10.0, &[1.0]).run(60.0, &[]);
+    assert_eq!(tl.policy.state().mode, CaptureMode::Passive);
+    tl.clear();
+    tl.sleep(3600.0);
+    tl.run(tl.now + 0.5, &[]);
+    assert_eq!(tl.ends().iter().map(|e| e.1).collect::<Vec<_>>(), vec![Rule::R7]);
+    assert!(tl.shots().is_empty());
 }
 
 #[test]

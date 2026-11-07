@@ -101,9 +101,11 @@ Times are the defaults; every number is a setting.
   R4's rule; if any changed, a shot of the changed screens, marked `passive`.
 - **R7 · Passive interaction.** The first passive shot starts one; every passive shot until it ends
   belongs to it. It ends on any input (R1 then starts an active one), after 3 consecutive checks
-  without change, or on lock or display sleep. It holds only passive shots.
-- **R8 · Stop.** While paused, locked or with the display asleep, nothing is captured and no checks
-  run; an open interaction ends.
+  without change, or on pause. It holds only passive shots.
+- **R8 · Stop.** While paused, nothing is captured and no checks run; an open interaction ends.
+  (Lock and sleep are not watched: the owner does not need capture to stop on lock, and while the
+  machine sleeps the app is frozen with it. An interaction left open across a sleep ends at the first
+  tick after waking, with no shots for the gap.)
 - **R9 · Size budget.** When an open interaction's shots reach 40 MiB (or 900 shots), it ends and a
   new interaction of the same kind starts at once with a shot of every screen (active: as R1;
   passive: a passive start). Every interaction then stays under the server's 50 MiB upload limit
@@ -199,7 +201,7 @@ Flatpak, no self-updater.
 
 - **Policy:** R1–R8 as timelines through the pure state machine, each rule with its own cases
   (incl. long bursts, idle screens skipped, a video while idle forming one passive interaction,
-  lock and pause).
+  pause, a sleep in the middle of an interaction).
 - **Change detection:** clock digit, cursor, pointer → no change; a new message, scrolling → change.
 - **Store and upload:** against a fake server in a temporary folder: markers, finishing interrupted
   folders, retries, refused device, Free up space deleting only uploaded ones.
@@ -208,5 +210,4 @@ Flatpak, no self-updater.
 - **Health and CLI:** each check against simulated good and bad machines; `status`, `pause`,
   `doctor` against a running app.
 - **On the owner's desktop, then laptop:** two screens with correct previews and names, live feeds
-  (the clock ticks in the previews), a video while idle giving a passive interaction, lock stopping
-  capture, restart reopening screens without dialogs, uploads catching up after a network loss.
+  (the clock ticks in the previews), a video while idle giving a passive interaction, restart reopening screens without dialogs, uploads catching up after a network loss.

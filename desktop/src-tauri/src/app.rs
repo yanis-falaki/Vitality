@@ -1,5 +1,5 @@
 //! The app: one instance per session (a second start shows the first one's window and exits),
-//! the core with the real input, session, portal and frames, the control socket, the tray icon,
+//! the core with the real input, portal and frames, the control socket, the tray icon,
 //! and the window (hidden at start unless no screen is set up; closing it only hides it).
 //!
 //! `run()` returns when the owner quits.
@@ -15,7 +15,6 @@ use crate::paths::Paths;
 use crate::runtime::{Core, Parts, Runtime};
 use crate::screens::feed::GstFeeds;
 use crate::screens::portal::XdgPortal;
-use crate::session::LogindWatch;
 use crate::settings::Settings;
 use crate::state::PauseFor;
 use crate::tray::{self, TrayAction};
@@ -74,7 +73,6 @@ async fn start(paths: Paths, handle: AppHandle) -> Result<Arc<Core>, Box<dyn std
         server: settings.server(),
         upload_timings: UploadTimings::default(),
         input: Arc::new(EvdevInput::start(Box::new(SystemDevices), Duration::from_secs(30))),
-        session: Arc::new(LogindWatch::start()),
         portal: Arc::new(XdgPortal),
         feeds: Arc::new(feeds),
         tick: Duration::from_millis(250),

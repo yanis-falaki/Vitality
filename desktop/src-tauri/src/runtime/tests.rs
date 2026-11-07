@@ -1,4 +1,4 @@
-//! The runtime end to end with fakes: input, session, portal, frames, and the fake server.
+//! The runtime end to end with fakes: input, portal, frames, and the fake server.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,7 +8,6 @@ use image::{Rgb, RgbImage};
 use super::*;
 use crate::activity::FakeInput;
 use crate::screens::fakes::{FakeFeeds, FakePortal};
-use crate::session::FakeSession;
 use crate::store::{INTERACTION_FILE, UPLOADED};
 use crate::types::CaptureMode;
 use crate::upload::tests::{eventually, fast, FakeServer};
@@ -17,7 +16,6 @@ struct Rig {
     _dir: tempfile::TempDir,
     paths: Paths,
     input: Arc<FakeInput>,
-    session: Arc<FakeSession>,
     feeds: Arc<FakeFeeds>,
     core: Arc<Core>,
     server: FakeServer,
@@ -42,7 +40,6 @@ async fn rig_with(dir: tempfile::TempDir, policy: PolicySettings) -> Rig {
     let server = FakeServer::default();
     let url = server.serve().await;
     let input = Arc::new(FakeInput::default());
-    let session = Arc::new(FakeSession::default());
     let feeds = Arc::new(FakeFeeds::default());
     let core = Runtime::start(Parts {
         paths: paths.clone(),
@@ -51,13 +48,12 @@ async fn rig_with(dir: tempfile::TempDir, policy: PolicySettings) -> Rig {
         server: Some(url),
         upload_timings: fast(),
         input: input.clone(),
-        session: session.clone(),
         portal: Arc::new(FakePortal::default()),
         feeds: feeds.clone(),
         tick: Duration::from_millis(20),
     });
     eventually("the saved screens reopened", || core.screens.opened_all()).await;
-    Rig { _dir: dir, paths, input, session, feeds, core, server }
+    Rig { _dir: dir, paths, input, feeds, core, server }
 }
 
 async fn rig() -> Rig {
@@ -170,20 +166,6 @@ async fn pause_mid_interaction_ends_it_at_once_and_captures_nothing_until_resume
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn lock_ends_the_interaction_and_unlock_resumes() {
-    let r = rig().await;
-    r.add_screen(40).await;
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    r.input();
-    eventually("active", || r.core.status().capture.mode == CaptureMode::Active).await;
-    r.session.lock(true);
-    eventually("stopped by the lock", || r.core.status().capture.stopped_by == Some(StopReason::Locked)).await;
-    assert_eq!(r.complete().len(), 1);
-    r.session.lock(false);
-    eventually("idle", || r.core.status().capture.mode == CaptureMode::Idle).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_saved_pause_holds_after_a_restart() {
     let dir = tempfile::tempdir().unwrap();
     PauseState::starting(PauseFor::Minutes(30), Utc::now()).save(&dir.path().join("state.json"));
@@ -232,7 +214,6 @@ pub async fn bare_core() -> BareCore {
         server: None,
         upload_timings: fast(),
         input: Arc::new(FakeInput::default()),
-        session: Arc::new(FakeSession::default()),
         portal: Arc::new(FakePortal::default()),
         feeds: Arc::new(FakeFeeds::default()),
         tick: Duration::from_millis(20),
@@ -261,26 +242,6 @@ async fn a_full_interaction_is_split_and_every_part_is_uploaded() {
     assert!(!second["shots"].as_array().unwrap().is_empty());
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn started_while_locked_captures_nothing() {
-    // I6: the lock state from before the runtime subscribed is not lost.
-    let dir = tempfile::tempdir().unwrap();
-    let session = Arc::new(FakeSession::default());
-    session.lock(true);
-    let core = Runtime::start(Parts {
-        paths: Paths::under(dir.path()),
-        policy: quick(),
-        webp_quality: 75.0,
-        server: None,
-        upload_timings: fast(),
-        input: Arc::new(FakeInput::default()),
-        session,
-        portal: Arc::new(FakePortal::default()),
-        feeds: Arc::new(FakeFeeds::default()),
-        tick: Duration::from_millis(20),
-    });
-    eventually("stopped by the lock", || core.status().capture.stopped_by == Some(StopReason::Locked)).await;
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_status_page_counts_today_and_lists_decisions() {
@@ -295,4 +256,13 @@ async fn the_status_page_counts_today_and_lists_decisions() {
     assert!(page.disk.captures_bytes > 0 && page.disk.free_bytes > 0);
     assert!(page.recent_decisions.iter().any(|d| d.text.starts_with("R1 shot")), "{:?}", page.recent_decisions);
     assert!(page.recent_decisions.len() <= 50);
+}
+
+#[test]
+fn a_suspend_is_a_wall_clock_jump_the_monotonic_clock_did_not_make() {
+    let wall = |s: i64| chrono::TimeDelta::seconds(s);
+    assert!(!slept(wall(0), Duration::from_millis(250)));
+    assert!(!slept(wall(20), Duration::from_secs(1)), "a small clock correction");
+    assert!(slept(wall(7200), Duration::from_millis(250)), "two hours asleep");
+    assert!(!slept(wall(-3600), Duration::from_millis(250)), "the clock set back");
 }
