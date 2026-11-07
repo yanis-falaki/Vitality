@@ -160,12 +160,13 @@ unmerged `screens` branch are not used.
 one and marks passive shots ("Screenshot 3 (12 s) · Main · passive"); its prompt says images are
 per screen, named by the owner, and that passive shots mean watching or reading.
 
-**Moving over** (laptop and desktop) is a one-time, **manual** step, done with the owner; the app has
-no migration code. Per machine: stop and remove the old client (its service, its install under
+**Moving over** (laptop and desktop) is a one-time, **manual** step, done by the assistant (or a subagent) over
+SSH; the app has no migration code. Per machine: stop and remove the old client (its service, its install under
 `~/.local/share/vitality-client`, its `index.sqlite`, the Hyprland start line) and the Waybar module
 (restoring the Waybar config from its backup); mark the existing local capture folders as uploaded
 (an empty `uploaded` file in each), or delete them, so the new app does not send them again; install
-the app; go through setup once (server address, screens).
+the app; go through setup once (server address, screens). Only picking the screens needs the
+owner at the machine: the portal's picker asks for a click there.
 
 ## 10. Where things live
 
