@@ -41,11 +41,12 @@ class Shot(_Message):
     width: int
     height: int
     bytes: int
-    # Which monitor, on a machine whose client captures several: "left", "middle", "right"
-    # or "screen-<n>" (left to right). None (left out) when the client captures one screen.
-    screen: Annotated[str, Field(pattern=r"^(left|middle|right|screen-[1-9]\d*)$")] | None = None
-    # Whether `screen` had the keyboard focus (the one being worked on). None (left out)
-    # when the client could not tell, or captures one screen.
+    # Which monitor, on a machine whose client captures several: numbered from 1 by position,
+    # top-left first (sorted by y, then x). None (left out) when the client captures one screen.
+    screen: Annotated[int, Field(ge=1)] | None = None
+    # That monitor's top-left corner in the desktop layout (logical pixels, [x, y]); `width`
+    # and `height` stay the image's size. None (left out) with `screen`.
+    screen_position: tuple[int, int] | None = None
     focused: bool | None = None
 
 

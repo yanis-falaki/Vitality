@@ -62,17 +62,17 @@ def test_python_dump_keeps_datetimes():
     assert isinstance(Interaction.model_validate(INTERACTION).model_dump()["start"], datetime)
 
 
-def test_shot_screen_and_focus_are_optional():
+def test_shot_screen_fields_are_optional():
     old = Shot.model_validate(SHOT)                      # written before several screens
-    assert (old.screen, old.focused) == (None, None)
+    assert (old.screen, old.screen_position, old.focused) == (None, None, None)
     assert "screen" not in json.loads(old.model_dump_json(exclude_none=True))
-    new = Shot.model_validate({**SHOT, "screen": "left", "focused": True})
-    assert (new.screen, new.focused) == ("left", True)
+    new = Shot.model_validate({**SHOT, "screen": 2, "screen_position": [1920, 0], "focused": True})
+    assert (new.screen, new.screen_position, new.focused) == (2, (1920, 0), True)
+    assert json.loads(new.model_dump_json())["screen_position"] == [1920, 0]
     assert Shot.model_validate_json(new.model_dump_json()) == new
-    assert Shot.model_validate({**SHOT, "screen": "screen-4"}).focused is None
 
 
-@pytest.mark.parametrize("screen", ["", "top", "../x", "screen-0", "Left"])
-def test_unknown_screen_names_rejected(screen):
+@pytest.mark.parametrize("change", [{"screen": 0}, {"screen": "left"}, {"screen_position": [1]}])
+def test_bad_screen_fields_rejected(change):
     with pytest.raises(ValidationError):
-        Shot.model_validate({**SHOT, "screen": screen})
+        Shot.model_validate({**SHOT, **change})
