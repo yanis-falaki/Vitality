@@ -332,7 +332,10 @@ class CaptureDaemon(Daemon):
         saved = self._saved_thumbs.setdefault(start, {})
         chosen = screens_to_capture(thumbs, {} if every else saved, focused)
         saved.update((number, thumbs[number]) for number in chosen)
-        return [_Shot(f.image, start, snap.ts, snap.trigger, f.number, f.position,
+        # Positions only mean something when they differ: Hyprland's portal reports none, and every
+        # stream then comes at (0, 0); record no position rather than a made-up layout.
+        known = len({f.position for f in frames}) == len(frames)
+        return [_Shot(f.image, start, snap.ts, snap.trigger, f.number, f.position if known else None,
                       None if focused is None else f.number == focused)
                 for f in frames if f.number in chosen]
 

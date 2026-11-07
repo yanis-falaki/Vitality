@@ -631,6 +631,17 @@ async def test_two_screens_manual_capture_saves_both_and_returns_focused(daemon_
     assert saved_shots(data) == [("0000.webp", 1, [0, 0], False), ("0000-2.webp", 2, [64, 0], True)]
 
 
+async def test_two_screens_at_the_same_position_record_no_position(daemon_env):
+    # Hyprland's portal reports no positions: every stream comes at (0, 0). That says nothing about the
+    # layout, so no position is recorded (the screens keep their numbers, in session order).
+    same = [ScreenFrame(1, Image.new("RGB", (64, 36), "white"), (0, 0), (64, 36)),
+            ScreenFrame(2, Image.new("RGB", (64, 36), "white"), (0, 0), (64, 36))]
+    d, clock, data = daemon_env(frame=same)
+    d.handle_activity(100.0)
+    clock.t = 102.0; await d.tick_once()
+    assert saved_shots(data) == [("0000.webp", 1, None, None), ("0000-2.webp", 2, None, None)]
+
+
 async def test_one_screen_interaction_json_is_unchanged(daemon_env):
     d, clock, data = daemon_env()
     d.handle_activity(100.0); clock.t = 102.0; await d.tick_once()

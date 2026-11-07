@@ -183,5 +183,19 @@ def test_screen_labels_number_the_screen_and_give_its_role(tmp_path: Path):
     ]
 
 
+def test_screens_without_positions_give_no_layout(tmp_path: Path):
+    interaction = make_interaction("2026-11-03T14:22:05Z", seconds=(0, 0))
+    first, second = interaction.shots
+    shots = [first.model_copy(update={"screen": 1}),
+             second.model_copy(update={"file": "0000-2.webp", "screen": 2})]
+    interaction = interaction.model_copy(update={"shots": shots})
+    item = make_item(tmp_path, interaction)
+
+    content = build_params(item, interaction, ObserverConfig())["messages"][0]["content"]
+
+    assert "Screens (" not in content[0]["text"] and content[0]["text"].endswith("(America/Toronto).")
+    assert content[1]["text"] == "0000.webp, 0 s after the first input · screen 1 of 2:"
+
+
 def test_prompt_explains_screens():
     assert "focused" in PROMPT and "several monitors" in PROMPT and "not left or right" in PROMPT

@@ -140,9 +140,9 @@ def screen_label(shot: Shot, screens: int) -> str:
 
 def screens_line(interaction: Interaction) -> str:
     """The header's sentence on the monitors' layout, e.g. ` Screens (top-left corner, logical
-    pixels): 1 at (0, 0), 2 at (1920, 0).`; empty when one monitor was captured."""
+    pixels): 1 at (0, 0), 2 at (1920, 0).`; empty when one monitor was captured or none has a position."""
     positions = {s.screen: s.screen_position for s in interaction.shots if s.screen is not None}
-    if not positions:
+    if not any(p is not None for p in positions.values()):  # one monitor, or no positions reported
         return ""
     where = ", ".join(f"{n} at {tuple(p)}" if p is not None else f"{n} at an unknown position"
                       for n, p in sorted(positions.items()))
