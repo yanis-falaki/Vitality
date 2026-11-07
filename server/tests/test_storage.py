@@ -23,6 +23,17 @@ def test_put_stores_folder_and_index(tmp_path):
     assert not any((tmp_path / "tmp").iterdir())
 
 
+def test_per_screen_shots_are_stored_and_one_screen_stays_as_before(tmp_path):
+    s = FileStore(tmp_path)
+    shot = META.shots[0].model_copy(update={"screen": "left", "focused": True})
+    meta = META.model_copy(update={"name": "2026-10-25/17-00-00-2", "shots": [shot]})
+    s.put("laptop", META, FILES); s.put("laptop", meta, FILES)
+    one, two = (tmp_path / "captures/laptop/2026-10-25" / n / "interaction.json"
+                for n in ("17-00-00", "17-00-00-2"))
+    assert '"screen":' not in one.read_text()                  # no `"screen": null`
+    assert Interaction.model_validate_json(two.read_text()).shots[0].screen == "left"
+
+
 def test_identical_repeat_is_existing(tmp_path):
     s = FileStore(tmp_path); s.put("laptop", META, FILES)
     assert s.put("laptop", META, FILES) == "existing"

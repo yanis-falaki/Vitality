@@ -79,7 +79,9 @@ class FileStore(InteractionStore):
             try:
                 for name, data in files.items():
                     (staging / name).write_bytes(data)
-                (staging / INTERACTION_FILE).write_text(interaction.model_dump_json(indent=2))
+                # exclude_none: a shot without `screen`/`focused` is stored as before.
+                (staging / INTERACTION_FILE).write_text(
+                    interaction.model_dump_json(indent=2, exclude_none=True))
                 folder.parent.mkdir(parents=True, exist_ok=True)
                 os.rename(staging, folder)
             except BaseException:
