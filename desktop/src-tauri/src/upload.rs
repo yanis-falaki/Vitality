@@ -68,9 +68,13 @@ impl UploadTimings {
     }
 }
 
+pub type Reporter = Arc<dyn Fn(String) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Uploader {
     status: Arc<Mutex<UploadStatus>>,
+    /// Told what happened, in plain words (the decisions log).
+    reporter: Arc<Mutex<Option<Reporter>>>,
     server: Arc<Mutex<Option<String>>>,
     wake: Arc<Notify>,
 }
@@ -105,6 +109,7 @@ impl Uploader {
         let initial = if server.is_some() { UploadState::Ok } else { UploadState::Disabled };
         let uploader = Uploader {
             server: Arc::new(Mutex::new(server.clone())),
+            reporter: Arc::default(),
             status: Arc::new(Mutex::new(UploadStatus {
                 state: initial,
                 pending: store.pending().len() as u32,
@@ -126,6 +131,18 @@ impl Uploader {
     /// Try now (a new interaction is ready, or the network may be back).
     pub fn wake(&self) {
         self.wake.notify_one();
+    }
+
+    /// Where to tell what happened: each upload, each refusal, and when the server goes away or
+    /// comes back.
+    pub fn set_reporter(&self, reporter: Reporter) {
+        *self.reporter.lock().unwrap() = Some(reporter);
+    }
+
+    fn report(&self, line: String) {
+        if let Some(r) = self.reporter.lock().unwrap().clone() {
+            r(line);
+        }
     }
 
     /// Uploads to another server from now on (`None`: no upload).
@@ -171,6 +188,7 @@ impl Uploader {
                     Outcome::Uploaded => {
                         mark(&store, &folder, UPLOADED);
                         retries.remove(&folder);
+                        self.report(format!("Uploaded · {}", folder_name(&store, &folder)));
                         backoff = t.backoff_start;
                         self.set(|s| {
                             s.pending = s.pending.saturating_sub(1);
@@ -186,6 +204,7 @@ impl Uploader {
                             409 => "stored differently on the server",
                             _ => "refused as invalid",
                         };
+                        self.report(format!("Upload refused for good — {what} · {name}"));
                         self.set(|s| {
                             s.pending = s.pending.saturating_sub(1);
                             s.failed += 1;
@@ -229,6 +248,15 @@ impl Uploader {
             } else {
                 UploadState::Ok
             };
+            let before = self.status().state;
+            if state != before {
+                match &state {
+                    UploadState::Rejected { device } => self.report(format!("Upload refused — the server does not accept this device (\"{device}\")")),
+                    UploadState::Offline => self.report("Server unreachable — uploads will be retried".into()),
+                    UploadState::Ok if before != UploadState::Disabled => self.report("Server reachable again — uploading".into()),
+                    _ => {}
+                }
+            }
             self.set(|s| s.state = state);
             if let Some(next) = retries.values().map(|r| r.due).min() {
                 wait = wait.min(next.saturating_duration_since(now));

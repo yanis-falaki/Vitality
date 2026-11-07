@@ -76,12 +76,18 @@ pub enum Trigger {
 /// The rule behind a decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rule {
-    R1,
-    R2,
-    R3,
-    R4,
-    R5,
-    R6,
+    /// Input while no interaction is open starts one (spec §6 "Start").
+    Start,
+    /// While busy, a shot at least every `max_gap`.
+    Busy,
+    /// Idle for `end_after_idle`: the closing shot and the end.
+    End,
+    /// While idle: the passive checks and the passive interaction.
+    Passive,
+    /// Paused (or quitting): an open interaction ends.
+    Pause,
+    /// The size budget: the interaction is split.
+    SizeLimit,
 }
 
 /// What the runtime should do.
@@ -151,6 +157,10 @@ impl Policy {
             }
             Mode::Stopped { why } => PolicyState { mode: CaptureMode::Stopped, stopped_by: Some(why), ..base },
         }
+    }
+
+    pub fn settings(&self) -> &PolicySettings {
+        &self.settings
     }
 
     /// New numbers for the rules, from now on (the open interaction goes on).

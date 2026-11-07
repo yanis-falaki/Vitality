@@ -30,7 +30,7 @@ impl Policy {
             Mode::Idle { .. } => self.start_active(now),
             Mode::Passive { .. } => {
                 // R4: input ends the passive interaction; R1 starts an active one.
-                let mut out = vec![Decision::EndInteraction { rule: Rule::R4 }];
+                let mut out = vec![Decision::EndInteraction { rule: Rule::Passive }];
                 out.extend(self.start_active(now));
                 out
             }
@@ -42,8 +42,8 @@ impl Policy {
     /// and the next input starts a fresh one. Call it before the first event after waking.
     pub fn on_slept(&mut self, now: Instant) -> Vec<Decision> {
         let rule = match self.mode {
-            Mode::Active { .. } => Rule::R3,
-            Mode::Passive { .. } => Rule::R4,
+            Mode::Active { .. } => Rule::End,
+            Mode::Passive { .. } => Rule::Passive,
             _ => return vec![],
         };
         self.mode = Mode::Idle { next_check: Some(now + self.settings.passive_every) };
@@ -64,41 +64,41 @@ impl Policy {
                 // R4: a passive check; a change starts a passive interaction.
                 if !self.any_changed() {
                     self.mode = Mode::Idle { next_check: Some(now + s.passive_every) };
-                    return vec![skipped(Rule::R4, "passive check: no screen changed")];
+                    return vec![skipped(Rule::Passive, "Checked idle screens — nothing changed")];
                 }
                 self.mode = Mode::Passive { since: now, shots: 1, next_check: now + s.passive_every, quiet: 0 };
-                vec![Decision::StartInteraction { kind: InteractionKind::Passive }, self.shoot_all(Trigger::Passive, Rule::R4)]
+                vec![Decision::StartInteraction { kind: InteractionKind::Passive }, self.shoot_all(Trigger::Passive, Rule::Passive)]
             }
             Mode::Idle { .. } => vec![],
             Mode::Passive { since, shots, next_check, quiet } if now >= next_check => {
                 let next_check = now + s.passive_every;
                 if self.any_changed() {
                     self.mode = Mode::Passive { since, shots: shots + 1, next_check, quiet: 0 };
-                    return vec![self.shoot_all(Trigger::Passive, Rule::R4)];
+                    return vec![self.shoot_all(Trigger::Passive, Rule::Passive)];
                 }
                 let quiet = quiet + 1;
                 if quiet >= s.passive_quiet_checks {
                     self.mode = Mode::Idle { next_check: Some(next_check) };
-                    return vec![skipped(Rule::R4, "passive check: no screen changed"), Decision::EndInteraction { rule: Rule::R4 }];
+                    return vec![skipped(Rule::Passive, "Checked idle screens — nothing changed"), Decision::EndInteraction { rule: Rule::Passive }];
                 }
                 self.mode = Mode::Passive { since, shots, next_check, quiet };
-                vec![skipped(Rule::R4, &format!("passive check: no screen changed ({quiet} of {})", s.passive_quiet_checks))]
+                vec![skipped(Rule::Passive, &format!("Checked idle screens — nothing changed ({quiet} of {})", s.passive_quiet_checks))]
             }
             Mode::Passive { .. } => vec![],
             Mode::Active { since, shots, last_shot_at } => {
                 let last_input = self.last_input.unwrap_or(since);
                 if now.duration_since(last_input) >= s.end_after_idle {
                     // R3: idle long enough: the closing shot, then the end.
-                    let closing = self.shoot_all(Trigger::Activity, Rule::R3);
+                    let closing = self.shoot_all(Trigger::Activity, Rule::End);
                     self.mode = Mode::Idle { next_check: Some(now + s.passive_every) };
-                    return vec![closing, Decision::EndInteraction { rule: Rule::R3 }];
+                    return vec![closing, Decision::EndInteraction { rule: Rule::End }];
                 }
                 if now.duration_since(last_shot_at) < s.max_gap {
                     return vec![];
                 }
                 // R2: still busy: a shot at least every `max_gap`.
                 self.mode = Mode::Active { since, shots: shots + 1, last_shot_at: now };
-                vec![self.shoot_all(Trigger::Activity, Rule::R2)]
+                vec![self.shoot_all(Trigger::Activity, Rule::Busy)]
             }
         }
     }
@@ -125,8 +125,8 @@ impl Policy {
             }
             _ => {}
         }
-        let shot = self.shoot_all(trigger, Rule::R6);
-        vec![Decision::EndInteraction { rule: Rule::R6 }, Decision::StartInteraction { kind }, shot]
+        let shot = self.shoot_all(trigger, Rule::SizeLimit);
+        vec![Decision::EndInteraction { rule: Rule::SizeLimit }, Decision::StartInteraction { kind }, shot]
     }
 
     /// Capture must stop (R5, or quitting). Ends an open interaction.
@@ -134,7 +134,7 @@ impl Policy {
         let open = matches!(self.mode, Mode::Active { .. } | Mode::Passive { .. });
         self.mode = Mode::Stopped { why };
         if open {
-            vec![Decision::EndInteraction { rule: Rule::R5 }]
+            vec![Decision::EndInteraction { rule: Rule::Pause }]
         } else {
             vec![]
         }
@@ -152,7 +152,7 @@ impl Policy {
     fn start_active(&mut self, now: Instant) -> Vec<Decision> {
         let shots = u32::from(!self.current.is_empty());
         self.mode = Mode::Active { since: now, shots, last_shot_at: now };
-        vec![Decision::StartInteraction { kind: InteractionKind::Active }, self.shoot_all(Trigger::Activity, Rule::R1)]
+        vec![Decision::StartInteraction { kind: InteractionKind::Active }, self.shoot_all(Trigger::Activity, Rule::Start)]
     }
 
     /// R4's question: has any screen changed since its own last shot (by the change threshold)?
@@ -166,7 +166,7 @@ impl Policy {
     /// thumbs as their last shot.
     fn shoot_all(&mut self, trigger: Trigger, rule: Rule) -> Decision {
         if self.current.is_empty() {
-            return skipped(rule, "no screen has a frame");
+            return skipped(rule, "No screenshot — no screen has a picture yet");
         }
         let screens: Vec<ScreenId> = self.current.keys().cloned().collect();
         for (id, t) in &self.current {

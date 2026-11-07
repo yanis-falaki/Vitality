@@ -303,6 +303,11 @@ impl InteractionHandle {
         self.shots.len()
     }
 
+    /// Whether it holds passive shots (an interaction never mixes the two).
+    pub fn trigger_is_passive(&self) -> bool {
+        self.shots.first().is_some_and(|s| s.trigger == "passive")
+    }
+
     /// The bytes of its shots so far.
     pub fn bytes(&self) -> u64 {
         self.shots.iter().map(|s| s.bytes).sum()

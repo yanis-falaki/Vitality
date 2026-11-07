@@ -161,15 +161,15 @@ export const statusPage: StatusPage = {
   "recent_decisions": [
     {
       "at": "2026-11-07T20:02:00Z",
-      "text": "start active interaction 2026-11-07/20-02-00"
+      "text": "Screenshot of 2 screens — you started using the computer · 2026-11-07/20-02-00"
     },
     {
       "at": "2026-11-07T20:02:00Z",
-      "text": "R1 shot activity · Main (0000.webp), Screen 2 (0000-2.webp)"
+      "text": "Screenshot of 2 screens — you've been busy for 10 s"
     },
     {
       "at": "2026-11-07T20:02:04Z",
-      "text": "R2 skipped: no screen changed (R4)"
+      "text": "Checked idle screens — nothing changed"
     }
   ],
   "status": {
@@ -210,34 +210,34 @@ export const statusPage: StatusPage = {
 
 export const rules: RuleText[] = [
   {
-    "id": "R1",
+    "id": "start",
     "text": "Any keyboard or mouse input while no interaction is open starts an active interaction, with a shot of every screen.",
     "title": "Start"
   },
   {
-    "id": "R2",
+    "id": "busy",
     "text": "While you keep using the keyboard or mouse, a shot of every screen at least every 10 s.",
-    "title": "Busy"
+    "title": "While you're busy"
   },
   {
-    "id": "R3",
+    "id": "end",
     "text": "After 3 s without input, a closing shot of every screen, and the interaction ends and is uploaded.",
     "title": "End"
   },
   {
-    "id": "R4",
-    "text": "While idle, every 45 s, each screen is compared with its last shot: it changed if more than 0.5 % of a small grayscale copy (64 × 36) moved by more than 16 levels. If any screen changed, a passive shot of every screen. The first one starts a passive interaction; it ends on any input (R1 then starts an active one) or after 3 checks in a row without change. Passive and active shots never share an interaction.",
-    "title": "Passive"
+    "id": "idle",
+    "text": "While idle, every 45 s, each screen is compared with its last shot: it changed if more than 0.5 % of a small grayscale copy (64 × 36) moved by more than 16 levels. If any screen changed, a passive shot of every screen. The first one starts a passive interaction; it ends on any input (then an active one starts) or after 3 checks in a row without change. Passive and active shots never share an interaction.",
+    "title": "While you're idle"
   },
   {
-    "id": "R5",
+    "id": "pause",
     "text": "While paused, nothing is captured and no checks run; an open interaction ends. A locked screen is not a pause: the lock screen is captured like any other. When the machine sleeps, an open interaction ends as it wakes, with no shot for the time asleep.",
     "title": "Pause"
   },
   {
-    "id": "R6",
+    "id": "size",
     "text": "When an interaction's shots reach 40 MiB (or 900 shots), it ends and a new one of the same kind starts at once with a shot of every screen, so every upload stays under the server's limit.",
-    "title": "Size budget"
+    "title": "Size limit"
   }
 ];
 

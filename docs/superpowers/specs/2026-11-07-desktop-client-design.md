@@ -37,7 +37,7 @@ upload; (2) Status; (3) Settings and first-run setup; (4) packaging; then the ow
 | Platforms | Linux first: GNOME, KDE, Hyprland, Sway; portable APIs only (the screen-share portal, the standard tray icon protocol) |
 | Upload format | The existing one (an interaction folder + `interaction.json`), with two additions (§9) |
 | Screens | Set up by the owner: one portal screen-share per screen, each named by the owner |
-| Capture | Activity-driven, plus a passive check while idle; explicit rules R1–R6 (§6) |
+| Capture | Activity-driven, plus a passive check while idle; six explicit rules (§6) |
 | Storage | Folders only, no database; an `uploaded` marker per interaction |
 | CLI | `vitality-client status · pause · resume · doctor`, through the app's socket (except `doctor`) |
 | Packaging | A local `PKGBUILD` in the repo (`makepkg -si`); run from source while building |
@@ -53,7 +53,7 @@ with arguments it is the CLI.
 |---|---|
 | `screens` | the portal screen-shares, one per screen, reopened from saved permissions; frames copied out of PipeWire's buffers on arrival, the newest per screen kept in memory; the owner's names |
 | `activity` | keyboard and mouse activity from Linux input devices (`/dev/input`, needs the `input` group) |
-| `policy` | rules R1–R6 as a pure state machine: given time, input and screen changes, what to capture; no I/O |
+| `policy` | the rules (§6) as a pure state machine: given time, input and screen changes, what to capture; no I/O |
 | `store` | interactions on disk: screenshots (WebP) as they are taken, `interaction.json` at the end |
 | `upload` | finished interactions to the server, retried until confirmed |
 | `control` | the socket for the CLI |
@@ -90,27 +90,28 @@ Times are the defaults; every number is a setting.
 
 Every shot is a shot of every screen; change detection only decides passive shots.
 
-- **R1 · Start.** Any keyboard or mouse input while no interaction is open starts an active
+- **Start.** Any keyboard or mouse input while no interaction is open starts an active
   interaction, with a shot of every screen.
-- **R2 · Busy.** While active, a shot of every screen at least every 10 s.
-- **R3 · End.** After 3 s without input, a closing shot of every screen, and the interaction ends
+- **While you're busy.** While active, a shot of every screen at least every 10 s.
+- **End.** After 3 s without input, a closing shot of every screen, and the interaction ends
   and is uploaded.
-- **R4 · Passive.** While idle, every 45 s, each screen is compared with its last shot: it changed
+- **While you're idle.** While idle, every 45 s, each screen is compared with its last shot: it changed
   if more than 0.5 % of a 64×36 grayscale thumbnail moved by more than 16 levels. If any screen
   changed, a passive shot of every screen, marked `passive`. The first starts a passive
-  interaction; it ends on any input (R1 then starts an active one) or after 3 checks in a row with
+  interaction; it ends on any input (then an active one starts) or after 3 checks in a row with
   no change. Passive and active shots never share an interaction.
-- **R5 · Pause.** While paused, nothing is captured and no checks run; an open interaction ends.
+- **Pause.** While paused, nothing is captured and no checks run; an open interaction ends.
   (Lock and sleep are not watched: the owner does not need capture to stop on lock, and while the
   machine sleeps the app is frozen with it. An interaction left open across a sleep ends as soon as
   the machine wakes, with no shots for the gap; the input that wakes it starts a new one.)
-- **R6 · Size budget.** When an open interaction's shots reach 40 MiB (or 900 shots), it ends and a
+- **Size limit.** When an open interaction's shots reach 40 MiB (or 900 shots), it ends and a
   new interaction of the same kind starts at once with a shot of every screen. Every interaction
   then stays under the server's 50 MiB upload limit (and its 1000-file limit). A 413 that still
   happens shows as a warning in Status.
 
-(Earlier drafts had a settle shot, a start gap and per-screen change filtering for active shots;
-they were merged and dropped, and the rules renumbered.)
+(Earlier drafts had a settle shot, a start gap, per-screen change filtering for active shots and
+numbered rules; they were merged or dropped. The rules have names, not numbers, wherever the owner
+reads them.)
 
 ## 7. Tray icon and window
 
@@ -126,7 +127,7 @@ shots today"), Pause for 30 min / 1 h / until tomorrow, Open Vitality, Quit.
 - **Screens** — §5.
 - **Settings** — start at login; server address; the timings and threshold of the rules; image quality;
   the disk warning level; **Free up space** (deletes local copies already uploaded, after asking).
-- **How capture works** — R1–R6 in plain words with the current numbers.
+- **How capture works** — the rules in plain words with the current numbers.
 - **Setup** — §8, instead of the pages when something essential is missing.
 
 ## 8. First-run setup and health
@@ -200,7 +201,7 @@ Flatpak, no self-updater.
 
 ## 12. Testing
 
-- **Policy:** R1–R6 as timelines through the pure state machine, each rule with its own cases
+- **Policy:** the rules as timelines through the pure state machine, each rule with its own cases
   (incl. long bursts, idle screens skipped, a video while idle forming one passive interaction,
   pause, a sleep in the middle of an interaction).
 - **Change detection:** clock digit, cursor, pointer → no change; a new message, scrolling → change.

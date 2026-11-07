@@ -100,12 +100,12 @@ mod tests {
         let path = dir.path().join("capture.log");
         let mut log = DecisionLog::open(&path);
         for i in 0..510 {
-            log.append(at(), &format!("R2 shot {i}"));
+            log.append(at(), &format!("Screenshot {i}"));
         }
         assert_eq!(log.recent(1000).len(), KEEP);
         let again = DecisionLog::open(&path);
         assert_eq!(again.recent(1000).len(), KEEP);
-        assert_eq!(again.recent(2), ["2026-11-07T20:02:03Z\tR2 shot 508", "2026-11-07T20:02:03Z\tR2 shot 509"]);
+        assert_eq!(again.recent(2), ["2026-11-07T20:02:03Z\tScreenshot 508", "2026-11-07T20:02:03Z\tScreenshot 509"]);
         assert_eq!(file_lines(&path), KEEP, "trimmed on start");
     }
 

@@ -55,14 +55,14 @@ Frames and previews exist only in memory. Nothing is deleted automatically; Sett
 Every shot is a shot of every screen; the numbers are settings (How capture works in the app
 shows them in words).
 
-- **R1 · Start:** any keyboard or mouse input while no interaction is open starts one, with a shot.
-- **R2 · Busy:** while active, a shot at least every 10 s.
-- **R3 · End:** after 3 s without input, a closing shot, and the interaction ends and is uploaded.
-- **R4 · Passive:** while idle, every 45 s, each screen is compared with its last shot; if one
+- **Start:** any keyboard or mouse input while no interaction is open starts one, with a shot.
+- **While you're busy:** while active, a shot at least every 10 s.
+- **End:** after 3 s without input, a closing shot, and the interaction ends and is uploaded.
+- **While you're idle:** while idle, every 45 s, each screen is compared with its last shot; if one
   changed (a video, a call), a passive shot. These form one passive interaction, which ends on
   input or after 3 checks in a row without change.
-- **R5 · Pause:** while paused, nothing is captured; an open interaction ends.
-- **R6 · Size budget:** at 40 MiB (or 900 shots) an interaction ends and a new one starts at once.
+- **Pause:** while paused, nothing is captured; an open interaction ends.
+- **Size limit:** at 40 MiB (or 900 shots) an interaction ends and a new one starts at once.
 
 Lock and sleep are not watched: the lock screen is captured like any screen (pause if you want
 it not to be). After a sleep, an interaction left open ends at once, with no shot for the gap.
@@ -125,7 +125,7 @@ Tests: `cargo test` and `cargo clippy -- -D warnings` in `desktop/`; `npm run ty
 `desktop/ui`; `python3 ui/tests/ui_test.py [SCREENSHOT_DIR]` (needs node on PATH and the Python
 `playwright` package with Chromium) checks the interface against the fake core.
 
-The core (`src-tauri/src/`): `policy` (rules R1–R6, pure), `activity` (`/dev/input`), `screens`
+The core (`src-tauri/src/`): `policy` (the capture rules, pure), `activity` (`/dev/input`), `screens`
 (portal screen-shares, frames, names), `store` (interaction folders), `upload`, `runtime` (wires
 them), `health` (the checks), `settings`, `control` (the CLI's socket), `tray`, `commands` (for
 the interface). Each file starts with its contract.

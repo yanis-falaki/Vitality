@@ -225,6 +225,12 @@ pub struct Runtime {
     /// The suspend clock at the last event.
     suspended: Duration,
     quit: bool,
+    /// An interaction was just started (its first shot's log line says how).
+    just_started: Option<InteractionKind>,
+    /// The closing shot was taken (the end's log line says so).
+    closing: bool,
+    /// Why the next end happens, when the policy's rule does not say it.
+    end_why: Option<String>,
     /// Decisions from `on_stop`, carried out by the next `finish_stop`.
     pending_stop: Vec<Decision>,
 }
@@ -255,6 +261,12 @@ impl Runtime {
             disk_warning: Mutex::new(5 * 1024 * 1024 * 1024),
             on_show: Mutex::new(None),
         });
+        let weak = Arc::downgrade(&core);
+        core.uploader.set_reporter(Arc::new(move |line| {
+            if let Some(core) = weak.upgrade() {
+                core.log.lock().unwrap().append(Utc::now(), &line);
+            }
+        }));
         let mut runtime = Runtime {
             core: core.clone(),
             policy: Policy::new(parts.policy.clone()),
@@ -265,6 +277,9 @@ impl Runtime {
             suspend_clock: parts.suspend_clock.clone(),
             quit: false,
             pending_stop: vec![],
+            just_started: None,
+            closing: false,
+            end_why: None,
         };
         runtime.update_stop(Instant::now());
         runtime.publish();
@@ -287,6 +302,9 @@ impl Runtime {
             tokio::select! {
                 Some(at) = inputs.recv() => {
                     self.check_wake(at).await;
+                    if self.policy.state().mode == crate::types::CaptureMode::Passive {
+                        self.end_why = Some("you started using the computer".into());
+                    }
                     let ds = self.policy.on_input(at);
                     self.execute(ds).await;
                 }
@@ -318,8 +336,13 @@ impl Runtime {
         let asleep = suspended.saturating_sub(self.suspended);
         self.suspended = suspended;
         if slept(asleep) {
-            self.log(&format!("the machine was suspended for {} min", asleep.as_secs() / 60));
+            let minutes = asleep.as_secs() / 60;
             let ds = self.policy.on_slept(now);
+            if ds.is_empty() {
+                self.log(&format!("The computer was asleep for {minutes} min"));
+            } else {
+                self.end_why = Some(format!("the computer was asleep for {minutes} min; nothing captured for that time"));
+            }
             self.execute(ds).await;
         }
     }
@@ -330,8 +353,8 @@ impl Runtime {
             Request::Pause(how, done) => {
                 let p = PauseState::starting(how, Utc::now());
                 self.log(&match p.paused_until {
-                    Some(u) => format!("paused until {}", u.with_timezone(&Local).format("%H:%M")),
-                    None => "paused".into(),
+                    Some(u) => format!("Paused until {}", u.with_timezone(&Local).format("%H:%M")),
+                    None => "Paused until you resume".into(),
                 });
                 self.set_pause(p);
                 self.update_stop(now);
@@ -341,7 +364,7 @@ impl Runtime {
             }
             Request::Resume(done) => {
                 if self.pause.paused {
-                    self.log("resumed");
+                    self.log("Resumed");
                 }
                 self.set_pause(PauseState::default());
                 self.update_stop(now);
@@ -350,6 +373,7 @@ impl Runtime {
             }
             Request::Quit(done) => {
                 self.quit = true;
+                self.end_why = Some("Vitality is quitting".into());
                 self.update_stop(now);
                 self.finish_stop().await;
                 self.publish();
@@ -364,7 +388,7 @@ impl Runtime {
                 let _ = done.send(());
             }
             Request::Settings(p) => {
-                self.log("settings changed");
+                self.log("Settings changed");
                 self.policy.set_settings(p);
             }
         }
@@ -414,17 +438,17 @@ impl Runtime {
             match d {
                 Decision::StartInteraction { kind } => {
                     if self.open.is_some() {
-                        self.end(Rule::R5).await; // never happens: the policy ends first
+                        self.end(Rule::Pause).await; // never happens: the policy ends first
                     }
                     let now = Utc::now();
                     let offset = Local::now().offset().fix();
                     let tz = local_tz_name(); // per interaction: the zone may change (travel)
                     match self.core.store.begin(now, offset, &tz) {
                         Ok(h) => {
-                            self.log(&format!("start {} interaction {}", kind_name(kind), h.name()));
                             self.open = Some(h);
+                            self.just_started = Some(kind);
                         }
-                        Err(e) => self.log(&format!("error: cannot start an interaction: {e}")),
+                        Err(e) => self.log(&format!("Error: cannot start an interaction: {e}")),
                     }
                 }
                 Decision::Shot { screens, trigger, rule } => {
@@ -433,7 +457,7 @@ impl Runtime {
                         continue;
                     };
                     let order = self.core.screens.ids();
-                    let mut taken = vec![];
+                    let mut taken = 0;
                     for id in order.iter().filter(|id| screens.contains(id)) {
                         let label = self.core.screens.statuses().into_iter().find(|s| &s.id == id).map(|s| s.name).unwrap_or_default();
                         let Some(latest) = self.core.screens.latest(id) else {
@@ -451,47 +475,86 @@ impl Runtime {
                             Err(e) => {
                                 // The interaction is lost from memory; its folder is finished at
                                 // the next start.
-                                self.log(&format!("error: writing a shot of {label} failed: {e}"));
+                                self.log(&format!("Error: writing a screenshot of {label} failed: {e}"));
                                 return;
                             }
                         };
                         handle = h;
                         match result {
-                            Ok(file) => taken.push(format!("{label} ({file})")),
+                            Ok(_) => taken += 1,
                             Err(e) => {
                                 self.policy.forget_screen(id);
-                                self.log(&format!("error: cannot write a shot of {label}: {e}"));
+                                self.log(&format!("Error: cannot write a screenshot of {label}: {e}"));
                             }
                         }
                     }
                     let (bytes, count) = (handle.bytes(), handle.shot_count() as u32);
+                    let name = handle.name().to_string();
                     self.open = Some(handle);
-                    self.log(&format!("{rule:?} shot {} · {}", store_trigger(trigger), taken.join(", ")));
-                    // R6: past the size budget, the policy splits the interaction.
+                    let started = self.just_started.take();
+                    if let Some(line) = self.shot_line(rule, taken, started, &name) {
+                        self.log(&line);
+                    }
+                    // Past the size budget, the policy splits the interaction.
                     let split = self.policy.on_written(Instant::now(), bytes, count);
                     for d in split.into_iter().rev() {
                         queue.push_front(d);
                     }
                 }
                 Decision::EndInteraction { rule } => self.end(rule).await,
-                Decision::Skipped { rule, why } => self.log(&format!("{rule:?} skipped: {why}")),
+                Decision::Skipped { why, .. } => self.log(&why),
             }
         }
     }
 
+    /// The decisions-log line for a shot of `n` screens (the closing shot is told with the end).
+    fn shot_line(&mut self, rule: Rule, n: usize, started: Option<InteractionKind>, name: &str) -> Option<String> {
+        let shot = if n > 1 { format!("Screenshot of {n} screens") } else { "Screenshot".to_string() };
+        let s = self.policy.settings();
+        Some(match rule {
+            Rule::Start => format!("{shot} — you started using the computer · {name}"),
+            Rule::Busy => format!("{shot} — you've been busy for {}", secs(s.max_gap)),
+            Rule::End => {
+                self.closing = true;
+                return None;
+            }
+            Rule::Passive if started == Some(InteractionKind::Passive) => {
+                format!("Watching: a screen changed while idle — passive {} · {name}", shot.to_lowercase())
+            }
+            Rule::Passive => format!("Watching: a screen changed while idle — passive {}", shot.to_lowercase()),
+            Rule::SizeLimit => format!("{shot} — continuing in a new interaction · {name}"),
+            Rule::Pause => shot,
+        })
+    }
+
     async fn end(&mut self, rule: Rule) {
+        let closing = std::mem::take(&mut self.closing);
+        let why = self.end_why.take();
         let Some(handle) = self.open.take() else { return };
         let name = handle.name().to_string();
+        let passive = handle.trigger_is_passive();
         let (shots, bytes) = (handle.shot_count(), handle.bytes());
+        let s = self.policy.settings().clone();
+        let what = if passive { "Passive interaction ended" } else { "Interaction ended" };
+        let line = match (rule, why) {
+            (_, Some(why)) => format!("{what} — {why}"),
+            (Rule::End, None) if closing => format!("Closing screenshot — idle for {}; interaction ended", secs(s.end_after_idle)),
+            (Rule::End, None) => format!("{what} — idle for {}", secs(s.end_after_idle)),
+            (Rule::Passive, None) => format!("{what} — nothing changed for {} checks", s.passive_quiet_checks),
+            (Rule::SizeLimit, None) => format!("Interaction split — size limit reached ({})", mib(s.max_interaction_bytes)),
+            (Rule::Pause, None) => format!("{what} — paused"),
+            (_, None) => what.to_string(),
+        };
         match tokio::task::spawn_blocking(move || handle.finish()).await {
             Ok(Ok(Some(_))) => {
                 self.core.recount();
-                self.log(&format!("{rule:?} end {name} · {shots} shots, {:.1} MiB", bytes as f64 / 1048576.0));
+                let size = format!("{shots} screenshot{}, {}", if shots == 1 { "" } else { "s" }, mib(bytes));
+                self.log(&format!("{line} ({size}) · {name}"));
                 self.core.uploader.wake();
             }
-            Ok(Ok(None)) => self.log(&format!("{rule:?} end {name} · no shots, nothing kept")),
-            Ok(Err(e)) => self.log(&format!("error: cannot finish {name}: {e}")),
-            Err(e) => self.log(&format!("error: finishing {name} failed: {e}")),
+            Ok(Ok(None)) => self.log(&format!("{line} (no screenshots, nothing kept)")),
+            Ok(Err(e)) => self.log(&format!("Error: cannot finish {name}: {e}")),
+            Err(e) => self.log(&format!("Error: finishing {name} failed: {e}")),
         }
     }
 
@@ -517,15 +580,21 @@ fn parse_decision(line: &str) -> Option<DecisionLine> {
     Some(DecisionLine { at, text: text.to_string() })
 }
 
-fn kind_name(k: InteractionKind) -> &'static str {
-    match k {
-        InteractionKind::Active => "active",
-        InteractionKind::Passive => "passive",
-    }
+
+/// "40 MiB", "0.5 MiB".
+fn mib(bytes: u64) -> String {
+    let m = bytes as f64 / 1048576.0;
+    if m >= 1.0 && m.fract() == 0.0 { format!("{m} MiB") } else { format!("{:.1} MiB", m.max(0.1)) }
 }
 
-fn store_trigger(t: crate::policy::Trigger) -> &'static str {
-    crate::store::trigger_name(t)
+/// "3 s", "2.5 s", "2 min".
+fn secs(d: Duration) -> String {
+    let s = d.as_secs_f64();
+    if s >= 60.0 && s % 60.0 == 0.0 {
+        format!("{} min", s / 60.0)
+    } else {
+        format!("{} s", (s * 10.0).round() / 10.0)
+    }
 }
 
 /// `at` as wall-clock time, to the second (so the status only changes when it means to).

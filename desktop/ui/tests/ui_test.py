@@ -135,7 +135,8 @@ def tests(ui: Ui) -> None:
     page.click(".advanced summary")
     page.click("text=How these are used")
     page.wait_for_selector(".rules")
-    check(page.locator(".rule-id").count() == 6, "How these are used leads to the six rules")
+    check(page.locator(".rule").count() == 6, "How these are used leads to the six rules")
+    check(re.search(r"\bR[0-9]\b", page.locator("main").inner_text()) is None, "no rule codes on How capture works")
     page.close()
 
     page = ui.open("scenario=two&page=settings&problems=1")

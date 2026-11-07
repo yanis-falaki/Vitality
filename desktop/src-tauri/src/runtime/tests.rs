@@ -122,7 +122,8 @@ async fn input_becomes_an_interaction_folder_that_is_uploaded() {
     assert!(shots.iter().all(|s| s["trigger"] == "activity" && s.get("screen_name").is_none()));
     assert_eq!(r.server.names().len(), 1);
     let log = r.core.recent_decisions(50).iter().map(|d| d.text.clone()).collect::<Vec<_>>().join("\n");
-    assert!(log.contains("start active interaction") && log.contains("R1 shot") && log.contains("R3 shot") && log.contains("R3 end"), "{log}");
+    assert!(log.contains("Screenshot — you started using the computer") && log.contains("Closing screenshot — idle for 0.3 s; interaction ended"), "{log}");
+    assert!(!log.contains("R1") && !log.contains("R3"), "no rule codes in the log: {log}");
     eventually("idle again", || r.core.status().capture.mode == CaptureMode::Idle).await;
 }
 
@@ -247,7 +248,7 @@ async fn a_full_interaction_is_split_and_every_part_is_uploaded() {
     })
     .await;
     let log = r.core.recent_decisions(50).iter().map(|d| d.text.clone()).collect::<Vec<_>>().join("\n");
-    assert!(log.contains("R6 end") && log.contains("R6 shot"), "{log}");
+    assert!(log.contains("Interaction split — size limit reached") && log.contains("continuing in a new interaction"), "{log}");
     let second = json(&r.complete()[1]);
     assert!(!second["shots"].as_array().unwrap().is_empty());
 }
@@ -264,7 +265,7 @@ async fn the_status_page_counts_today_and_lists_decisions() {
     let page = r.core.status_page();
     assert!(page.today.shots >= 1);
     assert!(page.disk.captures_bytes > 0 && page.disk.free_bytes > 0);
-    assert!(page.recent_decisions.iter().any(|d| d.text.starts_with("R1 shot")), "{:?}", page.recent_decisions);
+    assert!(page.recent_decisions.iter().any(|d| d.text.starts_with("Screenshot — you started using the computer")), "{:?}", page.recent_decisions);
     assert!(page.recent_decisions.len() <= 50);
 }
 
@@ -296,10 +297,13 @@ async fn after_a_suspend_the_waking_input_starts_a_fresh_interaction() {
     r.input();
     eventually("the old one finished", || !r.complete().is_empty()).await;
     eventually("a new one open", || r.folders().len() == 2).await;
-    let log: Vec<String> = r.core.recent_decisions(20).iter().map(|d| d.text.clone()).collect();
-    let i = log.iter().position(|l| l.starts_with("the machine was suspended")).expect("logged");
-    assert!(log[i + 1].starts_with("R3 end"), "{log:?}");
-    assert!(log[i + 2].starts_with("start active"), "{log:?}");
+    let lines = || r.core.recent_decisions(20).iter().map(|d| d.text.clone()).collect::<Vec<_>>();
+    eventually("the new one's first screenshot logged", || lines().iter().filter(|l| l.contains("you started using the computer")).count() == 2).await;
+    let log = lines();
+    let i = log.iter().position(|l| l.contains("the computer was asleep for 120 min")).expect("logged");
+    assert!(log[i].starts_with("Interaction ended"), "{log:?}");
+    let fresh = log.iter().rposition(|l| l.contains("you started using the computer")).unwrap();
+    assert!(fresh > i, "the old one closes before the new one starts: {log:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -325,4 +329,14 @@ async fn checks_are_absent_until_the_first_run_and_only_pass_or_fail_changes_not
     r.core.set_checks(vec![check("disk_space", true, false, "Disk space", "95.9 GB free", None)]);
     assert!(changes.try_recv().is_err(), "a detail moving is not a change");
     assert_eq!(r.core.checks().unwrap()[0].detail, "95.9 GB free");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_settings_apply_at_once() {
+    let r = rig().await;
+    let s = crate::settings::Settings { server: "".into(), disk_warning_gb: 1e6, ..Default::default() };
+    r.core.apply_settings(&s);
+    eventually("upload off", || r.core.status().upload.state == crate::types::UploadState::Disabled).await;
+    assert!(r.core.status_page().disk.low, "the new warning level counts");
+    eventually("logged", || r.core.recent_decisions(10).iter().any(|d| d.text == "Settings changed")).await;
 }

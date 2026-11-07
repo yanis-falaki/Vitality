@@ -166,7 +166,7 @@ pub struct DecisionLine {
     pub text: String,
 }
 
-/// One rule in plain words with the current numbers ("How capture works").
+/// One rule in plain words with the current values ("How capture works"); `id` is internal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleText {
     pub id: String,
@@ -296,9 +296,9 @@ pub mod samples_page {
                 check("device_accepted", true, false, "This device accepted by the server", "accepted as \"desktop\"", None),
             ],
             recent_decisions: vec![
-                DecisionLine { at: at(20, 2, 0), text: "start active interaction 2026-11-07/20-02-00".into() },
-                DecisionLine { at: at(20, 2, 0), text: "R1 shot activity · Main (0000.webp), Screen 2 (0000-2.webp)".into() },
-                DecisionLine { at: at(20, 2, 4), text: "R2 skipped: no screen changed (R4)".into() },
+                DecisionLine { at: at(20, 2, 0), text: "Screenshot of 2 screens — you started using the computer · 2026-11-07/20-02-00".into() },
+                DecisionLine { at: at(20, 2, 0), text: "Screenshot of 2 screens — you've been busy for 10 s".into() },
+                DecisionLine { at: at(20, 2, 4), text: "Checked idle screens — nothing changed".into() },
             ],
         }
     }

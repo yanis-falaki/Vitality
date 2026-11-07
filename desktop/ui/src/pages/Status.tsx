@@ -102,7 +102,7 @@ export function Status() {
         ) : (
           <ol className="decisions">
             {[...recent_decisions].reverse().map((d, i) => (
-              <li key={i} className={d.text.includes(" skipped") ? "skipped" : d.text.startsWith("error") ? "error" : ""}>
+              <li key={i} className={d.text.startsWith("Checked idle screens") || d.text.startsWith("No screenshot") ? "skipped" : d.text.startsWith("Error") ? "error" : ""}>
                 <time>{clock(d.at)}</time>
                 <span>{d.text}</span>
               </li>
