@@ -86,7 +86,8 @@ class Writer(CaptureWriter):
 
     def write(self, image: Image.Image, start: float, ts: float,
               trigger: Literal["activity", "manual"],
-              screen: str | None = None, focused: bool | None = None) -> ShotRow:
+              screen: int | None = None, screen_position: tuple[int, int] | None = None,
+              focused: bool | None = None) -> ShotRow:
         """Save the image and index it. The file is complete on disk before the
         row exists, so the index never points at a missing or partial file."""
         name = self._open.get(start)
@@ -114,7 +115,7 @@ class Writer(CaptureWriter):
             image.save(tmp, "WEBP", quality=self._quality)
             os.replace(tmp, final)
             row = ShotRow(name, file, format_ts(ts), trigger,
-                          image.width, image.height, final.stat().st_size, screen, focused)
+                          image.width, image.height, final.stat().st_size, screen, screen_position, focused)
             self._store.insert_shot(row, new)
         except BaseException:
             tmp.unlink(missing_ok=True)

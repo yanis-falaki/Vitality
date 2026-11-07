@@ -20,7 +20,7 @@ from gi.repository import Gst, GstVideo  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from vitality_client.daemon.frames.interface import ScreenFrame  # noqa: E402
-from vitality_client.daemon.frames.screens import named_frames  # noqa: E402
+from vitality_client.daemon.frames.screens import numbered_frames  # noqa: E402
 from vitality_client.daemon.frames.portal.session import Stream  # noqa: E402
 
 
@@ -40,7 +40,7 @@ class FrameStreams(Protocol):
         ...
 
     def latest_frames(self) -> list[ScreenFrame] | None:
-        """Each monitor's newest RGB image, named and ordered left to right, or None until
+        """Each monitor's newest RGB image, numbered and in number order, or None until
         every stream has a frame."""
         ...
 
@@ -153,7 +153,7 @@ class GstFrameStreams(FrameStreams):
         except Exception as exc:
             log.debug("could not convert the latest frame: %s", str(exc) or type(exc).__name__)
             return None
-        return named_frames(frames)
+        return numbered_frames(frames)
 
     def failure(self) -> str | None:
         """A pipeline error or end of stream since the last call, or None."""

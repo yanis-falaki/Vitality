@@ -29,7 +29,7 @@ class HyprlandFocus(FocusHint):
     def __init__(self, monitors_json: Callable[[], str] = _hyprctl) -> None:
         self._monitors_json = monitors_json
 
-    def focused_screen(self, screens: Sequence[ScreenFrame]) -> str | None:
+    def focused_screen(self, screens: Sequence[ScreenFrame]) -> int | None:
         try:
             return match_focused(json.loads(self._monitors_json()), screens)
         except Exception as exc:
@@ -37,8 +37,8 @@ class HyprlandFocus(FocusHint):
             return None
 
 
-def match_focused(monitors: object, screens: Sequence[ScreenFrame]) -> str | None:
-    """The name of the screen showing the focused monitor of `hyprctl monitors -j`, or None.
+def match_focused(monitors: object, screens: Sequence[ScreenFrame]) -> int | None:
+    """The number of the screen showing the focused monitor of `hyprctl monitors -j`, or None.
 
     Raises on malformed monitor entries (the caller turns that into no hint).
     """
@@ -57,7 +57,7 @@ def match_focused(monitors: object, screens: Sequence[ScreenFrame]) -> str | Non
 
     at_position = [s for s in screens if s.position == position]
     if len(at_position) == 1:
-        return at_position[0].name
+        return at_position[0].number
     sized = [s for s in (at_position or screens)
              if s.size in (logical, physical) or s.image.size == physical]
-    return sized[0].name if len(sized) == 1 else None
+    return sized[0].number if len(sized) == 1 else None

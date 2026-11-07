@@ -124,7 +124,8 @@ class _Shot:
     start: float
     ts: float
     trigger: Literal["activity", "manual"]
-    screen: str | None = None
+    screen: int | None = None
+    screen_position: tuple[int, int] | None = None
     focused: bool | None = None
     saved: asyncio.Future[ShotRow] | None = None  # receives the saved row, for `capture`
 
@@ -152,7 +153,7 @@ class CaptureDaemon(Daemon):
         self._frames = frames
         self._focus: FocusHint = focus or NoFocus()
         # Interaction start -> each screen's thumbnail at its last saved shot.
-        self._saved_thumbs: dict[float, dict[str | None, bytes]] = {}
+        self._saved_thumbs: dict[float, dict[int | None, bytes]] = {}
         self._clock = clock
         # Before anything opens the index: on the old layout, startup cleanup would take
         # every old screenshot for an orphan and delete it.
@@ -326,14 +327,14 @@ class CaptureDaemon(Daemon):
         start = snap.interaction.start
         if len(frames) == 1:  # one screen: every shot, as before several monitors
             return [_Shot(frames[0].image, start, snap.ts, snap.trigger)]
-        thumbs = {f.name: thumbnail(f.image) for f in frames}
+        thumbs = {f.number: thumbnail(f.image) for f in frames}
         focused = self._focus.focused_screen(frames)
         saved = self._saved_thumbs.setdefault(start, {})
         chosen = screens_to_capture(thumbs, {} if every else saved, focused)
-        saved.update((name, thumbs[name]) for name in chosen)
-        return [_Shot(f.image, start, snap.ts, snap.trigger, f.name,
-                      None if focused is None else f.name == focused)
-                for f in frames if f.name in chosen]
+        saved.update((number, thumbs[number]) for number in chosen)
+        return [_Shot(f.image, start, snap.ts, snap.trigger, f.number, f.position,
+                      None if focused is None else f.number == focused)
+                for f in frames if f.number in chosen]
 
     def _enqueue(self, item: _Shot | _End) -> None:
         self._writes.put_nowait(item)
@@ -356,7 +357,7 @@ class CaptureDaemon(Daemon):
         try:
             row = await asyncio.to_thread(
                 self._writer.write, shot.frame, shot.start, shot.ts, shot.trigger,
-                shot.screen, shot.focused)
+                shot.screen, shot.screen_position, shot.focused)
         except Exception as exc:
             log.error("capture write failed: %s", str(exc) or type(exc).__name__)
             if saved is not None and not saved.done():

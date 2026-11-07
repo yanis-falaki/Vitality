@@ -173,7 +173,8 @@ async def test_writes_are_serialized_in_request_order(daemon_env):
     order = []
     real_write, real_end = Writer.write, Writer.end
 
-    def slow_write(self, image, start, ts, trigger, screen=None, focused=None):
+    def slow_write(self, image, start, ts, trigger, screen=None, screen_position=None,
+                   focused=None):
         nonlocal active, peak
         active += 1; peak = max(peak, active)
         time.sleep(0.02)
@@ -580,9 +581,9 @@ async def test_failing_close_interrupted_is_logged_and_the_daemon_starts(daemon_
         await task
 
 
-def two_screens(left="white", right="white"):
-    return [ScreenFrame("left", Image.new("RGB", (64, 36), left), (0, 0), (64, 36)),
-            ScreenFrame("right", Image.new("RGB", (64, 36), right), (64, 0), (64, 36))]
+def two_screens(first="white", second="white"):
+    return [ScreenFrame(1, Image.new("RGB", (64, 36), first), (0, 0), (64, 36)),
+            ScreenFrame(2, Image.new("RGB", (64, 36), second), (64, 0), (64, 36))]
 
 
 class FixedFocus:
@@ -596,37 +597,38 @@ class FixedFocus:
 def saved_shots(data):
     folder = next((data / "captures").glob("*/*"))
     shots = json.loads((folder / "interaction.json").read_text())["shots"]
-    return [(s["file"], s.get("screen"), s.get("focused")) for s in shots]
+    return [(s["file"], s.get("screen"), s.get("screen_position"), s.get("focused"))
+            for s in shots]
 
 
 async def test_two_screens_first_shot_both_then_only_changed(daemon_env):
     d, clock, data = daemon_env(frame=two_screens())
     d.handle_activity(100.0)                                     # both screens
-    clock.t = 110.0; d._frames.frame = two_screens(right="black")
-    d.handle_activity(110.0)                                     # max gap: only right changed
+    clock.t = 110.0; d._frames.frame = two_screens(second="black")
+    d.handle_activity(110.0)                                     # max gap: only 2 changed
     clock.t = 111.0; await d.tick_once()                         # nothing changed: no shot
     clock.t = 112.0; await d.tick_once()                         # settle: nothing changed
-    assert saved_shots(data) == [("0000.webp", "left", None), ("0000-2.webp", "right", None),
-                                 ("0010.webp", "right", None)]
+    assert saved_shots(data) == [("0000.webp", 1, [0, 0], None), ("0000-2.webp", 2, [64, 0], None),
+                                 ("0010.webp", 2, [64, 0], None)]
 
 
 async def test_two_screens_focused_one_always_and_marked(daemon_env):
     d, clock, data = daemon_env(frame=two_screens())
-    d._focus = FixedFocus("left")
+    d._focus = FixedFocus(1)
     d.handle_activity(100.0)
     clock.t = 102.0; await d.tick_once()                         # settle: the focused one
-    assert saved_shots(data) == [("0000.webp", "left", True), ("0000-2.webp", "right", False),
-                                 ("0002.webp", "left", True)]
+    assert saved_shots(data) == [("0000.webp", 1, [0, 0], True), ("0000-2.webp", 2, [64, 0], False),
+                                 ("0002.webp", 1, [0, 0], True)]
     assert d.status()["screens"] == 2
 
 
 async def test_two_screens_manual_capture_saves_both_and_returns_focused(daemon_env):
     d, clock, data = daemon_env(frame=two_screens())
-    d._focus = FixedFocus("right")
+    d._focus = FixedFocus(2)
     reply = await d.handle({"cmd": "capture"})
     assert reply["ok"] and reply["path"].endswith("0000-2.webp")
     await d.drain()
-    assert saved_shots(data) == [("0000.webp", "left", False), ("0000-2.webp", "right", True)]
+    assert saved_shots(data) == [("0000.webp", 1, [0, 0], False), ("0000-2.webp", 2, [64, 0], True)]
 
 
 async def test_one_screen_interaction_json_is_unchanged(daemon_env):
@@ -634,4 +636,4 @@ async def test_one_screen_interaction_json_is_unchanged(daemon_env):
     d.handle_activity(100.0); clock.t = 102.0; await d.tick_once()
     folder = next((data / "captures").glob("*/*"))
     assert '"screen":' not in (folder / "interaction.json").read_text()
-    assert saved_shots(data) == [("0000.webp", None, None), ("0002.webp", None, None)]
+    assert saved_shots(data) == [("0000.webp", None, None, None), ("0002.webp", None, None, None)]

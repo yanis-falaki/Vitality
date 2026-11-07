@@ -29,7 +29,7 @@ THUMB_SIZE = (64, 36)
 PIXEL_DELTA = 16
 CHANGED_PIXELS = 12
 
-Name = TypeVar("Name", bound=Hashable | None)  # a screen's name: str, or None for the only one
+Key = TypeVar("Key", bound=Hashable | None)  # a screen's number, or None for the only one
 
 
 def thumbnail(image: Image.Image) -> bytes:
@@ -46,18 +46,18 @@ def changed(before: bytes, after: bytes) -> bool:
 
 
 def screens_to_capture(
-    current: Mapping[Name, bytes],
-    last: Mapping[Name, bytes],
-    focused: Name | None,
-) -> list[Name]:
+    current: Mapping[Key, bytes],
+    last: Mapping[Key, bytes],
+    focused: Key | None,
+) -> list[Key]:
     """The screens to save now, in the order of `current`.
 
-    `current` holds each screen's thumbnail now, by name; `last` the thumbnail of each
+    `current` holds each screen's thumbnail now, by number; `last` the thumbnail of each
     screen's last saved image in this interaction (empty for the first shot or a manual
     capture, so every screen is saved); `focused` the screen the focus hint names, or None.
     A screen missing from `last` (none saved yet) is saved.
     """
     if len(current) == 1:
         return list(current)
-    return [name for name, thumb in current.items()
-            if name == focused or name not in last or changed(last[name], thumb)]
+    return [key for key, thumb in current.items()
+            if key == focused or key not in last or changed(last[key], thumb)]

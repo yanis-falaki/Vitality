@@ -3,7 +3,7 @@ from collections.abc import Callable
 
 from PIL import Image
 
-from vitality_client.daemon.frames import named_frames, screen_names
+from vitality_client.daemon.frames import numbered_frames, screen_numbers
 from vitality_client.daemon.frames.portal.session import (
     PortalError,
     PortalResponseError,
@@ -19,24 +19,23 @@ from vitality_client.daemon.frames.portal.stream import (
 )
 
 
-def test_screen_names_by_position():
-    assert screen_names([(0, 0)]) == [None]                                  # as before
-    assert screen_names([(1920, 0), (0, 0)]) == ["right", "left"]
-    assert screen_names([(0, 0), (-1280, 200), (1920, 0)]) == ["middle", "left", "right"]
-    assert screen_names([(3, 0), (0, 0), (2, 0), (1, 0)]) == [
-        "screen-4", "screen-1", "screen-3", "screen-2"]
+def test_screen_numbers_top_left_first():
+    assert screen_numbers([(0, 0)]) == [None]                                 # as before
+    assert screen_numbers([(1920, 0), (0, 0)]) == [2, 1]                       # side by side
+    assert screen_numbers([(0, 1080), (0, 0)]) == [2, 1]                       # stacked
+    assert screen_numbers([(0, 0), (-1280, 200), (1920, 0), (0, -1080)]) == [2, 4, 3, 1]
 
 
-def test_screen_names_equal_positions_keep_session_order():
-    # e.g. a portal that reports no positions: the first session's monitor is "left".
-    assert screen_names([(0, 0), (0, 0)]) == ["left", "right"]
+def test_screen_numbers_equal_positions_keep_session_order():
+    # e.g. a portal that reports no positions: the first session's monitor is screen 1.
+    assert screen_numbers([(0, 0), (0, 0)]) == [1, 2]
 
 
-def test_named_frames_ordered_left_to_right_with_logical_size():
+def test_numbered_frames_in_number_order_with_logical_size():
     a = Image.new("RGB", (40, 20)); b = Image.new("RGB", (20, 10))
-    left, right = named_frames([(a, (20, 0), (20, 10)), (b, (0, 0), None)])
-    assert (left.name, left.image, left.size) == ("left", b, (20, 10))     # size from the image
-    assert (right.name, right.image, right.size, right.position) == ("right", a, (20, 10), (20, 0))
+    first, second = numbered_frames([(a, (20, 0), (20, 10)), (b, (0, 0), None)])
+    assert (first.number, first.image, first.size) == (1, b, (20, 10))      # size from the image
+    assert (second.number, second.image, second.size, second.position) == (2, a, (20, 10), (20, 0))
 
 
 def test_rgb_image_tight_rows():
@@ -191,7 +190,7 @@ def test_frames_are_converted_only_when_requested(monkeypatch):
     assert conversions == []
     frames = src.latest_frames()
     assert frames is not None and frames[0].image.getpixel((0, 0)) == (3, 3, 3)
-    assert frames[0].name is None
+    assert frames[0].number is None
     assert len(conversions) == 1
 
 

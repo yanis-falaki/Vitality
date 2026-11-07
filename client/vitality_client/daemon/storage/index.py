@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS shots (
     width       INTEGER NOT NULL,
     height      INTEGER NOT NULL,
     bytes       INTEGER NOT NULL,
-    screen      TEXT,
+    screen      INTEGER,
+    screen_x    INTEGER,
+    screen_y    INTEGER,
     focused     INTEGER,
     PRIMARY KEY (interaction, file)
 );
@@ -45,7 +47,8 @@ CREATE INDEX IF NOT EXISTS idx_interactions_uploaded_at ON interactions(uploaded
 """
 
 # Columns added since the first release, added to an older index when it is opened.
-_ADDED_SHOT_COLUMNS = {"screen": "TEXT", "focused": "INTEGER"}
+_ADDED_SHOT_COLUMNS = {"screen": "INTEGER", "screen_x": "INTEGER", "screen_y": "INTEGER",
+                       "focused": "INTEGER"}
 
 _PENDING = "end IS NOT NULL AND uploaded_at IS NULL AND upload_error IS NULL"
 
@@ -77,9 +80,10 @@ class Store(CaptureIndex):
                 )
             self._conn.execute(
                 "INSERT INTO shots (interaction, file, ts, trigger, width, height, bytes, "
-                "screen, focused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "screen, screen_x, screen_y, focused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (shot.interaction, shot.file, shot.ts, shot.trigger,
-                 shot.width, shot.height, shot.bytes, shot.screen, shot.focused),
+                 shot.width, shot.height, shot.bytes, shot.screen,
+                 *(shot.screen_position or (None, None)), shot.focused),
             )
 
     def has_interaction(self, name: str) -> bool:
@@ -117,15 +121,17 @@ class Store(CaptureIndex):
             if head is None:
                 raise KeyError(name)
             shots = self._conn.execute(
-                "SELECT file, ts, trigger, width, height, bytes, screen, focused FROM shots "
+                "SELECT file, ts, trigger, width, height, bytes, screen, screen_x, screen_y, focused "
+                "FROM shots "
                 "WHERE interaction = ? ORDER BY ts, rowid", (name,),
             ).fetchall()
         source, start, end, local_start, tz = head
         return Interaction(
             name=name, source=source, start=start, end=end, local_start=local_start, tz=tz,
             shots=[Shot(file=f, ts=t, trigger=tr, width=w, height=h, bytes=b, screen=sc,
+                        screen_position=None if x is None or y is None else (x, y),
                         focused=None if fo is None else bool(fo))
-                   for f, t, tr, w, h, b, sc, fo in shots],
+                   for f, t, tr, w, h, b, sc, x, y, fo in shots],
         )
 
     def shot_paths(self) -> set[str]:

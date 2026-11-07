@@ -95,5 +95,5 @@ def test_an_older_index_gains_the_screen_columns(tmp_path):
     conn.commit(); conn.close()
     Store(db).close(); Store(db).close()                       # opening twice is fine
     conn = sqlite3.connect(db)
-    assert {r[1] for r in conn.execute("PRAGMA table_info(shots)")} >= {"screen", "focused"}
+    assert {r[1] for r in conn.execute("PRAGMA table_info(shots)")} >= {"screen", "screen_x", "screen_y", "focused"}
     conn.close()

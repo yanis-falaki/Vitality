@@ -12,7 +12,7 @@ class ScreenFrame:
     """The newest image of one monitor. Position and size are logical (compositor) pixels;
     the image is in the monitor's own physical pixels."""
 
-    name: str | None  # "left", "right", ... (see screens.py); None when there is one screen
+    number: int | None  # 1, 2, ... top-left first (see screens.py); None when there is one screen
     image: Image.Image
     position: tuple[int, int]
     size: tuple[int, int]  # the image's size when the portal did not report one
@@ -40,7 +40,7 @@ class FrameSource(Protocol):
         ...
 
     def latest_frames(self) -> list[ScreenFrame] | None:
-        """The newest image of each monitor, named and ordered left to right, or None until
+        """The newest image of each monitor, numbered and in number order, or None until
         every monitor has delivered one."""
         ...
 

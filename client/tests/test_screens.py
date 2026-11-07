@@ -35,7 +35,7 @@ A, B, C = b"\x00" * 2304, b"\xff" * 2304, b"\x80" * 2304
 
 
 def test_first_shot_takes_every_screen():
-    assert screens_to_capture({"left": A, "right": A}, {}, None) == ["left", "right"]
+    assert screens_to_capture({1: A, 2: A}, {}, None) == [1, 2]
 
 
 def test_one_screen_is_always_taken():
@@ -43,30 +43,30 @@ def test_one_screen_is_always_taken():
 
 
 def test_idle_second_screen_is_skipped_changed_one_taken():
-    assert screens_to_capture({"left": B, "right": A}, {"left": A, "right": A}, None) == ["left"]
+    assert screens_to_capture({1: B, 2: A}, {1: A, 2: A}, None) == [1]
 
 
 def test_nothing_qualifies_takes_nothing():
-    assert screens_to_capture({"left": A, "right": A}, {"left": A, "right": A}, None) == []
+    assert screens_to_capture({1: A, 2: A}, {1: A, 2: A}, None) == []
 
 
 def test_focused_screen_always_taken_as_focus_moves():
-    last = {"left": A, "right": A}
-    assert screens_to_capture({"left": A, "right": A}, last, "left") == ["left"]
-    assert screens_to_capture({"left": A, "right": A}, last, "right") == ["right"]
-    # Focus moves left → right while the left screen also changes: both.
-    assert screens_to_capture({"left": C, "right": A}, last, "right") == ["left", "right"]
+    last = {1: A, 2: A}
+    assert screens_to_capture({1: A, 2: A}, last, 1) == [1]
+    assert screens_to_capture({1: A, 2: A}, last, 2) == [2]
+    # Focus moves 1 → 2 while screen 1 also changes: both.
+    assert screens_to_capture({1: C, 2: A}, last, 2) == [1, 2]
 
 
 def test_a_screen_not_taken_yet_is_taken():
-    assert screens_to_capture({"left": A, "right": A}, {"left": A}, None) == ["right"]
+    assert screens_to_capture({1: A, 2: A}, {1: A}, None) == [2]
 
 
-def frame(name, position, size=(1920, 1080), image_size=None):
-    return ScreenFrame(name, Image.new("RGB", image_size or size), position, size)
+def frame(number, position, size=(1920, 1080), image_size=None):
+    return ScreenFrame(number, Image.new("RGB", image_size or size), position, size)
 
 
-SCREENS = [frame("left", (0, 0)), frame("right", (1920, 0), (1280, 720), (2560, 1440))]
+SCREENS = [frame(1, (0, 0)), frame(2, (1920, 0), (1280, 720), (2560, 1440))]
 
 
 def monitors(focused_index, **changes):
@@ -78,14 +78,14 @@ def monitors(focused_index, **changes):
 
 
 def test_hyprland_focus_matches_by_position():
-    assert match_focused(monitors(0), SCREENS) == "left"
-    assert match_focused(monitors(1), SCREENS) == "right"
+    assert match_focused(monitors(0), SCREENS) == 1
+    assert match_focused(monitors(1), SCREENS) == 2
 
 
 def test_hyprland_focus_falls_back_to_size_when_positions_are_unknown():
-    unplaced = [frame("left", (0, 0)), frame("right", (0, 0), (1280, 720), (2560, 1440))]
-    assert match_focused(monitors(1), unplaced) == "right"            # logical 1280×720
-    same = [frame("left", (0, 0)), frame("right", (0, 0))]
+    unplaced = [frame(1, (0, 0)), frame(2, (0, 0), (1280, 720), (2560, 1440))]
+    assert match_focused(monitors(1), unplaced) == 2                  # logical 1280×720
+    same = [frame(1, (0, 0)), frame(2, (0, 0))]
     assert match_focused(monitors(0), same) is None                  # ambiguous: no hint
 
 

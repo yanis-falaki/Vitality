@@ -266,10 +266,11 @@ own image (no stitching):
 - **GNOME, KDE** (one picker can share several monitors): keep `screens = 1` and select all
   monitors in the picker.
 
-Monitors are named by position, left to right: `left` and `right`; `left`, `middle` and
-`right`; or `screen-1`, `screen-2`, ... for more. If the portal reports no positions, the
-order you picked them in counts (pick the left one first). With one monitor nothing changes:
-one image per shot, no name.
+Monitors are numbered from 1 by position, top-left first (by y, then x: a row counts left to
+right, a stack top to bottom), so the same layout always gets the same numbers; each shot
+also records its monitor's position in the layout. If the portal reports no positions, the
+order you picked them in counts. With one monitor nothing changes: one image per shot, no
+screen fields.
 
 To avoid saving an idle monitor again and again, the first shot of an interaction (and a
 manual `capture`) saves every monitor; later shots save only the monitors whose content
@@ -319,7 +320,8 @@ Each burst of activity is one **interaction**, a folder named by its UTC start t
     0014.webp
     0014-2.webp                    another monitor (or a manual capture) in the same second
     interaction.json               start/end, local time and zone, the list of shots
-                                   (with several monitors, each shot's screen and focus)
+                                   (with several monitors, each shot's screen number,
+                                   position and focus)
 ```
 
 `interaction.json` appears when the interaction ends, so a folder without one is still in
