@@ -1,4 +1,8 @@
-# vitality-client
+# vitality-client (superseded)
+
+> **Superseded by [`desktop/`](../desktop/README.md)**, the new capture client (a tray app with
+> named screens, Setup and Status). This daemon and its Waybar module are kept only until the
+> machines have moved over; do not install it on a new machine.
 
 A small Wayland daemon that takes screenshots around each burst of keyboard or mouse
 activity, groups them into one folder per interaction (WebP files plus an `interaction.json`

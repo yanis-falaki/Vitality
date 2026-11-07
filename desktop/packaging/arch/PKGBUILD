@@ -1,0 +1,64 @@
+# Vitality's desktop capture client, built from this repository's checkout (nothing is
+# downloaded but the Rust crates and npm packages the build needs).
+#   cd desktop/packaging/arch && makepkg -si
+# Works on a dirty or detached worktree: the files are copied as they are on disk.
+
+pkgname=vitality-client
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Vitality's desktop capture client: screens around your activity, uploaded to your Vitality server"
+arch=('x86_64')
+url="https://github.com/yanis-falaki/Vitality"
+license=('custom')
+# What the binary links (readelf NEEDED) and what it needs at run time: the pipewiresrc element,
+# PipeWire itself and the screen-share portal (the backend, e.g. xdg-desktop-portal-hyprland, is
+# the desktop's own). libwebp is built into the binary; the tray is drawn over D-Bus (no
+# libayatana).
+depends=('webkit2gtk-4.1' 'gtk3' 'glib2' 'cairo' 'gdk-pixbuf2' 'dbus' 'gcc-libs' 'glibc'
+         'gstreamer' 'gst-plugins-base-libs' 'gst-plugin-pipewire' 'pipewire' 'xdg-desktop-portal')
+makedepends=('rust' 'cargo' 'nodejs' 'npm' 'pkgconf' 'git')
+optdepends=('tailscale: reach the Vitality server')
+options=('!lto' '!debug')
+source=()
+sha256sums=()
+
+# The repository root: this file is in desktop/packaging/arch/.
+_repo="$(realpath "$startdir/../../..")"
+
+pkgver() {
+  local version count hash
+  version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$_repo/desktop/src-tauri/Cargo.toml" | head -n1)
+  count=$(git -C "$_repo" rev-list --count HEAD)
+  hash=$(git -C "$_repo" rev-parse --short HEAD)
+  printf '%s.r%s.g%s' "$version" "$count" "$hash"
+}
+
+prepare() {
+  # A copy of desktop/ without build output, so the checkout stays as it is.
+  rm -rf "$srcdir/desktop"
+  mkdir -p "$srcdir/desktop"
+  tar -C "$_repo/desktop" --exclude=./target --exclude=./ui/node_modules --exclude=./ui/dist \
+      --exclude=./src-tauri/gen -cf - . | tar -C "$srcdir/desktop" -xf -
+  cd "$srcdir/desktop/ui"
+  npm ci --no-audit --no-fund
+}
+
+build() {
+  cd "$srcdir/desktop"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  # Tauri's CLI builds the interface (beforeBuildCommand) and the binary with it embedded.
+  ui/node_modules/.bin/tauri build --no-bundle -- --locked
+}
+
+package() {
+  cd "$srcdir/desktop"
+  install -Dm755 "$srcdir/target/release/vitality-client" "$pkgdir/usr/bin/vitality-client"
+  install -Dm644 packaging/vitality-client.service "$pkgdir/usr/lib/systemd/user/vitality-client.service"
+  install -Dm644 packaging/vitality-client.desktop "$pkgdir/usr/share/applications/vitality-client.desktop"
+  local icons=src-tauri/icons hicolor="$pkgdir/usr/share/icons/hicolor"
+  install -Dm644 "$icons/32x32.png" "$hicolor/32x32/apps/vitality-client.png"
+  install -Dm644 "$icons/128x128.png" "$hicolor/128x128/apps/vitality-client.png"
+  install -Dm644 "$icons/128x128@2x.png" "$hicolor/256x256/apps/vitality-client.png"
+  install -Dm644 "$icons/icon.png" "$hicolor/512x512/apps/vitality-client.png"
+  install -Dm644 "$icons/icon.svg" "$hicolor/scalable/apps/vitality-client.svg"
+}

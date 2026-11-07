@@ -11,11 +11,12 @@ your Claude login.
 
 | Part | Where | What it is | How it runs |
 |---|---|---|---|
-| [`client/`](client/README.md) | the laptop | captures interactions and uploads them | its own `install.sh` and a systemd user service |
+| [`desktop/`](desktop/README.md) | the laptop and the desktop | the capture client (a tray app): captures interactions and uploads them | an Arch package (`makepkg -si`) and a systemd user service |
 | `server/`, `observer/`, `modeler/`, `web/` | the VM | [`server/`](server/README.md) stores uploads; [`observer/`](observer/README.md) turns them into observations and operations; [`modeler/`](modeler/README.md) turns those into the user model; [`web/`](web/README.md) is a private, read-only web app for reading it | Docker Compose, from this checkout |
 
-`protocol/` is the small package the client and server share. The laptop is set up from
-[`client/README.md`](client/README.md); everything below is about the VM.
+`protocol/` is the small package the client and server share. The machines that capture are set
+up from [`desktop/README.md`](desktop/README.md) (`client/` is the old capture daemon it
+replaces); everything below is about the VM.
 
 ## Install on the VM
 
