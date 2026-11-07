@@ -128,7 +128,8 @@ _WAITING = [
 # Evidence the modeler left out of every action: (device, day, "HH:MM", minutes, scene, screens, operations).
 _UNCITED = [
     ("laptop", "2026-11-03", "10:20", 3, "browser", 1, ["Scrolled a news site's front page", "Opened an article about rail strikes"]),
-    ("laptop", "2026-11-03", "13:30", 1, "browser", 1, ["Opened a messaging app and read two messages"]),
+    # Taken while no one used the laptop (the app's passive shots): a video kept playing.
+    ("laptop", "2026-11-03", "13:30", 1, "video", 1, ["A video kept playing with no one at the laptop"]),
     ("desktop", "2026-11-03", "21:50", 9, "video", 2,
      ["Played a video on the left screen", "Read a forum thread about lathes on the right screen",
       "Paused the video"]),
@@ -186,7 +187,7 @@ def build(root: Path) -> Fixture:
         name = _name(start, device)
         ops = [Operation(id=f"op{n + 1}", text=t, confidence=6) for n, t in enumerate(texts)]
         _write_evidence(model, captures, images[scene], name, ops, start, start + timedelta(minutes=minutes),
-                        screens=screens, other=images["browser"])
+                        screens=screens, other=images["browser"], passive=at == "13:30")
         uncited.append(name)
     (model / ".next-ids").write_text(json.dumps({"activity": 8, "striving": 3}) + "\n", encoding="utf-8")
     commit(model, "observer: evidence of 2026-11-02 to 04", "2026-11-02T21:00:00-05:00")
@@ -317,9 +318,10 @@ def _write_broken(model: Path) -> None:
 
 
 def _write_evidence(model: Path, captures: Path, image: bytes, name: str, ops: list[Operation],
-                    start: datetime, end: datetime, screens: int = 1, other: bytes = b"") -> None:
-    # With `screens` 2, each moment is shot on both screens (the second showing `other`), as a client
-    # capturing several monitors does; `interaction.json` says which screen each shot shows.
+                    start: datetime, end: datetime, screens: int = 1, other: bytes = b"", passive: bool = False) -> None:
+    # With `screens` 2, each moment is shot on both screens (the second showing `other`), as the desktop
+    # app does with several screens; `interaction.json` names the screen of each shot. `passive`: every
+    # shot was taken while no one used the device.
     device = name.split("/", 1)[0]
     write_file(model / "operations" / f"{name}.md", OperationsMeta(
         interaction=name, device=device, start=start, end=end, operations=ops))
@@ -328,7 +330,7 @@ def _write_evidence(model: Path, captures: Path, image: bytes, name: str, ops: l
     if name.endswith("14-04-00"):
         # Screen text that looks like markup must be shown as text, never run.
         extra = "\n\nA page title read `<script>alert(1)</script>` and <img src=x onerror=alert(2)> appeared."
-    screen = "The screen shows" if screens == 1 else f"Screen 1 of {screens} (focused) shows"
+    screen = "The screen shows" if screens == 1 else f"The screen named Left (1 of {screens}) shows"
     write_file(model / "observations" / f"{name}.md", ObservationMeta(
         interaction=name, device=device, start=start, end=end),
         f"{screen} one window in front.\n\n{lines}{extra}")
@@ -342,9 +344,9 @@ def _write_evidence(model: Path, captures: Path, image: bytes, name: str, ops: l
             file = f"{at + s - 1:04d}.png"
             (folder / file).write_bytes(image if s == 1 else other)
             shot: dict[str, object] = {"file": file, "ts": (start + timedelta(seconds=at)).isoformat(),
-                                       "trigger": "activity", "width": _W, "height": _H, "bytes": len(image)}
+                                       "trigger": "passive" if passive else "activity", "width": _W, "height": _H, "bytes": len(image)}
             if screens > 1:
-                shot.update(screen=s, screen_position=[(s - 1) * 1920, 0], focused=s == 1 + n % screens)
+                shot.update(screen_name=("Left", "Right")[s - 1])
             shots.append(shot)
     (folder / "interaction.json").write_text(json.dumps({"name": name.split("/", 1)[1], "shots": shots}) + "\n",
                                              encoding="utf-8")

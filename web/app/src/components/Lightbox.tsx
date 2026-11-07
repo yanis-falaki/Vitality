@@ -1,6 +1,6 @@
 // Screenshots at full size, over everything. `useLightbox().show(urls, index, captions?)` opens it;
 // arrows (keys or buttons) step through the set, Escape or a tap outside the picture closes it. A
-// caption (e.g. "Screen 2 · focused") is shown beside the count.
+// caption (e.g. "Left monitor · passive") is shown beside the count.
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
 interface Lightbox { show(urls: string[], index: number, captions?: string[]): void }

@@ -41,7 +41,7 @@ listed in `problems`, never an error.
 | `GET /api/model` | strivings and activities (frontmatter and body), actions (frontmatter without operations and body, the interactions they cite by name), `problems` |
 | `GET /api/actions/<id>` | one action with its operation references and body; 404 if unknown |
 | `GET /api/interactions?from=&to=` | a summary of each cited interaction started on those local days (both optional, included): start, end, operation and screenshot counts, first operation |
-| `GET /api/evidence/<interaction>` | its observation, operations, screenshot file names (and `shots`: each with its screen, position and whether it was focused, from `interaction.json` when the client captured several screens) and the actions citing it; 404 if unknown |
+| `GET /api/evidence/<interaction>` | its observation, operations, screenshot file names (and `shots`: each with its screen's name when the app captured several, and whether it was passive, from `interaction.json`) and the actions citing it; 404 if unknown |
 | `GET /api/interaction-days` | how many interactions were observed on each local day (from the observations' file names, one file read per folder) |
 | `GET /api/days/<day>/interactions` | every interaction observed on that local day (`observations/<device>/<UTC day>/`), by start: device, times, operation count and first operation, its shots, the actions citing it (none: not modeled yet) |
 | `GET /api/modeler` | the scheduler's state (`status.json`, or `not running` when no modeler holds its lock), the operations waiting (untracked operations files, by git), the session records |

@@ -24,7 +24,7 @@ import { clock, day, dayLabel, dayLong, hours, minutes, partOfDay, plural, short
 import { lanePalette, lanesOf, NONE, sittings, type Sitting } from "../lib/lanes";
 import { isInteraction, type Model } from "../lib/model";
 import { useParam, useSelection } from "../lib/selection";
-import { shotLabel, thumbsOf } from "../lib/shots";
+import { allPassive, shotLabel, thumbsOf } from "../lib/shots";
 import "./day.css";
 
 
@@ -351,6 +351,7 @@ function EvidenceRow({ i, on, onClick }: { i: DayInteraction; on: boolean; onCli
         </span>
         <span className="day-row-activity">
           {i.device}
+          {allPassive(i.shots) && <span className="day-ev-tag" title="Taken while no one used the device">passive</span>}
           {!i.actions.length && <span className="day-ev-tag">not modeled yet</span>}
         </span>
       </span>

@@ -1,11 +1,11 @@
 // One interaction's evidence, as a card: its time, its operations (those `cited` by the action in
-// view emphasised, the others dimmed), thumbnails that open the lightbox (each marked with its screen
-// when there are several), and the observation behind a disclosure. Fetched when the card is shown.
+// view emphasised, the others dimmed), thumbnails that open the lightbox (each marked with its screen's
+// name when there are several), and the observation behind a disclosure. Fetched when the card is shown.
 import { useState } from "react";
 import { shotUrl, useEvidence, type Shot } from "../api/client";
 import { clock, minutes, plural } from "../lib/format";
 import type { Model } from "../lib/model";
-import { shotLabel } from "../lib/shots";
+import { allPassive, shotLabel } from "../lib/shots";
 import { RichText } from "./RichText";
 import { useLightbox } from "./Lightbox";
 
@@ -33,6 +33,7 @@ export function EvidenceCard({ model, interaction, cited, showObservation = fals
           {data ? `${plural(data.operations.length, "operation")} · ${plural(urls.length, "screenshot")}`
             : isLoading ? "Loading…" : "Not found"}
           {start && end && <span className="muted"> · {minutes(start, end)} min</span>}
+          {allPassive(shots) && <span className="passive-tag" title="Taken while no one used the device">passive</span>}
         </span>
       </div>
       {data && (
@@ -68,12 +69,9 @@ export function EvidenceCard({ model, interaction, cited, showObservation = fals
   );
 }
 
-/** A shot's screen number in a corner of its thumbnail, with "focused" (none for a single screen). */
+/** A shot's screen name in a corner of its thumbnail (none for a single screen); `brief` cuts a long name. */
 export function ShotBadge({ shot, brief = false }: { shot: Shot; brief?: boolean }) {
-  if (shot.screen == null) return null;
-  return (
-    <span className={`shot-badge${shot.focused ? " focused" : ""}`} title={shotLabel(shot)}>
-      {shot.screen}{shot.focused && !brief ? " · focused" : ""}
-    </span>
-  );
+  if (shot.screen_name == null) return null;
+  const name = brief && shot.screen_name.length > 10 ? `${shot.screen_name.slice(0, 9)}…` : shot.screen_name;
+  return <span className="shot-badge" title={shot.screen_name}>{name}</span>;
 }

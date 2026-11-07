@@ -172,7 +172,7 @@ def test_day_lists_every_observed_interaction(client: TestClient, fx: Fixture) -
     cited = day["interactions"][0]
     assert cited["actions"] == ["2026-11-04/14-02-00"] and cited["device"] == "laptop"
     assert [s["file"] for s in cited["shots"]] == ["0000.png", "0150.png"]
-    assert cited["shots"][0]["screen"] is None
+    assert cited["shots"][0]["screen_name"] is None and not cited["shots"][0]["passive"]
 
 
 def test_an_uncited_interaction_is_listed_on_its_day(client: TestClient, fx: Fixture) -> None:
@@ -196,23 +196,29 @@ def test_a_day_on_two_devices(client: TestClient) -> None:
     assert client.get("/api/days/nonsense/interactions").status_code == 422
 
 
-def test_a_two_screen_interaction_says_which_screen_each_shot_shows(client: TestClient) -> None:
+def test_a_two_screen_interaction_names_the_screen_of_each_shot(client: TestClient) -> None:
     day = client.get("/api/days/2026-11-03/interactions").json()["interactions"]
     two = next(i for i in day if i["interaction"] == "desktop/2026-11-04/02-50-00")
-    assert [(s["file"], s["screen"], s["focused"]) for s in two["shots"]] == [
-        ("0000.png", 1, True), ("0001.png", 2, False), ("0180.png", 1, False), ("0181.png", 2, True),
-        ("0360.png", 1, True), ("0361.png", 2, False)]
-    assert two["shots"][1]["screen_position"] == [1920, 0]
+    assert [(s["file"], s["screen_name"], s["passive"]) for s in two["shots"]] == [
+        ("0000.png", "Left", False), ("0001.png", "Right", False), ("0180.png", "Left", False),
+        ("0181.png", "Right", False), ("0360.png", "Left", False), ("0361.png", "Right", False)]
     evidence = client.get("/api/evidence/desktop/2026-11-04/02-50-00").json()
     assert evidence["shots"] == two["shots"]
     assert evidence["observation"]["device"] == "desktop"
+
+
+def test_passive_shots_are_marked(client: TestClient) -> None:
+    day = client.get("/api/days/2026-11-03/interactions").json()["interactions"]
+    idle = next(i for i in day if i["interaction"] == "laptop/2026-11-03/18-30-00")
+    assert idle["shots"] and all(s["passive"] and s["screen_name"] is None for s in idle["shots"])
+    assert not any(s["passive"] for i in day if i is not idle for s in i["shots"])
 
 
 def test_shots_without_screens_or_with_a_broken_interaction_json(client: TestClient, fx: Fixture) -> None:
     name = "laptop/2026-11-02/14-18-00"
     (fx.captures / name / "interaction.json").write_text("{not json", encoding="utf-8")
     shots = client.get(f"/api/evidence/{name}").json()["shots"]
-    assert shots == [{"file": f, "screen": None, "screen_position": None, "focused": None}
+    assert shots == [{"file": f, "screen_name": None, "passive": False}
                      for f in ("0000.png", "0240.png", "0480.png")]
 
 

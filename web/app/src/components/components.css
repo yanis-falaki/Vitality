@@ -164,12 +164,16 @@
 .thumb { padding: 0; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; cursor: zoom-in; background: var(--hover); line-height: 0; }
 .thumb img { width: 92px; height: 58px; object-fit: cover; display: block; }
 .thumb { position: relative; }
-/* A shot's screen (when the client captures several), in a corner of its thumbnail */
+/* A shot's screen name (when the app captures several), in a corner of its thumbnail */
 .shot-badge {
   position: absolute; left: 3px; bottom: 3px; padding: 1px 5px; border-radius: 4px; background: var(--panel);
   font: 500 10px/1.3 var(--mono); color: var(--ink-3); opacity: 0.92; pointer-events: none; white-space: nowrap;
 }
-.shot-badge.focused { color: var(--ink); }
+/* An interaction whose shots were all taken while no one used the device */
+.passive-tag {
+  margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px;
+  font-size: 11px; color: var(--ink-3); white-space: nowrap;
+}
 .disclosure { padding: 0 var(--s3) var(--s2); border-top: 1px solid var(--line); }
 .disclosure-toggle { border: 0; background: none; padding: var(--s2) 0; font-size: 12px; color: var(--ink-3); cursor: pointer; min-height: 32px; }
 .disclosure-toggle:hover { color: var(--ink); }

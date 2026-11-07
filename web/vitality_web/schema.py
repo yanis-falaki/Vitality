@@ -99,12 +99,11 @@ class Observation(BaseModel):
 
 
 class Shot(BaseModel):
-    """One screenshot of an interaction, with the screen it shows when the client captured several."""
+    """One screenshot of an interaction, with the screen it shows when the app captured several."""
 
-    file: str                                   # "0004.webp", in the interaction's captures folder
-    screen: int | None = None                   # numbered from 1, top-left first; None with one screen
-    screen_position: list[int] | None = None    # that screen's top-left corner in the desktop ([x, y])
-    focused: bool | None = None                 # whether it held the focused window
+    file: str                       # "0004.webp", in the interaction's captures folder
+    screen_name: str | None = None  # the owner's name for the screen; None with one screen
+    passive: bool = False           # taken while no one used the device
 
 
 class Evidence(BaseModel):

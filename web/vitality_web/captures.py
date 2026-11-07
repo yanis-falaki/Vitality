@@ -1,8 +1,9 @@
 """The screenshots under the captures folder: listing an interaction's, and finding one safely.
 
 An interaction's screenshots are the image files in `<captures>/<interaction>/` (the server's layout:
-`0000.webp`, `0012.webp`, ...); its `interaction.json` says, per shot, which screen it shows when the
-client captures several (read leniently: a field that is missing or of another type is left out). Only `.webp`, `.png` and `.jpg` are served, and only from inside the
+`0000.webp`, `0012.webp`, ...); its `interaction.json` says, per shot, the name of the screen it shows (when
+the desktop app captures several) and whether it was taken while no one used the device (`"trigger": "passive"`),
+read leniently: a field that is missing or of another type is left out. Only `.webp`, `.png` and `.jpg` are served, and only from inside the
 captures folder: a path with `..` or a link that leads outside it is refused.
 """
 
@@ -36,12 +37,10 @@ def shots(root: Path, interaction: str) -> list[schema.Shot]:
     for shot in raw if isinstance(raw, list) else []:
         if not isinstance(shot, dict) or shot.get("file") not in files:
             continue
-        screen, position, focused = shot.get("screen"), shot.get("screen_position"), shot.get("focused")
-        valid = isinstance(position, list) and len(position) == 2 and all(type(v) is int for v in position)
+        name = shot.get("screen_name")
         listed[shot["file"]] = schema.Shot(
-            file=shot["file"], screen=screen if type(screen) is int and screen >= 1 else None,
-            screen_position=position if valid else None,
-            focused=focused if isinstance(focused, bool) else None)
+            file=shot["file"], screen_name=name if isinstance(name, str) and name.strip() else None,
+            passive=shot.get("trigger") == "passive")
     return [*listed.values(), *(schema.Shot(file=f) for f in files if f not in listed)]
 
 

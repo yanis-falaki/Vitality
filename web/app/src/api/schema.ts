@@ -483,17 +483,18 @@ export interface components {
         };
         /**
          * Shot
-         * @description One screenshot of an interaction, with the screen it shows when the client captured several.
+         * @description One screenshot of an interaction, with the screen it shows when the app captured several.
          */
         Shot: {
             /** File */
             file: string;
-            /** Screen */
-            screen?: number | null;
-            /** Screen Position */
-            screen_position?: number[] | null;
-            /** Focused */
-            focused?: boolean | null;
+            /** Screen Name */
+            screen_name?: string | null;
+            /**
+             * Passive
+             * @default false
+             */
+            passive: boolean;
         };
         /** Striving */
         Striving: {

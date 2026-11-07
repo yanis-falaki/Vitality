@@ -1181,41 +1181,21 @@
             "type": "string",
             "title": "File"
           },
-          "screen": {
+          "screen_name": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Screen"
+            "title": "Screen Name"
           },
-          "screen_position": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Screen Position"
-          },
-          "focused": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Focused"
+          "passive": {
+            "type": "boolean",
+            "title": "Passive",
+            "default": false
           }
         },
         "type": "object",
@@ -1223,7 +1203,7 @@
           "file"
         ],
         "title": "Shot",
-        "description": "One screenshot of an interaction, with the screen it shows when the client captured several."
+        "description": "One screenshot of an interaction, with the screen it shows when the app captured several."
       },
       "Striving": {
         "properties": {

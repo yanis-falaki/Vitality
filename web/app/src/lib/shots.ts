@@ -1,21 +1,27 @@
-// An interaction's screenshots as the views show them. A client that captures several screens takes a
-// shot of each (`screen`, numbered from 1, top-left first, and which one held the focused window).
+// An interaction's screenshots as the views show them. With several screens the desktop app takes a
+// shot of each at every moment, named as the owner named the screen (`screen_name`); a passive shot
+// was taken while no one used the device.
 import type { Shot } from "../api/client";
 
-/** A few shots to stand for an interaction in a list: with several screens, each screen's latest (by
- * screen); with one, up to three spread over the interaction (the first, the middle, the last). */
+/** A few shots to stand for an interaction in a list: with several screens, each screen's latest (in
+ * the order the screens first appear); with one, up to three spread over the interaction (the first,
+ * the middle, the last). */
 export function thumbsOf(shots: Shot[]): Shot[] {
-  if (shots.some((s) => s.screen != null)) {
-    const latest = new Map<number, Shot>();
-    for (const s of shots) if (s.screen != null) latest.set(s.screen, s);
-    return [...latest.entries()].sort((a, b) => a[0] - b[0]).slice(0, 4).map(([, s]) => s);
+  if (shots.some((s) => s.screen_name != null)) {
+    const latest = new Map<string, Shot>();
+    for (const s of shots) if (s.screen_name != null) latest.set(s.screen_name, s);
+    return [...latest.values()].slice(0, 4);
   }
   if (shots.length <= 3) return shots;
   return [shots[0], shots[Math.floor((shots.length - 1) / 2)], shots[shots.length - 1]];
 }
 
-/** "Screen 2 · focused", or "" for a shot of the only screen. */
+/** "Left monitor", "Left monitor · passive", "passive", or "" for an ordinary shot of the only screen. */
 export function shotLabel(shot: Shot): string {
-  if (shot.screen == null) return "";
-  return `Screen ${shot.screen}${shot.focused ? " · focused" : ""}`;
+  return [shot.screen_name, shot.passive ? "passive" : null].filter(Boolean).join(" · ");
+}
+
+/** Whether every shot of an interaction was passive (taken while no one used the device). */
+export function allPassive(shots: Shot[]): boolean {
+  return shots.length > 0 && shots.every((s) => s.passive);
 }
