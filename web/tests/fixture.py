@@ -4,14 +4,15 @@
 
     model/      a git repo: 2 strivings, 5 activities (and a malformed one), 28 actions over three
                 days (2026-11-02 to 04, three sittings a day), their observations and operations;
-                the last two interactions are untracked (waiting for the modeler). Its history: the
+                the last two interactions are untracked (waiting for the modeler), and four more no action
+                cites (two on the laptop, two on a desktop, one of them showing two screens). Its history: the
                 evidence, then one modeler commit a day (`_RUNS`, as in sessions.jsonl) that adds the
                 day's actions and revises the strivings and activities (created, retitled, made
                 established, confidence, serving another striving, act-0006 merged into act-0001),
                 then the owner's commit of the malformed file
     state/      the modeler's status.json and sessions.jsonl (with a torn line)
-    captures/   placeholder screenshots (generated PNGs) per interaction, and two links that lead
-                outside the folder
+    captures/   placeholder screenshots (generated PNGs) per interaction with its `interaction.json`, and
+                two links that lead outside the folder
     secret.png  the file those links point at
 
 Times are local (-05:00); interaction names and action ids are UTC, as in the real model.
@@ -22,7 +23,7 @@ import os
 import struct
 import subprocess
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -49,6 +50,7 @@ class Fixture:
     actions: list[str]           # action ids, by start
     interactions: list[str]      # every interaction name, by start (cited and waiting)
     waiting: list[str]           # the untracked interactions
+    uncited: list[str] = field(default_factory=list)  # committed interactions no action cites (not in `interactions`)
 
 
 # (day, "HH:MM" local, minutes, activity or None, summary, operations, shares the previous action's last interaction)
@@ -123,6 +125,16 @@ _WAITING = [
     ("2026-11-04", "22:44", 1, ["Closed the laptop lid"]),
 ]
 
+# Evidence the modeler left out of every action: (device, day, "HH:MM", minutes, scene, screens, operations).
+_UNCITED = [
+    ("laptop", "2026-11-03", "10:20", 3, "browser", 1, ["Scrolled a news site's front page", "Opened an article about rail strikes"]),
+    ("laptop", "2026-11-03", "13:30", 1, "browser", 1, ["Opened a messaging app and read two messages"]),
+    ("desktop", "2026-11-03", "21:50", 9, "video", 2,
+     ["Played a video on the left screen", "Read a forum thread about lathes on the right screen",
+      "Paused the video"]),
+    ("desktop", "2026-11-04", "12:20", 4, "sheet", 1, ["Opened the household budget spreadsheet"]),
+]
+
 # What each kind of work looks like on screen (the placeholder screenshot drawn for it).
 _SCENE = {"act-0001": "editor", "act-0002": "notes", "act-0003": "sheet", "act-0004": "video",
           "act-0005": "photos", None: "browser"}
@@ -168,6 +180,14 @@ def build(root: Path) -> Fixture:
     for name, ops, i_start, i_end, scene in pending:
         _write_evidence(model, captures, images[scene], name, ops, i_start, i_end)
         interactions.append(name)
+    uncited: list[str] = []
+    for device, day, at, minutes, scene, screens, texts in _UNCITED:
+        start = _local(day, at)
+        name = _name(start, device)
+        ops = [Operation(id=f"op{n + 1}", text=t, confidence=6) for n, t in enumerate(texts)]
+        _write_evidence(model, captures, images[scene], name, ops, start, start + timedelta(minutes=minutes),
+                        screens=screens, other=images["browser"])
+        uncited.append(name)
     (model / ".next-ids").write_text(json.dumps({"activity": 8, "striving": 3}) + "\n", encoding="utf-8")
     commit(model, "observer: evidence of 2026-11-02 to 04", "2026-11-02T21:00:00-05:00")
     for version, (day, run, at) in enumerate(_RUNS, 1):
@@ -197,7 +217,7 @@ def build(root: Path) -> Fixture:
     os.symlink("../../secret.png", captures / DEVICE / "escape.png")
     os.symlink(root, captures / DEVICE / "outside")
     return Fixture(model=model, state=state, captures=captures, actions=actions, interactions=interactions,
-                   waiting=waiting)
+                   waiting=waiting, uncited=uncited)
 
 
 # The modeler's sessions: (the day whose actions it added, run id, commit time). As in `_write_state`.
@@ -297,23 +317,37 @@ def _write_broken(model: Path) -> None:
 
 
 def _write_evidence(model: Path, captures: Path, image: bytes, name: str, ops: list[Operation],
-                    start: datetime, end: datetime) -> None:
+                    start: datetime, end: datetime, screens: int = 1, other: bytes = b"") -> None:
+    # With `screens` 2, each moment is shot on both screens (the second showing `other`), as a client
+    # capturing several monitors does; `interaction.json` says which screen each shot shows.
+    device = name.split("/", 1)[0]
     write_file(model / "operations" / f"{name}.md", OperationsMeta(
-        interaction=name, device=DEVICE, start=start, end=end, operations=ops))
+        interaction=name, device=device, start=start, end=end, operations=ops))
     lines = "\n".join(f"- {op.text}" for op in ops)
     extra = ""
     if name.endswith("14-04-00"):
         # Screen text that looks like markup must be shown as text, never run.
         extra = "\n\nA page title read `<script>alert(1)</script>` and <img src=x onerror=alert(2)> appeared."
+    screen = "The screen shows" if screens == 1 else f"Screen 1 of {screens} (focused) shows"
     write_file(model / "observations" / f"{name}.md", ObservationMeta(
-        interaction=name, device=DEVICE, start=start, end=end),
-        f"The screen shows one window in front.\n\n{lines}{extra}")
+        interaction=name, device=device, start=start, end=end),
+        f"{screen} one window in front.\n\n{lines}{extra}")
     folder = captures / name
     folder.mkdir(parents=True)
     seconds = int((end - start).total_seconds())
+    shots: list[dict[str, object]] = []
     for n in range(1 + min(2, seconds // 240)):
-        (folder / f"{n * seconds // 3:04d}.png").write_bytes(image)
-    (folder / "interaction.json").write_text("{}\n", encoding="utf-8")
+        at = n * seconds // 3
+        for s in range(1, screens + 1):
+            file = f"{at + s - 1:04d}.png"
+            (folder / file).write_bytes(image if s == 1 else other)
+            shot: dict[str, object] = {"file": file, "ts": (start + timedelta(seconds=at)).isoformat(),
+                                       "trigger": "activity", "width": _W, "height": _H, "bytes": len(image)}
+            if screens > 1:
+                shot.update(screen=s, screen_position=[(s - 1) * 1920, 0], focused=s == 1 + n % screens)
+            shots.append(shot)
+    (folder / "interaction.json").write_text(json.dumps({"name": name.split("/", 1)[1], "shots": shots}) + "\n",
+                                             encoding="utf-8")
 
 
 def _write_state(state: Path, sessions: list[dict[str, object]] | None = None) -> None:
@@ -341,8 +375,8 @@ def _local(day: str, at: str) -> datetime:
     return datetime.fromisoformat(f"{day}T{at}:00").replace(tzinfo=LOCAL)
 
 
-def _name(start: datetime) -> str:
-    return f"{DEVICE}/{start.astimezone(timezone.utc):%Y-%m-%d/%H-%M-%S}"
+def _name(start: datetime, device: str = DEVICE) -> str:
+    return f"{device}/{start.astimezone(timezone.utc):%Y-%m-%d/%H-%M-%S}"
 
 
 def _scene(activity: str | None, summary: str) -> str:

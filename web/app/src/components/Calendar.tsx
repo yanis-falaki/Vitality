@@ -6,8 +6,9 @@ import { addMonths, monthGrid, monthLabel, monthOf, shade } from "../lib/calenda
 import { dayLabel, plural } from "../lib/format";
 
 interface Props {
-  counts: Map<string, number>;   // actions per day, for the days that have any
-  first: string;                 // the first and last days with actions
+  counts: Map<string, number>;   // actions (or `unit`s) per day, for the days that have any
+  first: string;                 // the first and last days with any
+  unit?: string;                 // what is counted: "action" (the default) or "interaction"
   last: string;
   current: string;               // the day shown
   onPick(day: string): void;
@@ -15,7 +16,7 @@ interface Props {
 
 const WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
-export function CalendarButton({ counts, first, last, current, onPick }: Props) {
+export function CalendarButton({ counts, first, last, current, unit, onPick }: Props) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -36,14 +37,14 @@ export function CalendarButton({ counts, first, last, current, onPick }: Props) 
         </svg>
       </button>
       {open && (
-        <Month counts={counts} first={first} last={last} current={current}
+        <Month counts={counts} first={first} last={last} current={current} unit={unit}
           onPick={(d) => { setOpen(false); onPick(d); }} />
       )}
     </div>
   );
 }
 
-function Month({ counts, first, last, current, onPick }: Props) {
+function Month({ counts, first, last, current, unit = "action", onPick }: Props) {
   const [month, setMonth] = useState(monthOf(current));
   const max = Math.max(1, ...counts.values());
   const earlier = month > monthOf(first), later = month < monthOf(last);
@@ -65,7 +66,7 @@ function Month({ counts, first, last, current, onPick }: Props) {
           return n > 0 ? (
             <button type="button" key={d} data-day={d} data-step={shade(n, max, 3)}
               className={`calendar-day${d === current ? " on" : ""}`} aria-current={d === current ? "date" : undefined}
-              aria-label={`${dayLabel(d)}, ${plural(n, "action")}`} title={plural(n, "action")} onClick={() => onPick(d)}>{text}</button>
+              aria-label={`${dayLabel(d)}, ${plural(n, unit)}`} title={plural(n, unit)} onClick={() => onPick(d)}>{text}</button>
           ) : <span key={d} className="calendar-day none">{text}</span>;
         })}
       </div>

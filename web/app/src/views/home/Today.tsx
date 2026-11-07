@@ -1,5 +1,6 @@
 // "Today so far": today's lanes, compact (Day's lanes and colours, a sitting per column), and what is
-// probably happening now when the latest action ended less than half an hour ago. The lanes open Day.
+// probably happening now when the latest action ended less than half an hour ago. The lanes open Day;
+// "Evidence" opens today's interactions (Day's Evidence mode) at the newest.
 // With nothing today, a quiet line says so and the last day with evidence is shown in its place.
 import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
@@ -27,7 +28,10 @@ export function Today({ model, now, lastCapture }: { model: Model; now: Now; las
     <section className="home-section" aria-labelledby="home-today">
       <div className="home-section-head">
         <h2 className="eyebrow" id="home-today">Today so far</h2>
-        {shown && <Link className="home-more" to={`/day/${shown}`}>Open Day →</Link>}
+        <span className="home-links">
+          <Link className="home-more" to={`/day/${now.today}?mode=evidence&at=latest`}>Evidence</Link>
+          {shown && <Link className="home-more" to={`/day/${shown}`}>Open Day →</Link>}
+        </span>
       </div>
       {!today.length && (
         <p className="home-quiet">

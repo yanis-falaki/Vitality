@@ -98,6 +98,15 @@ class Observation(BaseModel):
     body: str
 
 
+class Shot(BaseModel):
+    """One screenshot of an interaction, with the screen it shows when the client captured several."""
+
+    file: str                                   # "0004.webp", in the interaction's captures folder
+    screen: int | None = None                   # numbered from 1, top-left first; None with one screen
+    screen_position: list[int] | None = None    # that screen's top-left corner in the desktop ([x, y])
+    focused: bool | None = None                 # whether it held the focused window
+
+
 class Evidence(BaseModel):
     interaction: str
     start: str
@@ -105,7 +114,30 @@ class Evidence(BaseModel):
     observation: Observation | None   # None when the observer wrote none, or it is malformed
     operations: list[Operation]
     screenshots: list[str]            # file names in the interaction's captures folder, sorted
+    shots: list[Shot]                 # the same, with their screens (from `interaction.json`, when it says)
     actions: list[str]                # ids of the actions citing it
+
+
+class DayInteraction(BaseModel):
+    """One observed interaction of a day, cited by an action or not (Day's Evidence mode)."""
+
+    interaction: str
+    device: str
+    start: str
+    end: str
+    operations: int                   # 0 when its operations file is missing or malformed
+    first_operation: str | None
+    shots: list[Shot]
+    actions: list[str]                # ids of the actions citing it; none: not modeled yet
+
+
+class DayInteractions(BaseModel):
+    day: str
+    interactions: list[DayInteraction]   # every device's, by start
+
+
+class InteractionDays(RootModel[dict[str, int]]):
+    """How many interactions were observed on each local day (`GET /api/interaction-days`)."""
 
 
 class SchedulerState(BaseModel):

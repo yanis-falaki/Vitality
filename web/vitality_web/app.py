@@ -6,6 +6,8 @@
     GET /api/actions/{id}              one action with its operations and body (`schema.ActionDetail`), or 404
     GET /api/interactions?from=&to=    summaries of the cited interactions started on those days (`schema.Interactions`)
     GET /api/evidence/{interaction}    one interaction's evidence (`schema.Evidence`), or 404
+    GET /api/interaction-days          how many interactions were observed each local day (`schema.InteractionDays`)
+    GET /api/days/{day}/interactions   every interaction observed that day, cited or not (`schema.DayInteractions`)
     GET /api/modeler                   the modeler's state (`schema.Modeler`)
     GET /api/pipeline                  the clock, the newest capture and observation (`schema.Pipeline`)
     GET /api/changes?limit=&before=    the modeler's commits and what they changed (`schema.Changes`), or 404
@@ -78,6 +80,14 @@ def create_app(model: Path, state: Path, captures_dir: Path, app_dir: Path | Non
         if evidence is None:
             raise HTTPException(404, "no such interaction")
         return evidence
+
+    @app.get("/api/interaction-days", response_model=schema.InteractionDays)
+    def get_interaction_days() -> schema.InteractionDays:
+        return schema.InteractionDays(reader.interaction_days())
+
+    @app.get("/api/days/{day}/interactions", response_model=schema.DayInteractions)
+    def get_day_interactions(day: date) -> schema.DayInteractions:
+        return reader.day_interactions(day)
 
     @app.get("/api/modeler", response_model=schema.Modeler)
     def get_modeler() -> schema.Modeler:

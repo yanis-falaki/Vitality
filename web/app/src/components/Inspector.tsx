@@ -7,7 +7,7 @@
 import type { ReactNode } from "react";
 import { useAction, useEvidence, type Action, type Activity, type Striving } from "../api/client";
 import { clock, day, dayLabel, minutes, plural } from "../lib/format";
-import type { Model } from "../lib/model";
+import { isInteraction, type Model } from "../lib/model";
 import { useSelection } from "../lib/selection";
 import { ActionGroups, actionsTitle } from "./ActionGroups";
 import { Chip, Confidence, LevelLabel, Muted, Section, Status } from "./bits";
@@ -23,7 +23,8 @@ interface Props {
 }
 
 export function Inspector({ model, id, empty, onClose, closeLabel = "Close" }: Props) {
-  const kind = id ? model.kind(id) : undefined;
+  // An interaction no action cites yet (Day's Evidence mode) is not in the model, but has its evidence.
+  const kind = id ? model.kind(id) ?? (isInteraction(id) ? "interaction" : undefined) : undefined;
   let body: ReactNode;
   if (!id || !kind) {
     body = <div className="inspector-empty">{empty ?? "Select something to see what the model believes, and why."}</div>;
@@ -131,6 +132,7 @@ function InteractionPanel({ model, name }: { model: Model; name: string }) {
       <h2 className="inspector-title">
         {start ? `${dayLabel(day(start))}, ${clock(start)}${evidence ? ` – ${clock(evidence.end)}` : ""}` : name}
       </h2>
+      <div className="meta"><span>{evidence?.observation?.device ?? name.split("/")[0]}</span></div>
       <Section title="In actions">
         {citing.map((a) => <Chip key={a.id} model={model} id={a.id} />)}
         {citing.length === 0 && <Muted>Not modeled yet</Muted>}

@@ -16,12 +16,14 @@
 .day-step:disabled { color: var(--line-2); cursor: default; }
 .day-nav .calendar-anchor { margin-left: 6px; }
 .day-sub { color: var(--ink-3); font-size: 13px; }
+.day-mode { margin-left: auto; flex: none; }
 
 .day-lanes {
   flex: none; max-height: 42%; overflow: auto; background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--r-lg); padding: 6px 12px 6px 0; margin-bottom: var(--s3); overscroll-behavior: contain;
 }
 .day-lanes-inner { min-width: 100%; }
+.day-lanes-none { padding: var(--s3) var(--s4); color: var(--ink-3); font-size: var(--text-sm); }
 .day-lane { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: center; min-height: 32px; border-top: 1px solid var(--hover); }
 .frame-tablet .day-lane { grid-template-columns: 170px minmax(0, 1fr); }
 .frame-phone .day-lane { grid-template-columns: 118px minmax(0, 1fr); }
@@ -85,6 +87,27 @@
 .day-row-len { font: 500 11px var(--mono); color: var(--ink-3); white-space: nowrap; }
 .frame-phone .day-row { grid-template-columns: 62px 9px minmax(0, 1fr); }
 .frame-phone .day-row-len { display: none; }
+
+/* Evidence mode: a row per interaction, with a few thumbnails */
+.day-list-note { margin: 0; padding: var(--s4) var(--s2); color: var(--ink-3); font-size: var(--text-sm); }
+.day-ev-row { grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; padding: 6px var(--s2); }
+.day-ev-row .time { align-self: baseline; padding-top: 2px; }
+.day-ev-op { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.day-ev-more { color: var(--ink-3); font-size: var(--text-sm); }
+.day-ev-tag {
+  margin-left: var(--s2); padding: 0 7px; border-radius: var(--r-pill); background: var(--evidence-soft);
+  color: var(--ink-3); font-size: 10.5px; white-space: nowrap;
+}
+.day-ev-thumbs { display: flex; gap: 4px; }
+.day-ev-thumb { position: relative; line-height: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: var(--hover); }
+.day-ev-thumb img { width: 58px; height: 36px; object-fit: cover; display: block; }
+.day-ev-thumb .shot-badge { left: 2px; bottom: 2px; padding: 0 4px; font-size: 9.5px; }
+.frame-phone .day-ev-row { grid-template-columns: 62px minmax(0, 1fr) auto; gap: var(--s2); }
+.frame-phone .day-ev-thumb:nth-child(n + 3) { display: none; }
+.frame-phone .day-ev-thumb img { width: 46px; height: 29px; }
+/* A phone: the summary wraps beside the switch rather than taking a line of its own. */
+.frame-phone .day-nav { flex: 1 0 100%; }
+.frame-phone .day-sub { flex: 1 1 0; min-width: 0; font-size: 12px; }
 
 @media (pointer: coarse) {
   .day-lane-name, .day-row { min-height: var(--touch); }

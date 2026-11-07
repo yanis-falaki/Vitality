@@ -171,6 +171,64 @@
         }
       }
     },
+    "/api/interaction-days": {
+      "get": {
+        "summary": "Get Interaction Days",
+        "operationId": "get_interaction_days_api_interaction_days_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractionDays"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/days/{day}/interactions": {
+      "get": {
+        "summary": "Get Day Interactions",
+        "operationId": "get_day_interactions_api_days__day__interactions_get",
+        "parameters": [
+          {
+            "name": "day",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DayInteractions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/modeler": {
       "get": {
         "summary": "Get Modeler",
@@ -566,6 +624,89 @@
         ],
         "title": "Changes"
       },
+      "DayInteraction": {
+        "properties": {
+          "interaction": {
+            "type": "string",
+            "title": "Interaction"
+          },
+          "device": {
+            "type": "string",
+            "title": "Device"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "operations": {
+            "type": "integer",
+            "title": "Operations"
+          },
+          "first_operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Operation"
+          },
+          "shots": {
+            "items": {
+              "$ref": "#/components/schemas/Shot"
+            },
+            "type": "array",
+            "title": "Shots"
+          },
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Actions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "interaction",
+          "device",
+          "start",
+          "end",
+          "operations",
+          "first_operation",
+          "shots",
+          "actions"
+        ],
+        "title": "DayInteraction",
+        "description": "One observed interaction of a day, cited by an action or not (Day's Evidence mode)."
+      },
+      "DayInteractions": {
+        "properties": {
+          "day": {
+            "type": "string",
+            "title": "Day"
+          },
+          "interactions": {
+            "items": {
+              "$ref": "#/components/schemas/DayInteraction"
+            },
+            "type": "array",
+            "title": "Interactions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "interactions"
+        ],
+        "title": "DayInteractions"
+      },
       "Evidence": {
         "properties": {
           "interaction": {
@@ -604,6 +745,13 @@
             "type": "array",
             "title": "Screenshots"
           },
+          "shots": {
+            "items": {
+              "$ref": "#/components/schemas/Shot"
+            },
+            "type": "array",
+            "title": "Shots"
+          },
           "actions": {
             "items": {
               "type": "string"
@@ -620,6 +768,7 @@
           "observation",
           "operations",
           "screenshots",
+          "shots",
           "actions"
         ],
         "title": "Evidence"
@@ -636,6 +785,14 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "InteractionDays": {
+        "additionalProperties": {
+          "type": "integer"
+        },
+        "type": "object",
+        "title": "InteractionDays",
+        "description": "How many interactions were observed on each local day (`GET /api/interaction-days`)."
       },
       "InteractionSummary": {
         "properties": {
@@ -1017,6 +1174,56 @@
         ],
         "title": "Session",
         "description": "One line of the modeler's `sessions.jsonl` (`offered` dropped); fields the app shows are named."
+      },
+      "Shot": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "title": "File"
+          },
+          "screen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screen"
+          },
+          "screen_position": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screen Position"
+          },
+          "focused": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focused"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Shot",
+        "description": "One screenshot of an interaction, with the screen it shows when the client captured several."
       },
       "Striving": {
         "properties": {

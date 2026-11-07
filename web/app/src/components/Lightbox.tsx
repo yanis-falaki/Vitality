@@ -1,16 +1,17 @@
-// Screenshots at full size, over everything. `useLightbox().show(urls, index)` opens it; arrows
-// (keys or buttons) step through the set, Escape or a tap outside the picture closes it.
+// Screenshots at full size, over everything. `useLightbox().show(urls, index, captions?)` opens it;
+// arrows (keys or buttons) step through the set, Escape or a tap outside the picture closes it. A
+// caption (e.g. "Screen 2 · focused") is shown beside the count.
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
-interface Lightbox { show(urls: string[], index: number): void }
+interface Lightbox { show(urls: string[], index: number, captions?: string[]): void }
 
 const LightboxContext = createContext<Lightbox>({ show: () => {} });
 
 export const useLightbox = () => useContext(LightboxContext);
 
 export function LightboxProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<{ urls: string[]; index: number } | null>(null);
-  const show = useCallback((urls: string[], index: number) => setState({ urls, index }), []);
+  const [state, setState] = useState<{ urls: string[]; index: number; captions?: string[] } | null>(null);
+  const show = useCallback((urls: string[], index: number, captions?: string[]) => setState({ urls, index, captions }), []);
   const step = useCallback((by: number) => setState((s) => s && {
     ...s, index: (s.index + by + s.urls.length) % s.urls.length,
   }), []);
@@ -32,7 +33,7 @@ export function LightboxProvider({ children }: { children: ReactNode }) {
           <img src={state.urls[state.index]} alt="" onClick={(e) => e.stopPropagation()} />
           <div className="lightbox-bar" onClick={(e) => e.stopPropagation()}>
             {state.urls.length > 1 && <button type="button" onClick={() => step(-1)} aria-label="Previous">←</button>}
-            <span>{state.index + 1} / {state.urls.length}</span>
+            <span>{state.index + 1} / {state.urls.length}{state.captions?.[state.index] ? ` · ${state.captions[state.index]}` : ""}</span>
             {state.urls.length > 1 && <button type="button" onClick={() => step(1)} aria-label="Next">→</button>}
             <button type="button" onClick={() => setState(null)} aria-label="Close">Close</button>
           </div>

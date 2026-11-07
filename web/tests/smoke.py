@@ -12,7 +12,8 @@ Reader page and to an action's day, a change in its feed opens that belief in th
 Reader link (`/?page=`) redirects. For each view, at
 desktop (1366x768), tablet (820x1180) and phone (390x844) sizes: the view renders without console
 errors, selecting an item fills the inspector, and the page never scrolls sideways; at desktop size
-the Day view does not scroll at all, and in the Graph, after zooming and panning, clicking a node
+the Day view does not scroll at all; Day's Evidence mode lists interactions and selecting one fills the
+inspector (rows at least 40 px tall on touch), and in the Graph, after zooming and panning, clicking a node
 animates the camera from where it was (never through the full view, the same renderer kept). A screenshot of each view and size (and of the inspector open
 on tablet and phone) is saved in `--shots`. Exits 1 on the first failed check.
 
@@ -57,6 +58,36 @@ def pick_cards(page: Page) -> None:
 
 def pick_day(page: Page) -> None:
     page.locator(".day-row").nth(2).click()
+
+
+def check_day_evidence(page: Page, url: str, label: str, large: bool) -> None:
+    # Day's Evidence mode: the day's interactions as rows; selecting one shows it in the inspector.
+    page.goto(url + ("/day?mode=evidence" if large else "/day/2026-11-03?mode=evidence"))
+    rows = page.locator(".day-ev-row")
+    try:
+        rows.first.wait_for(timeout=15000)
+    except Exception:
+        fail(f"{label}: Evidence mode listed no interactions")
+    page.wait_for_timeout(600)
+    overflow(page, label)
+    if label.endswith("desktop"):
+        no_page_scroll(page, label)
+    page.screenshot(path=str(SHOTS / f"day-evidence-{label.split('/')[1]}.png"))
+    uncited = page.locator(".day-ev-row:has(.day-ev-tag)")
+    row = uncited.first if uncited.count() else rows.nth(1)
+    name = row.get_attribute("data-id")
+    row.click()
+    page.wait_for_function("n => new URLSearchParams(location.search).get('sel') === n", arg=name)
+    page.locator("[data-testid=inspector] .evidence .ops li").first.wait_for(timeout=10000)
+    title = page.locator("[data-testid=inspector] .inspector-title").first.inner_text().strip()
+    if not title:
+        fail(f"{label}: selecting an interaction did not fill the inspector")
+    if page.evaluate("() => matchMedia('(pointer: coarse)').matches"):
+        low = page.evaluate("() => Math.min(...[...document.querySelectorAll('.day-ev-row, .day-mode button')].map(e => e.getBoundingClientRect().height).filter(h => h > 0))")
+        if low < 40:
+            fail(f"{label}: a touch target in Evidence mode is {low:.0f} px tall")
+    page.screenshot(path=str(SHOTS / f"day-evidence-{label.split('/')[1]}-selected.png"))
+    print(f"ok   {label}: {rows.count()} interactions ({uncited.count()} not modeled yet), selects '{title}'")
 
 
 # -- the large fixture's checks -----------------------------------------------------------------
@@ -334,6 +365,10 @@ def main() -> None:
                 if errors:
                     fail(f"{label}: console errors: {errors}")
                 print(f"ok   {label}: renders, selects '{title.first.inner_text().strip()[:50]}'")
+                if name == "day":
+                    check_day_evidence(page, args.url, f"day-evidence/{size}", args.large)
+                    if errors:
+                        fail(f"day-evidence/{size}: console errors: {errors}")
                 if args.large and name == "reader":
                     close = page.locator(".inspector-close button")
                     if close.count() and close.first.is_visible():

@@ -1,4 +1,5 @@
 // A day's actions as Day draws them (and Home's "Today so far"): sittings, and a colour per activity.
+// Day's Evidence mode groups the day's interactions into sittings by the same rule.
 import type { Action } from "../api/client";
 import type { Model } from "./model";
 
@@ -8,11 +9,13 @@ export const GAP = 30;
 export const NONE = "";
 const LANE_COLOURS = 8;
 
-export interface Sitting { start: string; end: string; actions: Action[] }
+/** A sitting: its span, and its actions (or, in Day's Evidence mode, its interactions). */
+export interface Sitting<T extends Span = Action> { start: string; end: string; actions: T[] }
+interface Span { start: string; end: string }
 
-/** The actions (by start) as sittings: a gap of more than GAP minutes starts a new one. */
-export function sittings(actions: Action[]): Sitting[] {
-  const out: Sitting[] = [];
+/** The actions (or interactions; by start) as sittings: a gap of more than GAP minutes starts a new one. */
+export function sittings<T extends Span = Action>(actions: T[]): Sitting<T>[] {
+  const out: Sitting<T>[] = [];
   for (const a of actions) {
     const last = out[out.length - 1];
     if (last && (Date.parse(a.start) - Date.parse(last.end)) / 60000 <= GAP) {

@@ -9,11 +9,11 @@ selected):
 
 | View | Route | What it is |
 |---|---|---|
-| Home | `/` | today's date and whether the pipeline is working, a search across the model (`/`), today so far as Day's lanes, where the week's time went by striving, and what the modeler changed, session by session |
+| Home | `/` | today's date and whether the pipeline is working, a search across the model (`/`), today so far as Day's lanes (and a link to today's evidence), where the week's time went by striving, and what the modeler changed, session by session |
 | Reader | `/reader` (old `/?page=` links redirect) | an outline of strivings and activities; each as a page to read, with a heatmap of when its actions happened |
 | Graph | `/graph` | the model as a network, all of it or its last 30 or 7 days; "+ Evidence" adds the interactions; search jumps to a node |
 | Cards | `/cards` | strivings, their activities and actions as a tree of cards; drag, pinch or wheel to move around |
-| Day | `/day/<date>` | one day (arrows to the next and previous, a calendar for any other): a lane per activity across the day's sittings, the selected action's screenshots, its actions by sitting |
+| Day | `/day/<date>` | one day (arrows to the next and previous, a calendar for any other): a lane per activity across the day's sittings, the selected action's screenshots, its actions by sitting; **Evidence** (`?mode=evidence`) lists instead every interaction observed that day, on every device, cited or not ("not modeled yet"), filterable by device |
 
 The selection is in the URL (`?sel=<id>`), so any view can be shared and reloaded. The top bar shows
 the modeler's state. On a phone the views are in a tab bar at the bottom and the inspector opens as
@@ -41,7 +41,9 @@ listed in `problems`, never an error.
 | `GET /api/model` | strivings and activities (frontmatter and body), actions (frontmatter without operations and body, the interactions they cite by name), `problems` |
 | `GET /api/actions/<id>` | one action with its operation references and body; 404 if unknown |
 | `GET /api/interactions?from=&to=` | a summary of each cited interaction started on those local days (both optional, included): start, end, operation and screenshot counts, first operation |
-| `GET /api/evidence/<interaction>` | its observation, operations, screenshot file names and the actions citing it; 404 if unknown |
+| `GET /api/evidence/<interaction>` | its observation, operations, screenshot file names (and `shots`: each with its screen, position and whether it was focused, from `interaction.json` when the client captured several screens) and the actions citing it; 404 if unknown |
+| `GET /api/interaction-days` | how many interactions were observed on each local day (from the observations' file names, one file read per folder) |
+| `GET /api/days/<day>/interactions` | every interaction observed on that local day (`observations/<device>/<UTC day>/`), by start: device, times, operation count and first operation, its shots, the actions citing it (none: not modeled yet) |
 | `GET /api/modeler` | the scheduler's state (`status.json`, or `not running` when no modeler holds its lock), the operations waiting (untracked operations files, by git), the session records |
 | `GET /api/pipeline` | the server's time (`now`), the newest capture and observation (UTC, from folder and file names) |
 | `GET /api/changes?limit=&before=` | the modeler's commits (`modeler run ...`), newest first, each with its session, time, action files added and changed, and what changed in its strivings and activities (created, retitled, status, confidence, serves, no longer serves, removed or merged); read with git, each commit once |
@@ -99,7 +101,8 @@ months of model and also checks Day's arrows and calendar, the Reader's heatmap,
 range, and that arranging the evidence never holds a frame over 100 ms.
 
 It checks that each view renders without console errors, that selecting fills the inspector, that
-no page scrolls sideways, and that the Day view fits a 1366×768 window; on Home, that `/` focuses the
+no page scrolls sideways, and that the Day view fits a 1366×768 window (in both modes; in Evidence mode,
+that selecting an interaction fills the inspector); on Home, that `/` focuses the
 search, that a search jumps to a Reader page and to an action's day, that a change in the feed opens
 its belief, and that old Reader links redirect; in the Graph, that selecting a node after zooming
 keeps the camera's place. It saves a screenshot of each view and size.

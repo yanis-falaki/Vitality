@@ -158,6 +158,64 @@ def test_waiting_evidence_is_cited_by_no_action(client: TestClient, fx: Fixture)
     assert client.get(f"/api/evidence/{fx.waiting[0]}").json()["actions"] == []
 
 
+def test_day_lists_every_observed_interaction(client: TestClient, fx: Fixture) -> None:
+    # Local days, though the names are UTC: Nov 4 ends with the waiting ones, in the folder of Nov 5.
+    day = client.get("/api/days/2026-11-04/interactions").json()
+    assert day["day"] == "2026-11-04"
+    names = [i["interaction"] for i in day["interactions"]]
+    assert names[-2:] == fx.waiting
+    assert all(i["start"].startswith("2026-11-04") for i in day["interactions"])
+    assert [i["start"] for i in day["interactions"]] == sorted(i["start"] for i in day["interactions"])
+    waiting = day["interactions"][-1]
+    assert waiting["actions"] == [] and waiting["operations"] == 1
+    assert waiting["first_operation"] == "Closed the laptop lid"
+    cited = day["interactions"][0]
+    assert cited["actions"] == ["2026-11-04/14-02-00"] and cited["device"] == "laptop"
+    assert [s["file"] for s in cited["shots"]] == ["0000.png", "0150.png"]
+    assert cited["shots"][0]["screen"] is None
+
+
+def test_an_uncited_interaction_is_listed_on_its_day(client: TestClient, fx: Fixture) -> None:
+    day = client.get("/api/days/2026-11-03/interactions").json()["interactions"]
+    found = next(i for i in day if i["interaction"] == "laptop/2026-11-03/15-20-00")
+    assert found["actions"] == [] and found["operations"] == 2
+    assert found["first_operation"] == "Scrolled a news site's front page"
+    assert client.get("/api/evidence/laptop/2026-11-03/15-20-00").json()["actions"] == []
+
+
+def test_a_day_on_two_devices(client: TestClient) -> None:
+    day = client.get("/api/days/2026-11-03/interactions").json()["interactions"]
+    assert {i["device"] for i in day} == {"laptop", "desktop"}
+    desktop = [i["start"] for i in day if i["device"] == "desktop"]
+    assert desktop == ["2026-11-03T21:50:00-05:00"]
+    days = client.get("/api/interaction-days").json()
+    assert sorted(days) == ["2026-11-02", "2026-11-03", "2026-11-04"]
+    assert days["2026-11-03"] == len(day)
+    assert days["2026-11-04"] == len(client.get("/api/days/2026-11-04/interactions").json()["interactions"])
+    assert client.get("/api/days/2026-10-01/interactions").json()["interactions"] == []
+    assert client.get("/api/days/nonsense/interactions").status_code == 422
+
+
+def test_a_two_screen_interaction_says_which_screen_each_shot_shows(client: TestClient) -> None:
+    day = client.get("/api/days/2026-11-03/interactions").json()["interactions"]
+    two = next(i for i in day if i["interaction"] == "desktop/2026-11-04/02-50-00")
+    assert [(s["file"], s["screen"], s["focused"]) for s in two["shots"]] == [
+        ("0000.png", 1, True), ("0001.png", 2, False), ("0180.png", 1, False), ("0181.png", 2, True),
+        ("0360.png", 1, True), ("0361.png", 2, False)]
+    assert two["shots"][1]["screen_position"] == [1920, 0]
+    evidence = client.get("/api/evidence/desktop/2026-11-04/02-50-00").json()
+    assert evidence["shots"] == two["shots"]
+    assert evidence["observation"]["device"] == "desktop"
+
+
+def test_shots_without_screens_or_with_a_broken_interaction_json(client: TestClient, fx: Fixture) -> None:
+    name = "laptop/2026-11-02/14-18-00"
+    (fx.captures / name / "interaction.json").write_text("{not json", encoding="utf-8")
+    shots = client.get(f"/api/evidence/{name}").json()["shots"]
+    assert shots == [{"file": f, "screen": None, "screen_position": None, "focused": None}
+                     for f in ("0000.png", "0240.png", "0480.png")]
+
+
 @pytest.mark.parametrize("name", ["laptop/2026-01-01/00-00-00", "nonsense", "laptop/../../etc/passwd",
                                   "laptop/2026-11-02/14-18-00.md"])
 def test_unknown_evidence_is_404(client: TestClient, name: str) -> None:

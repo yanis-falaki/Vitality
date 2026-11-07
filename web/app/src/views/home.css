@@ -126,7 +126,22 @@ a.home-week-title:hover { color: var(--ink); text-decoration: underline; text-de
 .home-phone .home-key { display: none; }
 
 /* What changed */
-.home-feed { list-style: none; margin: 0; padding: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); }
+/* The feed scrolls inside its box, as Day's list does: on a desktop the column is as tall as the day and
+   the week beside it (its own content does not count: height 0, at least the row), the box no taller than
+   the window and kept in view as the page scrolls; on a tablet or phone, at most 60% of the window. */
+.home-desktop .home-columns { align-items: stretch; }
+.home-desktop .home-changes { display: flex; flex-direction: column; height: 0; min-height: max(380px, calc(100% - var(--s6))); }
+.home-feed-box {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
+  overflow-y: auto; overscroll-behavior: contain; max-height: 60vh; max-height: 60dvh;
+}
+.home-desktop .home-feed-box {
+  flex: 0 1 auto; min-height: 0; position: sticky; top: var(--s4);
+  /* Short enough that, with the page at its end (its bottom padding below), the box still starts in view. */
+  max-height: calc(100vh - var(--topbar) - var(--s4) - var(--s7)); max-height: calc(100dvh - var(--topbar) - var(--s4) - var(--s7));
+}
+.home-feed-box > .home-quiet { margin: 0; padding: var(--s3) var(--s4); }
+.home-feed { list-style: none; margin: 0; padding: 0; }
 .home-feed:empty { display: none; }
 .home-session { padding: var(--s3) var(--s4) var(--s3); }
 .home-session + .home-session { border-top: 1px solid var(--line); }
@@ -147,7 +162,8 @@ a.home-item:hover { background: var(--hover); }
 .home-item.gone .home-item-title { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line-2); }
 .home-item-what { font-size: var(--text-sm); color: var(--ink-3); }
 .home-item-actions { padding: 4px 0 0 16px; font: 500 11.5px var(--mono); color: var(--ink-3); }
-.home-show-more { margin-top: var(--s3); }
+.home-show-more { margin: var(--s2) var(--s4) var(--s4); }
+.home-links { display: flex; align-items: baseline; gap: var(--s4); }
 
 @media (pointer: coarse) {
   .home-item { min-height: var(--touch); }

@@ -216,3 +216,24 @@ commit is read once, kept by its hash. `GET /api/pipeline`: `now` (the server's 
 `serve_fixture.py --now`), the newest capture (`<device>/<day>/<time>` folder names, UTC) and the newest
 observation file, from directory listings only. Both fixtures have a history of modeler commits to
 match their session records.
+
+## 12. Day's evidence, and the changes in a box
+
+- **Day, Actions | Evidence** (`?mode=evidence`, a switch in Day's heading): Evidence lists every
+  interaction observed that day, from the observations folder, on every device, whether an action cites
+  it or not; grouped into sittings by Day's rule, in Day's scrollable list. A row: time, device (small,
+  muted), the first operation and "(+n)", a few thumbnails (with several screens, each screen's latest,
+  labelled "1", "2"), and a quiet "not modeled yet" when no action cites it. Chips filter by device and
+  to those not modeled yet. The arrows and calendar step between days with interactions; the lanes stay
+  the actions'; the strip and the inspector show the selected interaction (screenshots marked with
+  their screen and "focused" when the client captured several). Home's "Today so far" links to it
+  ("Evidence", today, at the newest).
+- **API.** `GET /api/interaction-days`: interactions per local day, from the file names of
+  `observations/<device>/<UTC day>/` at the offset of one observation per folder (cached by the folder's
+  time). `GET /api/days/<day>/interactions`: the observations of the UTC folders around that day whose
+  start falls on it, with their operations (count, first) and shots (`interaction.json`'s per-shot
+  `screen`, `screen_position`, `focused`, read leniently) and the actions citing them; `Evidence` gains
+  the same `shots`.
+- **Home's "What changed in the model"** scrolls inside its own box ("Show more" loads into it): on a
+  desktop as tall as the column beside it and no taller than the window, kept in view as the page
+  scrolls; on a tablet or phone at most 60% of the window.
