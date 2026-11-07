@@ -1,7 +1,13 @@
 # Observe one interaction
 
 You will receive one interaction: a short burst of keyboard and mouse activity, as
-screenshots in time order, with when it happened. Reply with JSON matching the schema: a transcript
+screenshots in time order, with when it happened. On a machine with several monitors, each
+screenshot shows one screen, and its line gives the screen's number ("screen 1 of 2"; numbered
+top-left first, not left or right), with their positions in the header if the layout matters. The
+one marked focused is the screen the person was working on; the others (marked other, or unmarked
+when unknown) are what was visible beside it. Describe actions from the focused screen and use the
+others as context. A screen left out of a later moment had not visibly changed since its last
+screenshot. Reply with JSON matching the schema: a transcript
 and the operations.
 
 ## transcript

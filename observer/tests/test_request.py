@@ -160,3 +160,28 @@ def test_prompt_version_is_stable():
     reload(request)
     assert request.PROMPT_VERSION == PROMPT_VERSION
     assert PROMPT.startswith("# Observe one interaction")
+
+
+def test_screen_labels_number_the_screen_and_give_its_role(tmp_path: Path):
+    interaction = make_interaction("2026-11-03T14:22:05Z", seconds=(0, 0, 12))
+    first, second, third = interaction.shots
+    shots = [first.model_copy(update={"screen": 1, "screen_position": (0, 0), "focused": True}),
+             second.model_copy(update={"file": "0000-2.webp", "screen": 2,
+                                       "screen_position": (0, 1080), "focused": False}),
+             third.model_copy(update={"screen": 2, "screen_position": (0, 1080)})]
+    interaction = interaction.model_copy(update={"shots": shots})
+    item = make_item(tmp_path, interaction)
+
+    content = build_params(item, interaction, ObserverConfig())["messages"][0]["content"]
+
+    assert content[0]["text"].endswith(
+        "(America/Toronto). Screens (top-left corner, logical pixels): 1 at (0, 0), 2 at (0, 1080).")
+    assert [c["text"] for c in content[1::2]] == [
+        "0000.webp, 0 s after the first input · screen 1 of 2 · focused:",
+        "0000-2.webp, 0 s after the first input · screen 2 of 2 · other:",
+        "0012.webp, 12 s after the first input · screen 2 of 2:",
+    ]
+
+
+def test_prompt_explains_screens():
+    assert "focused" in PROMPT and "several monitors" in PROMPT and "not left or right" in PROMPT

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from vitality_protocol.layout import INTERACTION_FILE
-from vitality_protocol.messages import Interaction
+from vitality_protocol.messages import Interaction, Shot
 
 from vitality_observer.config import ObserverConfig
 from vitality_observer.work import WorkItem, device_of
@@ -96,7 +96,9 @@ def build_params(item: WorkItem, interaction: Interaction, config: ObserverConfi
 
     `interaction` is the item's `interaction.json`, already read (`read_interaction`).
     The user message is a text header with the local times, then for each screenshot, in order,
-    a line saying which one it is and the image. Excludes `betas`, `fallbacks` and `timeout`.
+    a line saying which one it is (and, with several monitors, which screen and whether it had
+    the focus; `screen_label`) and the image. With several monitors the header also gives their
+    positions (`screens_line`). Excludes `betas`, `fallbacks` and `timeout`.
     Raises ValueError, naming the file, if a listed screenshot is missing or unreadable, or its
     name does not start with digits.
     """
@@ -104,15 +106,18 @@ def build_params(item: WorkItem, interaction: Interaction, config: ObserverConfi
     content: list[dict] = [{
         "type": "text",
         "text": f"Interaction {item.name} on {device_of(item.name)}, "
-                f"from {start.isoformat(timespec='seconds')} to {end.isoformat(timespec='seconds')} ({interaction.tz}).",
+                f"from {start.isoformat(timespec='seconds')} to {end.isoformat(timespec='seconds')} ({interaction.tz})."
+                + screens_line(interaction),
     }]
+    screens = max((s.screen for s in interaction.shots if s.screen is not None), default=0)
     for shot in interaction.shots:
         path = item.folder / shot.file
         try:
             data = base64.b64encode(path.read_bytes()).decode("ascii")
         except OSError as e:
             raise ValueError(f"cannot read screenshot {shot.file} of {item.name}: {e.strerror or e}") from e
-        content.append({"type": "text", "text": f"{shot.file}, {_seconds_in(shot.file)} s after the first input:"})
+        content.append({"type": "text",
+                        "text": f"{shot.file}, {_seconds_in(shot.file)} s after the first input{screen_label(shot, screens)}:"})
         content.append({"type": "image", "source": {"type": "base64", "media_type": "image/webp", "data": data}})
     return {
         "model": config.model,
@@ -121,6 +126,27 @@ def build_params(item: WorkItem, interaction: Interaction, config: ObserverConfi
         "output_config": {"format": {"type": "json_schema", "schema": REPLY_SCHEMA}, "effort": config.effort},
         "messages": [{"role": "user", "content": content}],
     }
+
+
+def screen_label(shot: Shot, screens: int) -> str:
+    """What follows a screenshot's time when the client captures several monitors (`screens`
+    of them): ` · screen 1 of 2 · focused`, ` · screen 2 of 2 · other`, or ` · screen 2 of 2`
+    when it could not tell which had the focus. Empty for a single-monitor shot."""
+    if shot.screen is None:
+        return ""
+    role = "" if shot.focused is None else " · focused" if shot.focused else " · other"
+    return f" · screen {shot.screen} of {screens}{role}"
+
+
+def screens_line(interaction: Interaction) -> str:
+    """The header's sentence on the monitors' layout, e.g. ` Screens (top-left corner, logical
+    pixels): 1 at (0, 0), 2 at (1920, 0).`; empty when one monitor was captured."""
+    positions = {s.screen: s.screen_position for s in interaction.shots if s.screen is not None}
+    if not positions:
+        return ""
+    where = ", ".join(f"{n} at {tuple(p)}" if p is not None else f"{n} at an unknown position"
+                      for n, p in sorted(positions.items()))
+    return f" Screens (top-left corner, logical pixels): {where}."
 
 
 def parse_reply(text: str) -> Reply:
