@@ -1,11 +1,11 @@
-//! The capture policy: rules R1–R8 (spec §6) as a pure state machine. No I/O, no clock of its own.
+//! The capture policy: rules R1–R6 (spec §6) as a pure state machine. No I/O, no clock of its own.
 //!
 //! The runtime feeds it events and executes what it returns:
 //! - `Policy::on_input(now)` for keyboard or mouse input,
 //! - `Policy::on_tick(now, thumbs)` every 250 ms with each screen's newest thumb,
 //! - `Policy::on_stop(now, why)` when capture must stop (pause, quit),
 //! - `Policy::on_resume(now)` when nothing stops it any more,
-//! - `Policy::on_written(now, bytes, shots)` after each shot, with the open interaction's size (R8),
+//! - `Policy::on_written(now, bytes, shots)` after each shot, with the open interaction's size (R6),
 //! - `Policy::on_slept(now)` before the first event after a suspend.
 //!
 //! Each returns `Decision`s in order: start an interaction, take a shot of some screens, end the
@@ -27,19 +27,19 @@ pub use change::{Thumb, Threshold};
 /// The numbers of the rules; every one is a setting. Defaults are the spec's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolicySettings {
-    /// R2: after this long without input, the closing shot, and the interaction ends.
+    /// R3: after this long without input, the closing shot, and the interaction ends.
     pub end_after_idle: Duration,
-    /// R3: while continuously active, a shot at least this often.
+    /// R2: while active, a shot at least this often.
     pub max_gap: Duration,
-    /// R4: what counts as a changed screen.
+    /// R4: what counts as a changed screen (for passive checks only).
     pub threshold: Threshold,
-    /// R5: while idle, a passive check this often.
+    /// R4: while idle, a passive check this often.
     pub passive_every: Duration,
-    /// R6: a passive interaction ends after this many checks in a row without change.
+    /// R4: a passive interaction ends after this many checks in a row without change.
     pub passive_quiet_checks: u32,
-    /// R8: an interaction whose shots reach this many bytes ends, and a new one starts.
+    /// R6: an interaction whose shots reach this many bytes ends, and a new one starts.
     pub max_interaction_bytes: u64,
-    /// R8: … or this many shots (the server takes at most 1000 files in one upload).
+    /// R6: … or this many shots (the server takes at most 1000 files in one upload).
     pub max_interaction_shots: u32,
 }
 
@@ -82,8 +82,6 @@ pub enum Rule {
     R4,
     R5,
     R6,
-    R7,
-    R8,
 }
 
 /// What the runtime should do.

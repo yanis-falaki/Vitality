@@ -122,7 +122,7 @@ async fn input_becomes_an_interaction_folder_that_is_uploaded() {
     assert!(shots.iter().all(|s| s["trigger"] == "activity" && s.get("screen_name").is_none()));
     assert_eq!(r.server.names().len(), 1);
     let log = r.core.recent_decisions(50).iter().map(|d| d.text.clone()).collect::<Vec<_>>().join("\n");
-    assert!(log.contains("start active interaction") && log.contains("R1 shot") && log.contains("R2 shot") && log.contains("R2 end"), "{log}");
+    assert!(log.contains("start active interaction") && log.contains("R1 shot") && log.contains("R3 shot") && log.contains("R3 end"), "{log}");
     eventually("idle again", || r.core.status().capture.mode == CaptureMode::Idle).await;
 }
 
@@ -137,7 +137,7 @@ async fn two_screens_write_their_names() {
     eventually("finished", || !r.complete().is_empty()).await;
     let j = json(&r.complete()[0]);
     let names: Vec<&str> = j["shots"].as_array().unwrap().iter().map(|s| s["screen_name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["Main", "Screen 2"]);
+    assert_eq!(names, ["Main", "Screen 2", "Main", "Screen 2"], "the start and the closing shot, each of every screen");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -229,14 +229,14 @@ pub async fn bare_core() -> BareCore {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_full_interaction_is_split_and_every_part_is_uploaded() {
-    // R8 end to end: a tiny budget, so the second shot of a busy interaction (R3) passes it.
+    // R6 end to end: a tiny budget, so the second shot of a busy interaction (R2) passes it.
     let dir = tempfile::tempdir().unwrap();
     let r = rig_with(dir, PolicySettings { max_interaction_bytes: 1, max_gap: Duration::from_millis(400), ..quick() }).await;
     r.add_screen(40).await;
     tokio::time::sleep(Duration::from_millis(60)).await;
     r.input();
     eventually("active", || r.core.status().capture.mode == CaptureMode::Active).await;
-    r.frame(1, 200); // the R3 shot has something to take
+    r.frame(1, 200); // a busy interaction
     for _ in 0..8 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         r.input(); // still busy
@@ -247,7 +247,7 @@ async fn a_full_interaction_is_split_and_every_part_is_uploaded() {
     })
     .await;
     let log = r.core.recent_decisions(50).iter().map(|d| d.text.clone()).collect::<Vec<_>>().join("\n");
-    assert!(log.contains("R8 end") && log.contains("R8 shot"), "{log}");
+    assert!(log.contains("R6 end") && log.contains("R6 shot"), "{log}");
     let second = json(&r.complete()[1]);
     assert!(!second["shots"].as_array().unwrap().is_empty());
 }
@@ -298,7 +298,7 @@ async fn after_a_suspend_the_waking_input_starts_a_fresh_interaction() {
     eventually("a new one open", || r.folders().len() == 2).await;
     let log: Vec<String> = r.core.recent_decisions(20).iter().map(|d| d.text.clone()).collect();
     let i = log.iter().position(|l| l.starts_with("the machine was suspended")).expect("logged");
-    assert!(log[i + 1].starts_with("R2 end"), "{log:?}");
+    assert!(log[i + 1].starts_with("R3 end"), "{log:?}");
     assert!(log[i + 2].starts_with("start active"), "{log:?}");
 }
 

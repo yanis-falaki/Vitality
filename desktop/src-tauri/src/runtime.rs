@@ -414,7 +414,7 @@ impl Runtime {
             match d {
                 Decision::StartInteraction { kind } => {
                     if self.open.is_some() {
-                        self.end(Rule::R7).await; // never happens: the policy ends first
+                        self.end(Rule::R5).await; // never happens: the policy ends first
                     }
                     let now = Utc::now();
                     let offset = Local::now().offset().fix();
@@ -467,7 +467,7 @@ impl Runtime {
                     let (bytes, count) = (handle.bytes(), handle.shot_count() as u32);
                     self.open = Some(handle);
                     self.log(&format!("{rule:?} shot {} · {}", store_trigger(trigger), taken.join(", ")));
-                    // R8: past the size budget, the policy splits the interaction.
+                    // R6: past the size budget, the policy splits the interaction.
                     let split = self.policy.on_written(Instant::now(), bytes, count);
                     for d in split.into_iter().rev() {
                         queue.push_front(d);

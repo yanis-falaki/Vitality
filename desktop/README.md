@@ -34,7 +34,7 @@ shown, Done, Skip, Settings' errors. The interface also runs in a browser agains
 
 ## The parts
 
-The core (`src-tauri/src/`): `policy` (rules R1–R8, pure), `activity` (`/dev/input`),
+The core (`src-tauri/src/`): `policy` (rules R1–R6, pure), `activity` (`/dev/input`),
 `screens` (portal screen-shares, frames, names), `store` (interaction
 folders), `upload`, `runtime` (wires them), `control` (the CLI's socket), `tray`, `commands` (for
 the interface). Each file starts with its contract.

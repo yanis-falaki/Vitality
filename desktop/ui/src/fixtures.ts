@@ -216,36 +216,26 @@ export const rules: RuleText[] = [
   },
   {
     "id": "R2",
-    "text": "After 3 s without input, a closing shot (of the screens that changed, by R4), and the interaction ends and is uploaded. If no screen changed, there is no closing shot, but the interaction still ends.",
-    "title": "End"
+    "text": "While you keep using the keyboard or mouse, a shot of every screen at least every 10 s.",
+    "title": "Busy"
   },
   {
     "id": "R3",
-    "text": "While you keep using the keyboard or mouse, a shot at least every 10 s.",
-    "title": "Maximum gap"
+    "text": "After 3 s without input, a closing shot of every screen, and the interaction ends and is uploaded.",
+    "title": "End"
   },
   {
     "id": "R4",
-    "text": "A shot includes a screen only if it changed since that screen's own last shot: more than 0.5 % of a small grayscale copy (64 × 36) moved by more than 16 levels. A shot in which no screen changed is skipped. R1 shots include every screen.",
-    "title": "Which screens"
+    "text": "While idle, every 45 s, each screen is compared with its last shot: it changed if more than 0.5 % of a small grayscale copy (64 × 36) moved by more than 16 levels. If any screen changed, a passive shot of every screen. The first one starts a passive interaction; it ends on any input (R1 then starts an active one) or after 3 checks in a row without change. Passive and active shots never share an interaction.",
+    "title": "Passive"
   },
   {
     "id": "R5",
-    "text": "While idle, every 45 s, each screen is compared with its last shot by R4's rule; if any changed, a shot of the changed screens, marked passive.",
-    "title": "Passive check"
+    "text": "While paused, nothing is captured and no checks run; an open interaction ends. A locked screen is not a pause: the lock screen is captured like any other. When the machine sleeps, an open interaction ends as it wakes, with no shot for the time asleep.",
+    "title": "Pause"
   },
   {
     "id": "R6",
-    "text": "The first passive shot starts a passive interaction; every passive shot until it ends belongs to it. It ends on any input (R1 then starts an active one), after 3 checks in a row without change, or on pause. It holds only passive shots.",
-    "title": "Passive interaction"
-  },
-  {
-    "id": "R7",
-    "text": "While paused, nothing is captured and no checks run; an open interaction ends. A locked screen is not a pause: the lock screen is captured like any other. When the machine sleeps, an open interaction ends as it wakes, with no shot for the time asleep.",
-    "title": "Stop"
-  },
-  {
-    "id": "R8",
     "text": "When an interaction's shots reach 40 MiB (or 900 shots), it ends and a new one of the same kind starts at once with a shot of every screen, so every upload stays under the server's limit.",
     "title": "Size budget"
   }

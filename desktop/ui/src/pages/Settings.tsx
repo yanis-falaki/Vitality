@@ -24,7 +24,7 @@ interface Field {
 const TIMING: Field[] = [
   { key: "end_after_idle_s", label: "End an interaction after you've been idle for", unit: "s", step: 0.5 },
   { key: "max_gap_s", label: "Screenshot at least every", unit: "s while you're busy" },
-  { key: "change_fraction", label: "Count a screen as changed when more than", unit: "% of it changes", scale: 100, step: 0.1 },
+  { key: "change_fraction", label: "While idle, count a screen as changed when more than", unit: "% of it changes", scale: 100, step: 0.1 },
   { key: "change_levels", label: "…by more than", unit: "brightness levels (of 255)" },
   { key: "passive_every_s", label: "Check idle screens every", unit: "s" },
   { key: "passive_quiet_checks", label: "End a passive interaction after", unit: "quiet checks" },

@@ -135,7 +135,7 @@ def tests(ui: Ui) -> None:
     page.click(".advanced summary")
     page.click("text=How these are used")
     page.wait_for_selector(".rules")
-    check(page.locator(".rule-id").count() == 8, "How these are used leads to the eight rules")
+    check(page.locator(".rule-id").count() == 6, "How these are used leads to the six rules")
     page.close()
 
     page = ui.open("scenario=two&page=settings&problems=1")

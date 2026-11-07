@@ -15,7 +15,7 @@ export function captureLine(s: StatusView, now: number): CaptureLine {
   if (s.pause.paused)
     return {
       text: s.pause.until ? `Paused until ${clock(s.pause.until)}` : "Paused until you resume",
-      detail: "Nothing is captured and no checks run (R7).",
+      detail: "Nothing is captured and no checks run (R5).",
       tone: "warn",
     };
   const c = s.capture;
@@ -23,7 +23,7 @@ export function captureLine(s: StatusView, now: number): CaptureLine {
     case "active":
       return {
         text: `Active interaction since ${clock(c.since!)} · ${plural(c.shots, "shot")}`,
-        detail: "You are using the keyboard or mouse: shots regularly while you keep going (R3), and a closing one when you stop (R2).",
+        detail: "You are using the keyboard or mouse: shots of every screen regularly while you keep going (R2), and a closing one when you stop (R3).",
         tone: "busy",
       };
     case "passive":
