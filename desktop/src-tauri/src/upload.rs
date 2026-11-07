@@ -70,11 +70,21 @@ impl UploadTimings {
 
 pub type Reporter = Arc<dyn Fn(String) + Send + Sync>;
 
+/// What the last real upload said about this device: passed the server's device check or
+/// not (403), for which server, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Acceptance {
+    pub server: String,
+    pub accepted: bool,
+    pub at: chrono::DateTime<Utc>,
+}
+
 #[derive(Clone)]
 pub struct Uploader {
     status: Arc<Mutex<UploadStatus>>,
     /// Told what happened, in plain words (the decisions log).
     reporter: Arc<Mutex<Option<Reporter>>>,
+    acceptance: Arc<Mutex<Option<Acceptance>>>,
     server: Arc<Mutex<Option<String>>>,
     wake: Arc<Notify>,
 }
@@ -110,6 +120,7 @@ impl Uploader {
         let uploader = Uploader {
             server: Arc::new(Mutex::new(server.clone())),
             reporter: Arc::default(),
+            acceptance: Arc::default(),
             status: Arc::new(Mutex::new(UploadStatus {
                 state: initial,
                 pending: store.pending().len() as u32,
@@ -137,6 +148,15 @@ impl Uploader {
     /// comes back.
     pub fn set_reporter(&self, reporter: Reporter) {
         *self.reporter.lock().unwrap() = Some(reporter);
+    }
+
+    /// The last upload's word on this device, if any.
+    pub fn acceptance(&self) -> Option<Acceptance> {
+        self.acceptance.lock().unwrap().clone()
+    }
+
+    fn accepted(&self, server: &str, accepted: bool) {
+        *self.acceptance.lock().unwrap() = Some(Acceptance { server: server.to_string(), accepted, at: Utc::now() });
     }
 
     fn report(&self, line: String) {
@@ -186,6 +206,7 @@ impl Uploader {
                 }
                 match upload_one(&client, server, &folder, &t).await {
                     Outcome::Uploaded => {
+                        self.accepted(server, true);
                         mark(&store, &folder, UPLOADED);
                         retries.remove(&folder);
                         self.report(format!("Uploaded · {}", folder_name(&store, &folder)));
@@ -196,6 +217,7 @@ impl Uploader {
                         });
                     }
                     Outcome::Failed(code, why) => {
+                        self.accepted(server, true); // past the device check: refused for its content
                         let name = folder_name(&store, &folder);
                         eprintln!("vitality-client: {name} was refused for good ({code}): {why}");
                         mark(&store, &folder, FAILED);
@@ -219,6 +241,7 @@ impl Uploader {
                         }
                     }
                     Outcome::Rejected => {
+                        self.accepted(server, false);
                         rejected = true;
                         wait = t.rejected_retry;
                         break;

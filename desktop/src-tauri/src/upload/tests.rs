@@ -148,6 +148,8 @@ async fn created_and_existing_are_marked_uploaded() {
     let up = Uploader::start(store.clone(), Some(url), "desk".into(), fast());
     eventually("both uploaded", || a.join(UPLOADED).exists() && b.join(UPLOADED).exists()).await;
     eventually("status says none pending", || up.status().pending == 0).await;
+    let a = up.acceptance().expect("an upload's word on this device");
+    assert!(a.accepted && a.server.starts_with("http://127.0.0.1"));
     assert_eq!(up.status().state, UploadState::Ok);
     assert!(up.status().last_upload.is_some());
     assert_eq!(server.names(), ["2026-11-07/17-00-00", "2026-11-07/17-01-00"]);
@@ -178,6 +180,7 @@ async fn a_refused_device_stays_pending_and_is_retried() {
     server.script.lock().unwrap().extend([403, 403]);
     let up = Uploader::start(store.clone(), Some(url), "desk".into(), fast());
     eventually("rejected", || up.status().state == UploadState::Rejected { device: "desk".into() }).await;
+    assert_eq!(up.acceptance().map(|a| a.accepted), Some(false));
     assert!(!a.join(UPLOADED).exists() && !a.join(FAILED).exists());
     assert_eq!(up.status().pending, 1);
     eventually("accepted on a retry", || a.join(UPLOADED).exists()).await;

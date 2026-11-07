@@ -48,13 +48,17 @@ pub trait HealthEnv: Send + Sync {
     async fn post_empty(&self, url: &str) -> Result<u16, String>;
     fn disk_free(&self) -> Option<u64>;
     /// The service's state and whether the session starts `graphical-session.target`.
-    async fn login(&self) -> (Result<bool, String>, Option<bool>);
+    /// The service's state, whether the session starts `graphical-session.target`, and
+    /// whether this process is the service running now.
+    async fn login(&self) -> (Result<bool, String>, Option<bool>, bool);
 }
 
 /// Whether to probe the server for this device's acceptance, or reuse an earlier result.
 pub enum Device {
     Probe,
     Reuse(Option<Check>),
+    /// What a real upload said (the truth, when there is one): accepted or refused, and when.
+    Uploaded { accepted: bool, at: chrono::DateTime<chrono::Utc> },
 }
 
 fn check(id: &str, ok: bool, essential: bool, title: &str, detail: String, fix: Option<String>) -> Check {
@@ -167,6 +171,22 @@ async fn server(env: &dyn HealthEnv, settings: &Settings, device: Device) -> Vec
     };
     let name = device_name.clone().unwrap_or_else(crate::upload::device_name);
     let probe = match device {
+        Device::Uploaded { accepted, at } => {
+            let when = at.with_timezone(&chrono::Local).format("%H:%M");
+            let known = if accepted {
+                check("device_accepted", true, false, "This device accepted", format!("the server stored an upload from \"{name}\" at {when}"), None)
+            } else {
+                check(
+                    "device_accepted",
+                    false,
+                    false,
+                    "This device accepted",
+                    format!("the server refused an upload from \"{name}\" at {when}"),
+                    Some(format!("On the server, add \"{name}\" to allowed_clients.")),
+                )
+            };
+            return vec![tailscale, health, known];
+        }
         Device::Reuse(previous) => {
             let reused = previous.unwrap_or_else(|| {
                 check("device_accepted", false, false, "This device accepted", "not tested yet".into(), Some("Test the server in Setup.".into()))
@@ -222,11 +242,12 @@ fn disk_space(env: &dyn HealthEnv, settings: &Settings) -> Check {
 async fn start_at_login(env: &dyn HealthEnv, settings: &Settings) -> Check {
     let title = "Start at login";
     let id = "start_at_login";
-    let (enabled, target) = env.login().await;
+    let (enabled, target, running) = env.login().await;
     match (settings.start_at_login, enabled) {
         (false, Ok(false)) => check(id, true, false, title, "off, as set".into(), None),
         (false, Err(why)) if why.starts_with(NOT_INSTALLED) => check(id, true, false, title, "off, as set (the service is not installed)".into(), None),
         (false, Ok(true)) => check(id, false, false, title, "the service is on but the setting says off".into(), Some("Turn Start at login on and off again (in Settings) to apply it.".into())),
+        (true, Ok(true)) if target == Some(false) && running => check(id, true, false, title, "on — started by your desktop".into(), None),
         (true, Ok(true)) if target == Some(false) => check(
             id,
             false,
@@ -367,11 +388,11 @@ impl HealthEnv for MachineEnv {
         crate::paths::free_bytes(&self.captures)
     }
 
-    async fn login(&self) -> (Result<bool, String>, Option<bool>) {
+    async fn login(&self) -> (Result<bool, String>, Option<bool>, bool) {
         let login = self.login.clone();
-        tokio::task::spawn_blocking(move || (login.enabled(), login.session_target_active()))
+        tokio::task::spawn_blocking(move || (login.enabled(), login.session_target_active(), login.running_as_service()))
             .await
-            .unwrap_or_else(|e| (Err(e.to_string()), None))
+            .unwrap_or_else(|e| (Err(e.to_string()), None, false))
     }
 }
 

@@ -263,6 +263,8 @@ pub trait StartAtLogin: Send + Sync {
     /// Whether this session started `graphical-session.target` (which starts the service);
     /// `None` if unknown.
     fn session_target_active(&self) -> Option<bool>;
+    /// Whether this process is running as the service itself (however it was started).
+    fn running_as_service(&self) -> bool;
 }
 
 /// The start of `enabled()`'s error when the service is not installed.
@@ -300,6 +302,17 @@ impl StartAtLogin for SystemdUnit {
     fn session_target_active(&self) -> Option<bool> {
         SystemdUnit::is_active("graphical-session.target")
     }
+
+    fn running_as_service(&self) -> bool {
+        // systemd sets INVOCATION_ID for its services; the cgroup names the unit.
+        std::env::var_os("INVOCATION_ID").is_some()
+            && std::fs::read_to_string("/proc/self/cgroup").is_ok_and(|c| in_unit_cgroup(&c))
+    }
+}
+
+/// Whether `/proc/self/cgroup` puts this process in the service's unit.
+pub fn in_unit_cgroup(cgroup: &str) -> bool {
+    cgroup.lines().any(|l| l.rsplit('/').any(|part| part == SERVICE))
 }
 
 impl SystemdUnit {
@@ -332,6 +345,7 @@ pub mod tests {
         pub on: Mutex<Option<bool>>,
         pub missing: bool,
         pub target: Option<bool>,
+        pub running: bool,
     }
 
     impl StartAtLogin for FakeLogin {
@@ -350,6 +364,9 @@ pub mod tests {
         }
         fn session_target_active(&self) -> Option<bool> {
             self.target
+        }
+        fn running_as_service(&self) -> bool {
+            self.running
         }
     }
 
@@ -443,6 +460,12 @@ pub mod tests {
         assert_eq!(fields, ["end_after_idle_s", "change_levels", "passive_quiet_checks"], "empty, 0 and a fraction are errors");
         assert_eq!(s.webp_quality, 80.0);
         assert!(Settings::from_fields(|k| serde_json::to_value(Settings::default()).unwrap().get(k).cloned()).1.is_empty());
+    }
+
+    #[test]
+    fn the_service_is_recognised_from_its_cgroup() {
+        assert!(in_unit_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/vitality-client.service\n"));
+        assert!(!in_unit_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-hyprland.scope\n"));
     }
 
     #[test]

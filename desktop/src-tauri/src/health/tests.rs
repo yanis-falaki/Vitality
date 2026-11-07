@@ -37,7 +37,7 @@ impl Fake {
             health: Ok(200),
             post: Ok(422),
             disk: Some(80_000_000_000),
-            login: FakeLogin { on: Mutex::new(Some(true)), missing: false, target: Some(true) },
+            login: FakeLogin { on: Mutex::new(Some(true)), missing: false, target: Some(true), running: false },
             posted: Mutex::new(vec![]),
         }
     }
@@ -73,8 +73,8 @@ impl HealthEnv for Fake {
     fn disk_free(&self) -> Option<u64> {
         self.disk
     }
-    async fn login(&self) -> (Result<bool, String>, Option<bool>) {
-        (self.login.enabled(), self.login.session_target_active())
+    async fn login(&self) -> (Result<bool, String>, Option<bool>, bool) {
+        (self.login.enabled(), self.login.session_target_active(), self.login.running_as_service())
     }
 }
 
@@ -180,16 +180,16 @@ async fn disk_space_and_start_at_login() {
     let f = Fake { disk: Some(1_000_000_000), ..Fake::good() };
     let c = run(&f).await;
     assert!(!by_id(&c, "disk_space").ok && by_id(&c, "disk_space").detail.contains("under the warning level"));
-    let f = Fake { login: FakeLogin { on: Mutex::new(Some(false)), missing: false, target: Some(true) }, ..Fake::good() };
+    let f = Fake { login: FakeLogin { on: Mutex::new(Some(false)), missing: false, target: Some(true), running: false }, ..Fake::good() };
     assert!(!by_id(&run(&f).await, "start_at_login").ok);
-    let f = Fake { login: FakeLogin { on: Mutex::new(None), missing: true, target: None }, ..Fake::good() };
+    let f = Fake { login: FakeLogin { on: Mutex::new(None), missing: true, target: None, running: false }, ..Fake::good() };
     let c = by_id(&run(&f).await, "start_at_login").clone();
     assert!(!c.ok && !c.essential && c.detail.starts_with(NOT_INSTALLED));
     // The setting off and the service not installed: nothing to fix.
     let off = Settings { start_at_login: false, ..Settings::default() };
     assert!(by_id(&checks(&f, &off, Device::Probe).await, "start_at_login").ok);
     // Enabled, but the session never starts graphical-session.target (Hyprland without uwsm).
-    let f = Fake { login: FakeLogin { on: Mutex::new(Some(true)), missing: false, target: Some(false) }, ..Fake::good() };
+    let f = Fake { login: FakeLogin { on: Mutex::new(Some(true)), missing: false, target: Some(false), running: false }, ..Fake::good() };
     let c = by_id(&run(&f).await, "start_at_login").clone();
     assert!(!c.ok && !c.essential && c.detail.contains("graphical-session.target"));
     assert!(c.fix.unwrap().contains("exec-once = systemctl --user start vitality-client"));
@@ -261,4 +261,25 @@ async fn the_portal_version_is_read_from_its_lower_case_property() {
     let (server, client) = tokio::join!(server, client);
     let (_server, client) = (server.unwrap(), client.unwrap());
     assert_eq!(portal_version(&client).await, Ok(5));
+}
+
+#[tokio::test]
+async fn enabled_and_running_as_the_service_passes_even_without_graphical_session_target() {
+    // Hyprland: `exec-once = systemctl --user start vitality-client` starts the enabled unit.
+    let f = Fake { login: FakeLogin { on: Mutex::new(Some(true)), missing: false, target: Some(false), running: true }, ..Fake::good() };
+    let c = by_id(&run(&f).await, "start_at_login").clone();
+    assert!(c.ok, "{c:?}");
+    assert_eq!(c.detail, "on — started by your desktop");
+}
+
+#[tokio::test]
+async fn real_upload_results_decide_device_acceptance() {
+    let at = chrono::Utc::now();
+    let f = Fake { post: Err("no connection".into()), ..Fake::good() };
+    let c = checks(&f, &Settings::default(), Device::Uploaded { accepted: true, at }).await;
+    let d = by_id(&c, "device_accepted");
+    assert!(d.ok && d.detail.starts_with("the server stored an upload from \"desktop\""), "{d:?}");
+    assert!(f.posted.lock().unwrap().is_empty(), "no probe when an upload already answered");
+    let c = checks(&f, &Settings::default(), Device::Uploaded { accepted: false, at }).await;
+    assert!(!by_id(&c, "device_accepted").ok);
 }
