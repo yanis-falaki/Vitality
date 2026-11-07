@@ -15,8 +15,7 @@ your Claude login.
 | `server/`, `observer/`, `modeler/`, `web/` | the VM | [`server/`](server/README.md) stores uploads; [`observer/`](observer/README.md) turns them into observations and operations; [`modeler/`](modeler/README.md) turns those into the user model; [`web/`](web/README.md) is a private, read-only web app for reading it | Docker Compose, from this checkout |
 
 `protocol/` is the small package the client and server share. The machines that capture are set
-up from [`desktop/README.md`](desktop/README.md) (`client/` is the old capture daemon it
-replaces); everything below is about the VM.
+up from [`desktop/README.md`](desktop/README.md); everything below is about the VM.
 
 ## Install on the VM
 

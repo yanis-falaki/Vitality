@@ -21,7 +21,7 @@ who is calling through `/var/run/tailscale`, which Compose mounts into the conta
 
 Never put a future agent or "doer" VM in the list: whatever is listed can write into this store.
 
-To point the laptop at the server, see "Upload to a server" in [`client/README.md`](../client/README.md).
+To point a machine's desktop app at the server, see [`desktop/README.md`](../desktop/README.md).
 
 ## Commands
 

@@ -4,7 +4,7 @@ Vitality's capture client for Linux desktops: one app with a tray icon and a win
 (`src-tauri/`) and a React interface (`ui/`), built with Tauri. It captures the screens you pick
 while you use the keyboard and mouse (and, while you are idle, when a screen changes), stores
 each interaction as a folder of WebP shots and an `interaction.json`, and uploads it to your
-Vitality server. It replaces the old `client/` daemon and its Waybar module. Design:
+Vitality server (its address is set in Setup or Settings). Design:
 `docs/superpowers/specs/2026-11-07-desktop-client-design.md`.
 
 ## Install (Arch)
