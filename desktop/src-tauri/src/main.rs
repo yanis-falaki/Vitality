@@ -5,6 +5,8 @@
 
 mod app;
 mod cli;
+#[allow(dead_code)] // wired into the runtime in Task 7
+mod policy;
 #[allow(dead_code)] // used from Task 5 on
 mod types;
 
