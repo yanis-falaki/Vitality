@@ -23,7 +23,8 @@ impl std::fmt::Debug for Thumb {
 }
 
 impl Thumb {
-    /// A thumb of one flat gray level (for tests and placeholders).
+    /// A thumb of one flat gray level (for tests).
+    #[cfg(test)]
     pub fn flat(level: u8) -> Thumb {
         Thumb(Box::new([level; THUMB_W * THUMB_H]))
     }

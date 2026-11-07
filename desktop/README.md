@@ -8,8 +8,9 @@ while idle when a screen changes, stores each interaction as a folder of WebP sh
 
 ## Build and run from source
 
-System packages (Ubuntu names; Arch: `webkit2gtk-4.1 libayatana-appindicator gstreamer
-gst-plugins-base gst-plugin-pipewire libwebp`):
+System packages (Ubuntu names; Arch: `webkit2gtk-4.1 gstreamer gst-plugins-base
+gst-plugin-pipewire libwebp xdg-desktop-portal`). The tray icon is drawn by the app itself over
+D-Bus (StatusNotifierItem, the `ksni` crate), so libayatana-appindicator is not needed at run time:
 
 ```sh
 sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
@@ -25,7 +26,16 @@ npm run tauri build -- --no-bundle   # target/release/vitality-client
 ```
 
 Tests: `cargo test` and `cargo clippy -- -D warnings` in `desktop/`; `npm run typecheck` in
-`desktop/ui`.
+`desktop/ui`. The interface also runs in a browser against a fake core: `npm run dev` in
+`desktop/ui`, then <http://localhost:5173/mock.html?scenario=two> (`duplicate`, `needs-pick`,
+`empty`, `paused`).
+
+## The parts
+
+The core (`src-tauri/src/`): `policy` (rules R1–R8, pure), `activity` (`/dev/input`), `session`
+(logind lock and sleep), `screens` (portal screen-shares, frames, names), `store` (interaction
+folders), `upload`, `runtime` (wires them), `control` (the CLI's socket), `tray`, `commands` (for
+the interface). Each file starts with its contract.
 
 ## The command line
 

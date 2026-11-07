@@ -120,6 +120,7 @@ pub struct TodayCounts {
 }
 
 /// What `free_up_space` deleted.
+#[allow(dead_code)] // Settings' Free up space (milestone 3)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Freed {
     pub interactions: u32,
@@ -132,6 +133,7 @@ impl Store {
         Store { root: root.to_path_buf(), quality }
     }
 
+    #[allow(dead_code)] // for tests and Status
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -226,11 +228,13 @@ impl Store {
     }
 
     /// Bytes used by all captures.
+    #[allow(dead_code)] // Status (milestone 2)
     pub fn disk_bytes(&self) -> u64 {
         dir_bytes(&self.root)
     }
 
     /// Deletes the local copies of uploaded interactions (never pending or failed ones).
+    #[allow(dead_code)] // Settings' Free up space (milestone 3)
     pub fn free_up_space(&self) -> io::Result<Freed> {
         let mut freed = Freed::default();
         for folder in self.folders()? {
@@ -283,6 +287,7 @@ impl InteractionHandle {
         &self.header.name
     }
 
+    #[allow(dead_code)] // for tests
     pub fn folder(&self) -> &Path {
         &self.folder
     }
@@ -455,6 +460,7 @@ fn sort_key(root: &Path, p: &Path) -> (String, u32) {
     (base, n)
 }
 
+#[allow(dead_code)] // with disk_bytes and free_up_space
 fn dir_bytes(path: &Path) -> u64 {
     let Ok(entries) = fs::read_dir(path) else { return 0 };
     entries

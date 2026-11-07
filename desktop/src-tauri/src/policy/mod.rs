@@ -144,10 +144,6 @@ impl Policy {
         }
     }
 
-    pub fn settings(&self) -> &PolicySettings {
-        &self.settings
-    }
-
     pub fn state(&self) -> PolicyState {
         let base = PolicyState { mode: CaptureMode::Idle, since: None, shots: 0, next_check_at: None, stopped_by: None };
         match self.mode {

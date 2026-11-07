@@ -40,6 +40,7 @@ pub struct Screens {
     /// Since when each pair (in the owner's order) has looked the same.
     same_since: Mutex<BTreeMap<(ScreenId, ScreenId), Instant>>,
     last_tracked: Mutex<Option<Instant>>,
+    opened_all: std::sync::atomic::AtomicBool,
     threshold: Threshold,
 }
 
@@ -86,13 +87,18 @@ impl Screens {
             live: Mutex::new(HashMap::new()),
             same_since: Mutex::new(BTreeMap::new()),
             last_tracked: Mutex::new(None),
+            opened_all: Default::default(),
             threshold,
         }
     }
 
-    /// Reopens every saved screen from its token, one after the other.
+    /// Reopens every saved screen from its token, one after the other (screens already open,
+    /// e.g. added meanwhile, are left alone).
     pub async fn open_all(&self) {
-        let entries = self.registry.lock().unwrap().entries().to_vec();
+        let entries: Vec<_> = {
+            let live = self.live.lock().unwrap();
+            self.registry.lock().unwrap().entries().iter().filter(|e| !live.contains_key(&e.id)).cloned().collect()
+        };
         for entry in &entries {
             self.live.lock().unwrap().insert(entry.id.clone(), Live::with_state(ScreenState::Opening));
         }
@@ -104,6 +110,13 @@ impl Screens {
             // A refusal (or any failure) leaves the saved token: the owner may fix the portal.
             let _ = self.attach(&entry.id, result);
         }
+        self.opened_all.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Whether `open_all` has finished.
+    #[allow(dead_code)] // the `screens_open` health check (milestone 3) and tests
+    pub fn opened_all(&self) -> bool {
+        self.opened_all.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Asks the portal's picker for a new screen; it is added at the end as "Screen N".

@@ -1,0 +1,431 @@
+//! The runtime: wires input, the session, the screens and the clock to the policy, and carries
+//! out its decisions with the store and the uploader.
+//!
+//! `Runtime::start(parts)` (inside the tokio runtime) finishes interrupted interactions, starts
+//! the uploader, reopens the screens and spawns the loop; it returns the shared `Core`, which
+//! the interface's commands, the tray, and the control socket use:
+//! `status()`, `pause(how)`, `resume()`, `quit()`, `recent_decisions(n)`, `subscribe()`
+//! (a notice whenever the status changes), `notify_changed()`, `forget_screen(id)`.
+//!
+//! The loop: every input goes to `Policy::on_input`; lock and sleep from the session and the
+//! owner's pause go to `on_stop`/`on_resume`; a tick (250 ms) passes the screens' thumbs to
+//! `on_tick` and expires a timed pause. Every decision is carried out and written to the
+//! decisions log. Shots are encoded off the loop's thread.
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, Local, Offset, Utc};
+use tokio::sync::{broadcast, mpsc, oneshot};
+
+use crate::activity::InputSource;
+use crate::log::DecisionLog;
+use crate::paths::Paths;
+use crate::policy::{Decision, InteractionKind, Policy, PolicySettings, PolicyState, Rule};
+use crate::screens::feed::FeedFactory;
+use crate::screens::portal::Portal;
+use crate::screens::Screens;
+use crate::session::{SessionEvent, SessionWatch};
+use crate::state::{PauseFor, PauseState};
+use crate::store::{local_tz_name, InteractionHandle, Store};
+use crate::types::{CaptureView, ScreenId, ScreenState, StatusView, StopReason};
+use crate::upload::{device_name, UploadTimings, Uploader};
+
+/// Everything the runtime is made of; the app passes the real ones, tests fakes.
+pub struct Parts {
+    pub paths: Paths,
+    pub policy: PolicySettings,
+    pub webp_quality: f32,
+    pub server: Option<String>,
+    pub upload_timings: UploadTimings,
+    pub input: Arc<dyn InputSource>,
+    pub session: Arc<dyn SessionWatch>,
+    pub portal: Arc<dyn Portal>,
+    pub feeds: Arc<dyn FeedFactory>,
+    pub tick: Duration,
+}
+
+enum Request {
+    Pause(PauseFor, oneshot::Sender<()>),
+    Resume(oneshot::Sender<()>),
+    Quit(oneshot::Sender<()>),
+    ForgetScreen(ScreenId),
+}
+
+/// The running core, shared by the interface, the tray and the control socket.
+pub struct Core {
+    pub screens: Arc<Screens>,
+    pub store: Arc<Store>,
+    pub uploader: Uploader,
+    input: Arc<dyn InputSource>,
+    requests: mpsc::Sender<Request>,
+    snapshot: Mutex<StatusView>,
+    changed: broadcast::Sender<()>,
+    log: Mutex<DecisionLog>,
+    /// Shows the window (set by the app; the control socket's `show`).
+    pub on_show: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+}
+
+impl Core {
+    pub fn status(&self) -> StatusView {
+        self.snapshot.lock().unwrap().clone()
+    }
+
+    pub async fn pause(&self, how: PauseFor) -> StatusView {
+        self.ask(|tx| Request::Pause(how, tx)).await;
+        self.status()
+    }
+
+    pub async fn resume(&self) -> StatusView {
+        self.ask(Request::Resume).await;
+        self.status()
+    }
+
+    /// Ends an open interaction (finished and uploaded later) and stops capture for good.
+    pub async fn quit(&self) {
+        self.ask(Request::Quit).await;
+    }
+
+    pub fn forget_screen(&self, id: &ScreenId) {
+        let _ = self.requests.try_send(Request::ForgetScreen(id.clone()));
+        self.notify_changed();
+    }
+
+    #[allow(dead_code)] // shown on Status (milestone 2)
+    pub fn recent_decisions(&self, n: usize) -> Vec<String> {
+        self.log.lock().unwrap().recent(n)
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<()> {
+        self.changed.subscribe()
+    }
+
+    pub fn notify_changed(&self) {
+        let _ = self.changed.send(());
+    }
+
+    pub fn show_window(&self) {
+        if let Some(show) = self.on_show.lock().unwrap().as_ref() {
+            show();
+        }
+    }
+
+    async fn ask(&self, make: impl FnOnce(oneshot::Sender<()>) -> Request) {
+        let (tx, rx) = oneshot::channel();
+        if self.requests.send(make(tx)).await.is_ok() {
+            let _ = rx.await;
+        }
+    }
+
+    fn publish(&self, view: StatusView) {
+        let mut snap = self.snapshot.lock().unwrap();
+        if *snap != view {
+            *snap = view;
+            drop(snap);
+            self.notify_changed();
+        }
+    }
+}
+
+pub struct Runtime {
+    core: Arc<Core>,
+    policy: Policy,
+    open: Option<InteractionHandle>,
+    pause: PauseState,
+    pause_path: std::path::PathBuf,
+    locked: bool,
+    sleeping: bool,
+    quit: bool,
+    tz: String,
+    /// Decisions from `on_stop`, carried out by the next `finish_stop`.
+    pending_stop: Vec<Decision>,
+}
+
+impl Runtime {
+    pub fn start(parts: Parts) -> Arc<Core> {
+        let store = Arc::new(Store::new(&parts.paths.captures, parts.webp_quality));
+        match store.finish_interrupted() {
+            Ok(done) if !done.is_empty() => eprintln!("vitality-client: finished {} interrupted interaction(s)", done.len()),
+            Ok(_) => {}
+            Err(e) => eprintln!("vitality-client: cannot finish interrupted interactions: {e}"),
+        }
+        let uploader = Uploader::start(store.clone(), parts.server.clone(), device_name(), parts.upload_timings.clone());
+        let screens = Arc::new(Screens::new(&parts.paths.screens, parts.portal.clone(), parts.feeds.clone(), parts.policy.threshold));
+        let (requests, rx) = mpsc::channel(16);
+        let pause = PauseState::load(&parts.paths.state);
+        let core = Arc::new(Core {
+            screens: screens.clone(),
+            store,
+            uploader,
+            input: parts.input.clone(),
+            requests,
+            snapshot: Mutex::new(blank_status()),
+            changed: broadcast::channel(16).0,
+            log: Mutex::new(DecisionLog::open(&parts.paths.log)),
+            on_show: Mutex::new(None),
+        });
+        let mut runtime = Runtime {
+            core: core.clone(),
+            policy: Policy::new(parts.policy.clone()),
+            open: None,
+            pause,
+            pause_path: parts.paths.state.clone(),
+            locked: false,
+            sleeping: false,
+            quit: false,
+            tz: local_tz_name(),
+            pending_stop: vec![],
+        };
+        runtime.update_stop(Instant::now());
+        runtime.publish();
+        let inputs = parts.input.subscribe();
+        let session = parts.session.subscribe();
+        let tick = parts.tick;
+        tokio::spawn(async move { screens.open_all().await });
+        tokio::spawn(async move { runtime.run(inputs, session, rx, tick).await });
+        core
+    }
+
+    async fn run(
+        mut self,
+        mut inputs: mpsc::Receiver<Instant>,
+        mut session: mpsc::Receiver<SessionEvent>,
+        mut requests: mpsc::Receiver<Request>,
+        tick: Duration,
+    ) {
+        let mut ticks = tokio::time::interval(tick);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                Some(at) = inputs.recv() => {
+                    let ds = self.policy.on_input(at);
+                    self.execute(ds).await;
+                }
+                Some(event) = session.recv() => {
+                    match event {
+                        SessionEvent::Locked(l) if l != self.locked => {
+                            self.locked = l;
+                            self.log(if l { "locked" } else { "unlocked" });
+                        }
+                        SessionEvent::Sleeping(s) if s != self.sleeping => {
+                            self.sleeping = s;
+                            self.log(if s { "going to sleep" } else { "woke up" });
+                        }
+                        _ => {}
+                    }
+                    self.update_stop(Instant::now());
+                    self.finish_stop().await;
+                }
+                Some(request) = requests.recv() => self.handle(request).await,
+                _ = ticks.tick() => {
+                    let now = Instant::now();
+                    if self.pause.paused && !self.pause.active(Utc::now()) {
+                        self.set_pause(PauseState::default());
+                        self.update_stop(now);
+                    }
+                    self.core.screens.track_duplicates(now);
+                    let thumbs = self.core.screens.thumbs();
+                    let ds = self.policy.on_tick(now, &thumbs);
+                    self.execute(ds).await;
+                }
+            }
+            self.publish();
+        }
+    }
+
+    async fn handle(&mut self, request: Request) {
+        let now = Instant::now();
+        match request {
+            Request::Pause(how, done) => {
+                let p = PauseState::starting(how, Utc::now());
+                self.log(&match p.paused_until {
+                    Some(u) => format!("paused until {}", u.with_timezone(&Local).format("%H:%M")),
+                    None => "paused".into(),
+                });
+                self.set_pause(p);
+                self.update_stop(now);
+                self.finish_stop().await;
+                self.publish();
+                let _ = done.send(());
+            }
+            Request::Resume(done) => {
+                if self.pause.paused {
+                    self.log("resumed");
+                }
+                self.set_pause(PauseState::default());
+                self.update_stop(now);
+                self.publish();
+                let _ = done.send(());
+            }
+            Request::Quit(done) => {
+                self.quit = true;
+                self.update_stop(now);
+                self.finish_stop().await;
+                self.publish();
+                let _ = done.send(());
+            }
+            Request::ForgetScreen(id) => self.policy.forget_screen(&id),
+        }
+    }
+
+    fn set_pause(&mut self, p: PauseState) {
+        p.save(&self.pause_path);
+        self.pause = p;
+    }
+
+    /// The reason capture must stop now, if any.
+    fn stop_reason(&self) -> Option<StopReason> {
+        if self.quit {
+            Some(StopReason::Quit)
+        } else if self.pause.active(Utc::now()) {
+            Some(StopReason::Paused)
+        } else if self.locked {
+            Some(StopReason::Locked)
+        } else if self.sleeping {
+            Some(StopReason::Sleeping)
+        } else {
+            None
+        }
+    }
+
+    /// Tells the policy to stop or resume as the reasons say. An interaction it ends is
+    /// finished by the `finish_stop` that follows.
+    fn update_stop(&mut self, now: Instant) {
+        let state = self.policy.state();
+        match self.stop_reason() {
+            Some(why) if state.stopped_by != Some(why) => {
+                let ds = self.policy.on_stop(now, why);
+                self.pending_stop.extend(ds);
+            }
+            None if state.stopped_by.is_some() => {
+                self.policy.on_resume(now);
+            }
+            _ => {}
+        }
+    }
+
+    async fn finish_stop(&mut self) {
+        let ds = std::mem::take(&mut self.pending_stop);
+        self.execute(ds).await;
+    }
+
+    async fn execute(&mut self, decisions: Vec<Decision>) {
+        for d in decisions {
+            match d {
+                Decision::StartInteraction { kind } => {
+                    if self.open.is_some() {
+                        self.end(Rule::R8).await; // never happens: the policy ends first
+                    }
+                    let now = Utc::now();
+                    let offset = Local::now().offset().fix();
+                    match self.core.store.begin(now, offset, &self.tz) {
+                        Ok(h) => {
+                            self.log(&format!("start {} interaction {}", kind_name(kind), h.name()));
+                            self.open = Some(h);
+                        }
+                        Err(e) => self.log(&format!("error: cannot start an interaction: {e}")),
+                    }
+                }
+                Decision::Shot { screens, trigger, rule } => {
+                    let Some(mut handle) = self.open.take() else { continue };
+                    let order = self.core.screens.ids();
+                    let mut taken = vec![];
+                    for id in order.iter().filter(|id| screens.contains(id)) {
+                        let Some(latest) = self.core.screens.latest(id) else { continue };
+                        let name = self.core.screens.shot_name(id);
+                        let label = self.core.screens.statuses().into_iter().find(|s| &s.id == id).map(|s| s.name).unwrap_or_default();
+                        let (h, result) = tokio::task::spawn_blocking(move || {
+                            let r = handle.add_shot(name.as_deref(), &latest.image, Utc::now(), trigger);
+                            (handle, r)
+                        })
+                        .await
+                        .expect("the shot task panicked");
+                        handle = h;
+                        match result {
+                            Ok(file) => taken.push(format!("{label} ({file})")),
+                            Err(e) => self.log(&format!("error: cannot write a shot of {label}: {e}")),
+                        }
+                    }
+                    self.open = Some(handle);
+                    self.log(&format!("{rule:?} shot {} · {}", store_trigger(trigger), taken.join(", ")));
+                }
+                Decision::EndInteraction { rule } => self.end(rule).await,
+                Decision::Skipped { rule, why } => self.log(&format!("{rule:?} skipped: {why}")),
+            }
+        }
+    }
+
+    async fn end(&mut self, rule: Rule) {
+        let Some(handle) = self.open.take() else { return };
+        let name = handle.name().to_string();
+        let shots = handle.shot_count();
+        match tokio::task::spawn_blocking(move || handle.finish()).await.expect("the finish task panicked") {
+            Ok(Some(_)) => {
+                self.log(&format!("{rule:?} end {name} · {shots} shots"));
+                self.core.uploader.wake();
+            }
+            Ok(None) => self.log(&format!("{rule:?} end {name} · no shots, nothing kept")),
+            Err(e) => self.log(&format!("error: cannot finish {name}: {e}")),
+        }
+    }
+
+    fn log(&self, text: &str) {
+        self.core.log.lock().unwrap().append(Utc::now(), text);
+    }
+
+    fn publish(&self) {
+        let view = status_view(&self.policy.state(), &self.pause, &self.core);
+        self.core.publish(view);
+    }
+}
+
+fn kind_name(k: InteractionKind) -> &'static str {
+    match k {
+        InteractionKind::Active => "active",
+        InteractionKind::Passive => "passive",
+    }
+}
+
+fn store_trigger(t: crate::policy::Trigger) -> &'static str {
+    crate::store::trigger_name(t)
+}
+
+/// `at` as wall-clock time, to the second (so the status only changes when it means to).
+fn wall(at: Instant) -> DateTime<Utc> {
+    let now_i = Instant::now();
+    let now = Utc::now();
+    let t = if at <= now_i { now - (now_i - at) } else { now + (at - now_i) };
+    DateTime::from_timestamp(t.timestamp(), 0).unwrap_or(t)
+}
+
+fn blank_status() -> StatusView {
+    StatusView {
+        capture: CaptureView { mode: crate::types::CaptureMode::Idle, since: None, shots: 0, next_check_at: None, stopped_by: None },
+        pause: Default::default(),
+        upload: crate::types::UploadStatus { state: crate::types::UploadState::Ok, pending: 0, last_upload: None },
+        screens: 0,
+        screens_live: 0,
+        input: "ok".into(),
+    }
+}
+
+fn status_view(state: &PolicyState, pause: &PauseState, core: &Core) -> StatusView {
+    let statuses = core.screens.statuses();
+    StatusView {
+        capture: CaptureView {
+            mode: state.mode,
+            since: state.since.map(wall),
+            shots: state.shots,
+            next_check_at: state.next_check_at.map(wall),
+            stopped_by: state.stopped_by,
+        },
+        pause: pause.view(Utc::now()),
+        upload: core.uploader.status(),
+        screens: statuses.len() as u32,
+        screens_live: statuses.iter().filter(|s| s.state == ScreenState::Live).count() as u32,
+        input: core.input.accessible().as_str().into(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests;

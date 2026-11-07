@@ -167,6 +167,7 @@ impl EvdevInput {
     }
 
     /// The paths open now (for tests and `doctor`).
+    #[allow(dead_code)] // `doctor` comes in milestone 3
     pub fn open_paths(&self) -> Vec<PathBuf> {
         let mut paths: Vec<PathBuf> = self.inner.open.lock().unwrap().iter().cloned().collect();
         paths.sort();
