@@ -2,7 +2,7 @@
 // so a view can be shared and reloaded; a view may keep more of its state there (`useParam`). On a
 // phone or tablet the inspector is opened by a selection the person made and closed with its close
 // button; a view's own default choice (`quiet`) leaves it closed.
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 
 type Changes = Record<string, string | null>;
@@ -24,8 +24,12 @@ const SelectionContext = createContext<Selection | null>(null);
 export function SelectionProvider({ children }: { children: ReactNode }) {
   const [params, setParams] = useSearchParams();
   const [open, setOpen] = useState(() => params.has("sel"));
+  // React Router's setter changes with every change of the URL; `select` and `update` must not (a view
+  // that rebuilds what depends on them, such as the graph's renderer, would start over on each selection).
+  const setter = useRef(setParams);
+  setter.current = setParams;
   const update = useCallback((changes: Changes, options?: Options) => {
-    setParams((p) => {
+    setter.current((p) => {
       const next = new URLSearchParams(p);
       for (const [name, value] of Object.entries(changes)) {
         if (value) next.set(name, value);
@@ -34,11 +38,13 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
       return next;
     }, { replace: options?.quiet ?? false });
     if ("sel" in changes && !options?.quiet) setOpen(changes.sel !== null);
-  }, [setParams]);
+  }, []);
   const select = useCallback((id: string | null, options?: Options) => update({ sel: id }, options), [update]);
   const close = useCallback(() => setOpen(false), []);
+  const sel = params.get("sel");
+  const value = useMemo(() => ({ sel, select, update, open, close }), [sel, select, update, open, close]);
   return (
-    <SelectionContext.Provider value={{ sel: params.get("sel"), select, update, open, close }}>
+    <SelectionContext.Provider value={value}>
       {children}
     </SelectionContext.Provider>
   );

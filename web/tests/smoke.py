@@ -9,7 +9,8 @@
 Needs a Python with Playwright and its Chromium (not a dependency of the package). For each view, at
 desktop (1366x768), tablet (820x1180) and phone (390x844) sizes: the view renders without console
 errors, selecting an item fills the inspector, and the page never scrolls sideways; at desktop size
-the Day view does not scroll at all. A screenshot of each view and size (and of the inspector open
+the Day view does not scroll at all, and in the Graph, after zooming and panning, clicking a node
+animates the camera from where it was (never through the full view, the same renderer kept). A screenshot of each view and size (and of the inspector open
 on tablet and phone) is saved in `--shots`. Exits 1 on the first failed check.
 
 With `--large` (the large fixture, about four months), also: the Day view's arrows and calendar move
@@ -140,6 +141,58 @@ def check_graph(page: Page, label: str) -> None:
     page.screenshot(path=str(SHOTS / f"graph-{label.split('/')[1]}-evidence-all.png"))
 
 
+# Zoom and pan, then click a node: the camera must go from where it is to the node, never through the
+# full view (a renderer made anew starts there), and the renderer must stay the same one.
+CAMERA = """() => { const box = document.querySelector('[data-testid=graph]'); const r = box.sigma;
+  window.__renderer = r; window.__cams = []; window.__stop = false;
+  const tick = () => { const s = box.sigma.getCamera().getState(); window.__cams.push([s.x, s.y, s.ratio]);
+    if (!window.__stop) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick); }"""
+
+
+def check_graph_camera(page: Page, label: str) -> None:
+    page.wait_for_function("() => !document.querySelector('.graph-arranging')", timeout=60000)
+    page.wait_for_function("() => document.querySelector('[data-testid=graph]').sigma")
+    box = page.locator("[data-testid=graph]").bounding_box()
+    assert box is not None
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(cx, cy)
+    for _ in range(3):
+        page.mouse.wheel(0, -240)
+        page.wait_for_timeout(150)
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    page.mouse.move(cx - 120, cy - 60, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(500)
+    # A node on screen, away from the edges, to click.
+    at = page.evaluate("""([w, h]) => { const r = document.querySelector('[data-testid=graph]').sigma; const g = r.getGraph();
+      for (const kind of ['activity', 'striving', 'action']) for (const n of g.nodes()) {
+        if (g.getNodeAttribute(n, 'kind') !== kind) continue;
+        const p = r.graphToViewport(g.getNodeAttributes(n));
+        if (p.x > 60 && p.x < w - 60 && p.y > 60 && p.y < h - 60) return [n, p.x, p.y]; }
+      return null; }""", [box["width"], box["height"]])
+    if at is None:
+        fail(f"{label}: no node on screen after zooming and panning")
+    before = page.evaluate("() => { const s = document.querySelector('[data-testid=graph]').sigma.getCamera().getState(); return [s.x, s.y, s.ratio]; }")
+    page.evaluate(CAMERA)
+    page.mouse.click(box["x"] + at[1], box["y"] + at[2])
+    page.wait_for_function("n => new URLSearchParams(location.search).get('sel') === n", arg=at[0])
+    page.wait_for_timeout(900)
+    cams, same = page.evaluate("""() => { window.__stop = true;
+      return [window.__cams, window.__renderer === document.querySelector('[data-testid=graph]').sigma]; }""")
+    if not same:
+        fail(f"{label}: selecting a node made a new renderer")
+    reset = [c for c in cams if abs(c[0] - 0.5) < 1e-6 and abs(c[1] - 0.5) < 1e-6 and abs(c[2] - 1) < 1e-6]
+    if reset:
+        fail(f"{label}: the camera went back to the full view while selecting")
+    first = cams[0]
+    if max(abs(first[0] - before[0]), abs(first[1] - before[1]), abs(first[2] - before[2])) > 1e-3:
+        fail(f"{label}: the camera jumped before animating ({before} -> {first})")
+    print(f"ok   {label}: selecting '{at[0]}' animates from the camera where it was "
+          f"(ratio {before[2]:.2f} -> {cams[-1][2]:.2f}, {len(cams)} frames)")
+
+
 SHOTS = Path(".")
 
 
@@ -194,6 +247,10 @@ def main() -> None:
                 if name == "day" and size == "desktop":
                     no_page_scroll(page, label)
                 page.screenshot(path=str(args.shots / f"{name}-{size}.png"))
+                if name == "graph" and size == "desktop":
+                    check_graph_camera(page, label)
+                    page.goto(args.url + path)
+                    page.wait_for_selector(ready, timeout=15000)
                 if args.large:
                     if name == "day":
                         check_day_navigation(page, label)

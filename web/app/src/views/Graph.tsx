@@ -11,7 +11,7 @@ import Graph from "graphology";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sigma from "sigma";
 import type { NodeLabelDrawingFunction } from "sigma/rendering";
-import type { NodeDisplayData } from "sigma/types";
+import type { CameraState, NodeDisplayData } from "sigma/types";
 import { WithModel } from "../components/Loading";
 import { ViewFrame } from "../components/Shell";
 import { useInteractions, type Action, type InteractionSummary, type Interactions } from "../api/client";
@@ -86,7 +86,7 @@ function GraphPage({ model }: { model: Model }) {
   return (
     <ViewFrame model={model} empty="Click a node to see what the model believes, and why.">
       <div className="graph-stage">
-        {onScreen && <Network graph={onScreen} query={query} />}
+        {onScreen && <Network graph={onScreen} query={query} layout={evidenceLayout ? evidenceKey : modelKey} />}
         {arranging && <div className="graph-arranging" role="status"><i className="spinner" aria-hidden />{arranging}</div>}
         {!arranging && capped && (
           <div className="graph-arranging graph-note" role="status">
@@ -128,11 +128,19 @@ function jump(graph: Graph<NodeAttrs, EdgeAttrs>, query: string, select: (id: st
   if (hits.length) select(hits[0]);
 }
 
-function Network({ graph, query }: { graph: Graph<NodeAttrs, EdgeAttrs>; query: string }) {
+/** The graph drawn by Sigma. `layout` names the layout its nodes were placed by: a new graph from the
+ * same layout (the selected action's own evidence added around it) keeps the camera where it was. */
+function Network({ graph, query, layout }: { graph: Graph<NodeAttrs, EdgeAttrs>; query: string; layout: string }) {
   const { sel, select } = useSelection();
   const container = useRef<HTMLDivElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
   const sigma = useRef<Sigma<NodeAttrs, EdgeAttrs> | null>(null);
+  // The renderer is made once per graph: what it calls back is read through refs, never a reason to remake it.
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const kept = useRef<{ layout: string; camera: CameraState } | null>(null);
   const state = useRef({ hovered: null as string | null, focus: null as Set<string> | null, sel: null as string | null, query: "" });
 
   useEffect(() => {
@@ -148,10 +156,13 @@ function Network({ graph, query }: { graph: Graph<NodeAttrs, EdgeAttrs>; query: 
       edgeReducer: (edge, data) => edgeLook(graph, edge, data, state.current, palette),
     });
     sigma.current = renderer;
+    Object.assign(container.current!, { sigma: renderer });  // for the smoke run: the camera, and nodes on screen
+    const madeFor = layoutRef.current;
+    if (kept.current && kept.current.layout === madeFor) renderer.getCamera().setState(kept.current.camera);
     placed.place = () => placeLabels(renderer, graph, state.current, palette, placed);
     const refresh = () => renderer.refresh({ skipIndexation: true });
-    renderer.on("clickNode", ({ node }) => select(node));
-    renderer.on("clickStage", () => { state.current.focus = null; select(null); });
+    renderer.on("clickNode", ({ node }) => selectRef.current(node));
+    renderer.on("clickStage", () => { state.current.focus = null; selectRef.current(null); });
     renderer.on("enterNode", ({ node }) => { state.current.hovered = node; refresh(); });
     renderer.on("leaveNode", () => { state.current.hovered = null; refresh(); });
     renderer.on("beforeRender", () => { placed.stale = true; });
@@ -159,10 +170,11 @@ function Network({ graph, query }: { graph: Graph<NodeAttrs, EdgeAttrs>; query: 
     // Canvas text needs the bundled font loaded before the first labels are drawn.
     document.fonts.load(`500 12px ${palette.sans}`).then(refresh, () => {});
     return () => {
+      kept.current = { layout: madeFor, camera: renderer.getCamera().getState() };
       renderer.kill();
       sigma.current = null;
     };
-  }, [graph, select]);
+  }, [graph]);
 
   // The selection (from a click, the inspector or the URL) focuses its neighbourhood.
   useEffect(() => {
