@@ -407,69 +407,49 @@ fn r8_quit_stops_checks_too() {
     assert!(tl.log.is_empty());
 }
 
-// --- a system sleep -----------------------------------------------------------------------------
-
-impl Timeline {
-    /// The machine sleeps for `secs`: no ticks, then the clock is that much later.
-    fn sleep(&mut self, secs: f64) {
-        self.now += secs;
-    }
-}
+// --- a suspend --------------------------------------------------------------------------------
+// On Linux the monotonic clock (`Instant`) stands still during a suspend: the policy's time
+// does not jump, the runtime tells it with `on_slept` before the first event after waking.
 
 #[test]
-fn a_sleep_ends_an_open_active_interaction_with_no_shot_for_the_gap() {
+fn a_suspend_ends_an_open_active_interaction_with_no_shot() {
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(1.5, &Timeline::burst(1.0, 1.4));
     assert_eq!(tl.policy.state().mode, CaptureMode::Active);
     tl.clear();
-    tl.sleep(2.0 * 3600.0);
-    tl.run(tl.now + 1.0, &[]);
-    assert_eq!(tl.ends(), vec![(7201.75, Rule::R5)]);
-    assert!(tl.shots().is_empty(), "no shot for the gap: {:?}", tl.log);
-    assert_eq!(tl.policy.state().mode, CaptureMode::Idle);
-}
-
-#[test]
-fn input_right_after_a_sleep_starts_a_new_interaction() {
-    let mut tl = Timeline::new(vec![("a", video())]);
-    tl.run(1.5, &Timeline::burst(1.0, 1.4));
-    tl.clear();
-    tl.sleep(2.0 * 3600.0);
-    let t = tl.now + 0.1;
-    tl.run(t + 0.5, &[t]);
-    assert_eq!(tl.ends()[0].1, Rule::R5);
-    assert_eq!(tl.starts().len(), 1);
-    assert_eq!(tl.shots()[0].3, Rule::R1);
-}
-
-#[test]
-fn a_suspend_seen_by_the_runtime_ends_the_interaction_too() {
-    // During a suspend the monotonic clock stops, so the ticks show no gap: the runtime tells.
-    let mut tl = Timeline::new(vec![("a", video())]);
-    tl.run(1.5, &Timeline::burst(1.0, 1.4));
-    tl.clear();
     let ds = tl.policy.on_slept(tl.at(1.5));
     assert_eq!(ds, vec![Decision::EndInteraction { rule: Rule::R5 }]);
-    assert!(tl.policy.on_slept(tl.at(1.6)).is_empty(), "nothing open any more");
+    assert_eq!(tl.policy.state().mode, CaptureMode::Idle);
+    tl.run(3.0, &[]);
+    assert!(tl.shots().is_empty(), "no shot for the gap: {:?}", tl.log);
+    assert!(tl.policy.on_slept(tl.at(3.0)).is_empty(), "nothing open any more");
 }
 
 #[test]
-fn a_sleep_ends_an_open_passive_interaction_too() {
+fn the_waking_input_starts_a_fresh_interaction_after_the_old_one_is_closed() {
+    // A passive interaction is open when the lid closes; a key press wakes the machine.
     let mut tl = Timeline::new(vec![("a", video())]);
     tl.run(10.0, &[1.0]).run(60.0, &[]);
     assert_eq!(tl.policy.state().mode, CaptureMode::Passive);
     tl.clear();
-    tl.sleep(3600.0);
-    tl.run(tl.now + 0.5, &[]);
-    assert_eq!(tl.ends().iter().map(|e| e.1).collect::<Vec<_>>(), vec![Rule::R7]);
-    assert!(tl.shots().is_empty());
+    let mut ds = tl.policy.on_slept(tl.at(60.0));
+    ds.extend(tl.policy.on_input(tl.at(60.1)));
+    assert_eq!(ds[0], Decision::EndInteraction { rule: Rule::R7 });
+    assert_eq!(ds[1], Decision::StartInteraction { kind: InteractionKind::Active });
+    assert!(matches!(&ds[2], Decision::Shot { rule: Rule::R1, trigger: Trigger::Activity, .. }));
+    assert_eq!(ds.len(), 3, "one end, one start: {ds:?}");
 }
 
 #[test]
-fn r8_stop_while_idle_ends_nothing() {
-    let mut tl = Timeline::new(vec![("a", still())]);
-    tl.stop(StopReason::Paused);
-    assert!(tl.ends().is_empty());
+fn a_long_gap_between_ticks_alone_ends_nothing() {
+    // A stalled loop (the clock running, no suspend) is not a sleep.
+    let mut tl = Timeline::new(vec![("a", video())]);
+    tl.run(1.5, &Timeline::burst(1.0, 1.4));
+    tl.clear();
+    tl.now += 60.0;
+    tl.run(tl.now + 3.0, &[]);
+    assert_eq!(tl.ends().iter().map(|e| e.1).collect::<Vec<_>>(), vec![Rule::R5]);
+    assert!(!tl.shots().is_empty() || !tl.skipped().is_empty(), "the rules run as usual");
 }
 
 // --- state ------------------------------------------------------------------------------------

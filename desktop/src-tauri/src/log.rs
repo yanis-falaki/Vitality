@@ -26,14 +26,20 @@ pub struct DecisionLog {
 
 impl DecisionLog {
     pub fn open(path: &Path) -> DecisionLog {
-        let text = std::fs::read_to_string(path).unwrap_or_default();
+        // Lossy: a crash in the middle of a write can split a multi-byte character.
+        let bytes = std::fs::read(path).unwrap_or_default();
+        let text = String::from_utf8_lossy(&bytes);
         let mut lines: VecDeque<String> = text.lines().map(str::to_string).collect();
-        let in_file = lines.len();
+        let torn = !text.is_empty() && !text.ends_with('\n');
+        if torn {
+            lines.pop_back(); // a line cut short by a crash
+        }
+        let in_file = lines.len() + usize::from(torn);
         while lines.len() > KEEP {
             lines.pop_front();
         }
         let mut log = DecisionLog { path: path.to_path_buf(), lines, in_file };
-        if in_file > KEEP {
+        if in_file > KEEP || torn {
             log.rewrite();
         }
         log
@@ -101,6 +107,20 @@ mod tests {
         assert_eq!(again.recent(1000).len(), KEEP);
         assert_eq!(again.recent(2), ["2026-11-07T20:02:03Z\tR2 shot 508", "2026-11-07T20:02:03Z\tR2 shot 509"]);
         assert_eq!(file_lines(&path), KEEP, "trimmed on start");
+    }
+
+    #[test]
+    fn a_line_cut_short_and_a_split_character_are_survived() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capture.log");
+        let mut bytes = b"2026-11-07T20:02:03Z\tR1 shot activity \xc2\xb7 Main\n".to_vec();
+        bytes.extend_from_slice(b"2026-11-07T20:02:04Z\tR2 shot activity \xc2"); // torn
+        std::fs::write(&path, bytes).unwrap();
+        let mut log = DecisionLog::open(&path);
+        assert_eq!(log.recent(10), ["2026-11-07T20:02:03Z\tR1 shot activity · Main"]);
+        log.append(at(), "next");
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().last(), Some("2026-11-07T20:02:03Z\tnext"));
+        assert_eq!(file_lines(&path), 2);
     }
 
     #[test]

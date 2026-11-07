@@ -121,8 +121,6 @@ pub struct Policy {
     settings: PolicySettings,
     mode: Mode,
     last_input: Option<Instant>,
-    /// The last tick (a long gap since it means the machine slept).
-    last_tick: Option<Instant>,
     /// Each screen's newest thumb, from the last tick.
     current: BTreeMap<ScreenId, Thumb>,
     /// Each screen's thumb when it was last shot (kept across interactions).
@@ -150,7 +148,6 @@ impl Policy {
             settings,
             mode: Mode::Idle { next_check: None },
             last_input: None,
-            last_tick: None,
             current: BTreeMap::new(),
             last_shot: BTreeMap::new(),
         }

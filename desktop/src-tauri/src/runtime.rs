@@ -9,8 +9,10 @@
 //!
 //! The loop: every input goes to `Policy::on_input`; the owner's pause goes to
 //! `on_stop`/`on_resume`; a tick (250 ms) passes the screens' thumbs to `on_tick`, expires a
-//! timed pause, and tells the policy when the machine slept (`on_slept`: the wall clock jumped
-//! further than the monotonic one, which stops during a suspend). Lock is not watched. Every decision is carried out and written to the
+//! timed pause. Before every event (input, request, tick) it checks whether the machine was
+//! suspended since the last one (the suspend clock: CLOCK_BOOTTIME minus CLOCK_MONOTONIC, which
+//! grows only while suspended, immune to wall-clock steps) and then first tells the policy
+//! (`on_slept`), so the waking input starts a fresh interaction. Lock is not watched. Every decision is carried out and written to the
 //! decisions log. Shots are encoded off the loop's thread.
 
 use std::sync::{Arc, Mutex};
@@ -42,6 +44,22 @@ pub struct Parts {
     pub portal: Arc<dyn Portal>,
     pub feeds: Arc<dyn FeedFactory>,
     pub tick: Duration,
+    /// Time spent suspended since boot (`suspended_time` on the real machine).
+    pub suspend_clock: SuspendClock,
+}
+
+pub type SuspendClock = Arc<dyn Fn() -> Duration + Send + Sync>;
+
+/// Time spent suspended since boot: CLOCK_BOOTTIME (counts suspends) minus CLOCK_MONOTONIC
+/// (does not).
+pub fn suspended_time() -> Duration {
+    fn read(clock: libc::clockid_t) -> Duration {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: a valid clock id and a timespec for the call to fill.
+        unsafe { libc::clock_gettime(clock, &mut t) };
+        Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+    }
+    read(libc::CLOCK_BOOTTIME).saturating_sub(read(libc::CLOCK_MONOTONIC))
 }
 
 enum Request {
@@ -188,8 +206,9 @@ pub struct Runtime {
     open: Option<InteractionHandle>,
     pause: PauseState,
     pause_path: std::path::PathBuf,
-    /// The last tick, by both clocks (to see a suspend).
-    last_tick: Option<(Instant, DateTime<Utc>)>,
+    suspend_clock: SuspendClock,
+    /// The suspend clock at the last event.
+    suspended: Duration,
     quit: bool,
     /// Decisions from `on_stop`, carried out by the next `finish_stop`.
     pending_stop: Vec<Decision>,
@@ -227,7 +246,8 @@ impl Runtime {
             open: None,
             pause,
             pause_path: parts.paths.state.clone(),
-            last_tick: None,
+            suspended: (parts.suspend_clock)(),
+            suspend_clock: parts.suspend_clock.clone(),
             quit: false,
             pending_stop: vec![],
         };
@@ -251,20 +271,17 @@ impl Runtime {
         loop {
             tokio::select! {
                 Some(at) = inputs.recv() => {
+                    self.check_wake(at).await;
                     let ds = self.policy.on_input(at);
                     self.execute(ds).await;
                 }
-                Some(request) = requests.recv() => self.handle(request).await,
+                Some(request) = requests.recv() => {
+                    self.check_wake(Instant::now()).await;
+                    self.handle(request).await
+                }
                 _ = ticks.tick() => {
                     let now = Instant::now();
-                    let wall = Utc::now();
-                    if let Some((then, then_wall)) = self.last_tick.replace((now, wall)) {
-                        if slept(wall - then_wall, now - then) {
-                            self.log("the machine slept");
-                            let ds = self.policy.on_slept(now);
-                            self.execute(ds).await;
-                        }
-                    }
+                    self.check_wake(now).await;
                     if self.pause.paused && !self.pause.active(Utc::now()) {
                         self.set_pause(PauseState::default());
                         self.update_stop(now);
@@ -277,6 +294,18 @@ impl Runtime {
                 }
             }
             self.publish();
+        }
+    }
+
+    /// Ends an open interaction first if the machine was suspended since the last event.
+    async fn check_wake(&mut self, now: Instant) {
+        let suspended = (self.suspend_clock)();
+        let asleep = suspended.saturating_sub(self.suspended);
+        self.suspended = suspended;
+        if slept(asleep) {
+            self.log(&format!("the machine was suspended for {} min", asleep.as_secs() / 60));
+            let ds = self.policy.on_slept(now);
+            self.execute(ds).await;
         }
     }
 
@@ -453,10 +482,9 @@ impl Runtime {
     }
 }
 
-/// Whether the machine slept between two ticks: the wall clock moved over 30 s further than
-/// the monotonic clock (which stands still during a suspend).
-fn slept(wall: chrono::TimeDelta, monotonic: Duration) -> bool {
-    wall.to_std().is_ok_and(|w| w.saturating_sub(monotonic) > Duration::from_secs(30))
+/// Whether a suspend this long matters (short ones are left to the rules).
+fn slept(asleep: Duration) -> bool {
+    asleep > Duration::from_secs(30)
 }
 
 /// "2026-11-07T20:02:03Z<TAB>text" as a `DecisionLine`.

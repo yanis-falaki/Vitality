@@ -44,7 +44,10 @@ pub fn explain(p: &PolicySettings) -> Vec<RuleText> {
              any input (R1 then starts an active one), after {} checks in a row without change, or on pause. It holds only \
              passive shots.",
             p.passive_quiet_checks)),
-        rule("R8", "Stop", "While paused, nothing is captured and no checks run; an open interaction ends.".into()),
+        rule("R8", "Stop", "While paused, nothing is captured and no checks run; an open interaction ends. A locked \
+             screen is not a pause: the lock screen is captured like any other. When the machine sleeps, an open \
+             interaction ends as it wakes, with no shot for the time asleep."
+            .into()),
         rule("R9", "Size budget", format!(
             "When an interaction's shots reach {mib} MiB (or {} shots), it ends and a new one of the same kind starts at \
              once with a shot of every screen, so every upload stays under the server's limit.",
@@ -69,6 +72,6 @@ mod tests {
         let other = explain(&PolicySettings { settle: Duration::from_millis(2500), passive_every: Duration::from_secs(120), ..PolicySettings::default() });
         assert_eq!(other[1].text, "2.5 s after the last input, a shot.");
         assert!(other[5].text.contains("every 2 min"));
-        assert!(rules.iter().all(|r| !r.text.contains("lock")));
+        assert!(rules[7].text.contains("lock screen is captured"));
     }
 }

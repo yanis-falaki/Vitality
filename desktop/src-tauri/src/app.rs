@@ -89,6 +89,7 @@ async fn start(paths: Paths, settings: Settings, handle: AppHandle) -> Result<Ar
         portal: Arc::new(XdgPortal),
         feeds: Arc::new(feeds),
         tick: Duration::from_millis(250),
+        suspend_clock: Arc::new(crate::runtime::suspended_time),
     });
     core.apply_settings(&settings);
     // The health checks: once the saved screens have been reopened, then every 30 s.

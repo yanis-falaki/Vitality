@@ -104,8 +104,8 @@ Times are the defaults; every number is a setting.
   without change, or on pause. It holds only passive shots.
 - **R8 · Stop.** While paused, nothing is captured and no checks run; an open interaction ends.
   (Lock and sleep are not watched: the owner does not need capture to stop on lock, and while the
-  machine sleeps the app is frozen with it. An interaction left open across a sleep ends at the first
-  tick after waking, with no shots for the gap.)
+  machine sleeps the app is frozen with it. An interaction left open across a sleep ends as soon as
+  the machine wakes, with no shots for the gap; the input that wakes it starts a new one.)
 - **R9 · Size budget.** When an open interaction's shots reach 40 MiB (or 900 shots), it ends and a
   new interaction of the same kind starts at once with a shot of every screen (active: as R1;
   passive: a passive start). Every interaction then stays under the server's 50 MiB upload limit

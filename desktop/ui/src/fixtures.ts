@@ -232,7 +232,7 @@ export const rules: RuleText[] = [
   },
   {
     "id": "R8",
-    "text": "While paused, nothing is captured and no checks run; an open interaction ends.",
+    "text": "While paused, nothing is captured and no checks run; an open interaction ends. A locked screen is not a pause: the lock screen is captured like any other. When the machine sleeps, an open interaction ends as it wakes, with no shot for the time asleep.",
     "title": "Stop"
   },
   {

@@ -9,8 +9,8 @@
 //!    `passive_quiet_checks` checks without change, or when capture stops.
 //! R8 paused: an open interaction ends; nothing is captured, no checks run.
 //!
-//! After a system sleep (a tick more than 30 s after the one before) an open interaction ends
-//! at once (R5 active, R7 passive) with no shot: the gap is not part of it.
+//! After a suspend (`on_slept`, told by the runtime) an open interaction ends at once (R5
+//! active, R7 passive) with no shot: the time asleep is not part of it.
 //! R9 an interaction whose shots reach `max_interaction_bytes` (or `max_interaction_shots`)
 //!    ends, and one of the same kind starts at once with a shot of every screen.
 //!
@@ -24,39 +24,22 @@ use std::time::Instant;
 use super::change::changed;
 use super::{Decision, InteractionKind, Mode, Policy, Rule, ScreenId, StopReason, Thumb, Trigger};
 
-/// Ticks come every 250 ms; a gap longer than this means the machine slept.
-const SLEEP_GAP: std::time::Duration = std::time::Duration::from_secs(30);
-
 impl Policy {
     /// Keyboard or mouse input at `now`.
     pub fn on_input(&mut self, now: Instant) -> Vec<Decision> {
-        let mut out = self.after_sleep(now);
         self.last_input = Some(now);
-        out.extend(self.input_decisions(now));
-        out
+        self.input_decisions(now)
     }
 
-    /// The machine slept (the runtime sees the wall clock jump while the monotonic clock,
-    /// which stops during a suspend, did not): an open interaction ends at once, without a shot.
+    /// The machine was suspended (the runtime measures it; the monotonic clock the policy runs
+    /// on does not advance during a suspend): an open interaction ends at once, without a shot,
+    /// and the next input starts a fresh one. Call it before the first event after waking.
     pub fn on_slept(&mut self, now: Instant) -> Vec<Decision> {
-        self.end_after_gap(now, true)
-    }
-
-    /// An open interaction ends, without a shot, when the machine slept since the last tick.
-    fn after_sleep(&mut self, now: Instant) -> Vec<Decision> {
-        let slept = self.last_tick.is_some_and(|t| now.saturating_duration_since(t) > SLEEP_GAP);
-        self.end_after_gap(now, slept)
-    }
-
-    fn end_after_gap(&mut self, now: Instant, slept: bool) -> Vec<Decision> {
         let rule = match self.mode {
             Mode::Active { .. } => Rule::R5,
             Mode::Passive { .. } => Rule::R7,
             _ => return vec![],
         };
-        if !slept {
-            return vec![];
-        }
         self.mode = Mode::Idle { next_check: Some(now + self.settings.passive_every) };
         vec![Decision::EndInteraction { rule }]
     }
@@ -81,11 +64,6 @@ impl Policy {
     /// The 250 ms tick, with each screen's newest thumb (screens without a frame are absent).
     pub fn on_tick(&mut self, now: Instant, thumbs: &BTreeMap<ScreenId, Thumb>) -> Vec<Decision> {
         self.current = thumbs.clone();
-        let woke = self.after_sleep(now);
-        self.last_tick = Some(now);
-        if !woke.is_empty() {
-            return woke;
-        }
         let s = self.settings.clone();
         match self.mode.clone() {
             Mode::Stopped { .. } => vec![],

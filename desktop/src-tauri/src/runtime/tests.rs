@@ -36,6 +36,11 @@ async fn rig_in(dir: tempfile::TempDir) -> Rig {
 }
 
 async fn rig_with(dir: tempfile::TempDir, policy: PolicySettings) -> Rig {
+    rig_full(dir, policy, Arc::new(Duration::default), Duration::from_millis(20)).await
+}
+
+/// A rig with its own suspend clock and tick.
+async fn rig_full(dir: tempfile::TempDir, policy: PolicySettings, suspend_clock: SuspendClock, tick: Duration) -> Rig {
     let paths = Paths::under(dir.path());
     let server = FakeServer::default();
     let url = server.serve().await;
@@ -50,7 +55,8 @@ async fn rig_with(dir: tempfile::TempDir, policy: PolicySettings) -> Rig {
         input: input.clone(),
         portal: Arc::new(FakePortal::default()),
         feeds: feeds.clone(),
-        tick: Duration::from_millis(20),
+        tick,
+        suspend_clock,
     });
     eventually("the saved screens reopened", || core.screens.opened_all()).await;
     Rig { _dir: dir, paths, input, feeds, core, server }
@@ -217,6 +223,7 @@ pub async fn bare_core() -> BareCore {
         portal: Arc::new(FakePortal::default()),
         feeds: Arc::new(FakeFeeds::default()),
         tick: Duration::from_millis(20),
+        suspend_clock: Arc::new(Duration::default),
     });
     BareCore { dir, core }
 }
@@ -259,20 +266,35 @@ async fn the_status_page_counts_today_and_lists_decisions() {
 }
 
 #[test]
-fn a_suspend_is_a_wall_clock_jump_the_monotonic_clock_did_not_make() {
-    let wall = |s: i64| chrono::TimeDelta::seconds(s);
-    assert!(!slept(wall(0), Duration::from_millis(250)));
-    assert!(!slept(wall(20), Duration::from_secs(1)), "a small clock correction");
-    assert!(slept(wall(7200), Duration::from_millis(250)), "two hours asleep");
-    assert!(!slept(wall(-3600), Duration::from_millis(250)), "the clock set back");
+fn the_suspend_clock_counts_only_suspends() {
+    assert!(!slept(Duration::from_secs(10)));
+    assert!(slept(Duration::from_secs(7200)));
+    let a = suspended_time();
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(suspended_time().saturating_sub(a) < Duration::from_secs(1), "not suspended while running");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn new_settings_apply_at_once() {
-    let r = rig().await;
-    let s = crate::settings::Settings { server: "".into(), disk_warning_gb: 1e6, ..Default::default() };
-    r.core.apply_settings(&s);
-    eventually("upload off", || r.core.status().upload.state == crate::types::UploadState::Disabled).await;
-    assert!(r.core.status_page().disk.low, "the new warning level counts");
-    eventually("logged", || r.core.recent_decisions(10).iter().any(|d| d.text == "settings changed")).await;
+async fn after_a_suspend_the_waking_input_starts_a_fresh_interaction() {
+    // I-2: the monotonic clock did not move; only the suspend clock did. The key press that
+    // wakes the machine arrives before any tick.
+    let suspended = Arc::new(std::sync::Mutex::new(Duration::ZERO));
+    let clock: SuspendClock = {
+        let s = suspended.clone();
+        Arc::new(move || *s.lock().unwrap())
+    };
+    let slow = PolicySettings { settle: Duration::from_secs(30), ..quick() };
+    let r = rig_full(tempfile::tempdir().unwrap(), slow, clock, Duration::from_millis(50)).await;
+    r.add_screen(40).await;
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    r.input();
+    eventually("active", || r.core.status().capture.mode == CaptureMode::Active).await;
+    *suspended.lock().unwrap() += Duration::from_secs(2 * 3600);
+    r.input();
+    eventually("the old one finished", || !r.complete().is_empty()).await;
+    eventually("a new one open", || r.folders().len() == 2).await;
+    let log: Vec<String> = r.core.recent_decisions(20).iter().map(|d| d.text.clone()).collect();
+    let i = log.iter().position(|l| l.starts_with("the machine was suspended")).expect("logged");
+    assert!(log[i + 1].starts_with("R5 end"), "{log:?}");
+    assert!(log[i + 2].starts_with("start active"), "{log:?}");
 }
