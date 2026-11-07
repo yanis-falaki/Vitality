@@ -196,6 +196,10 @@ pub struct StatusView {
     pub screens_live: u32,
     /// The screens that need the owner: to be picked again, or stopped.
     pub screens_attention: Vec<String>,
+    /// Failing health checks, "title: detail" (Status and the tray).
+    pub health_warnings: Vec<String>,
+    /// Setup has been finished once (else it is the first run).
+    pub setup_done: bool,
     /// Input devices readable ("ok", "no_devices", "permission_denied").
     pub input: String,
 }
@@ -230,6 +234,8 @@ pub mod samples {
             screens: 2,
             screens_live: 1,
             screens_attention: vec!["Screen 2".into()],
+            health_warnings: vec!["Screens: Screen 2 is not live".into()],
+            setup_done: true,
             input: "ok".into(),
         }
     }
@@ -248,6 +254,8 @@ pub mod samples {
             screens: 2,
             screens_live: 2,
             screens_attention: vec![],
+            health_warnings: vec!["Keyboard and mouse: not allowed to read /dev/input: you are not in the input group".into()],
+            setup_done: true,
             input: "permission_denied".into(),
         }
     }
@@ -260,6 +268,8 @@ pub mod samples {
             screens: 0,
             screens_live: 0,
             screens_attention: vec![],
+            health_warnings: vec![],
+            setup_done: false,
             input: "no_devices".into(),
         }
     }

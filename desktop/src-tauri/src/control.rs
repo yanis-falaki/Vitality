@@ -3,7 +3,8 @@
 //!
 //! Requests: `{"cmd":"status"}`, `{"cmd":"pause","minutes":30}` (`minutes` left out = until
 //! resumed), `{"cmd":"resume"}`, `{"cmd":"show"}` (open the window; a second start of the app
-//! sends it), `{"cmd":"screens"}` (adds `"screens"`, for `doctor`). Replies: `{"ok":true,"status":{…StatusView…}}` or `{"ok":false,"error":"…"}`.
+//! sends it), `{"cmd":"screens"}` (adds `"screens"`), `{"cmd":"checks"}` (adds `"checks"`, the
+//! app's health checks as last run; both for `doctor`). Replies: `{"ok":true,"status":{…StatusView…}}` or `{"ok":false,"error":"…"}`.
 //!
 //! `serve(path, core)` binds the socket (only the owner may use it) and answers on the tokio
 //! runtime; `request(path, req)` is the blocking client the CLI uses.
@@ -34,15 +35,19 @@ pub enum ControlRequest {
     Show,
     /// The screens (for `doctor`).
     Screens,
+    /// The app's health checks as last run (for `doctor`; `checks` is absent before the first).
+    Checks,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ControlReply {
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<StatusView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screens: Option<crate::types::ScreensView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<Vec<crate::types::Check>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -86,7 +91,7 @@ pub fn serve(path: &Path, core: Arc<Core>) -> io::Result<()> {
 async fn answer(core: &Core, line: &str) -> ControlReply {
     let request: ControlRequest = match serde_json::from_str(line) {
         Ok(r) => r,
-        Err(e) => return ControlReply { ok: false, status: None, screens: None, error: Some(format!("bad request: {e}")) },
+        Err(e) => return ControlReply { ok: false, error: Some(format!("bad request: {e}")), ..ControlReply::default() },
     };
     let status = match request {
         ControlRequest::Status => core.status(),
@@ -98,10 +103,13 @@ async fn answer(core: &Core, line: &str) -> ControlReply {
             core.status()
         }
         ControlRequest::Screens => {
-            return ControlReply { ok: true, status: Some(core.status()), screens: Some(core.screens.view()), error: None };
+            return ControlReply { ok: true, status: Some(core.status()), screens: Some(core.screens.view()), ..ControlReply::default() };
+        }
+        ControlRequest::Checks => {
+            return ControlReply { ok: true, status: Some(core.status()), checks: core.checks(), ..ControlReply::default() };
         }
     };
-    ControlReply { ok: true, status: Some(status), screens: None, error: None }
+    ControlReply { ok: true, status: Some(status), ..ControlReply::default() }
 }
 
 /// Holds the one-instance lock (`client.lock` beside the socket) for as long as the returned

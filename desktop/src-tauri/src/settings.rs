@@ -12,9 +12,11 @@
 //! start_at_login = true
 //! ```
 //!
-//! `Settings::load(path)`: missing → the defaults; unreadable or out of range → the defaults
-//! (said on stderr); unknown keys (e.g. the old client's `upload_server`) are ignored with a
-//! notice. `validate()` lists what is wrong, field by field; `save(path)` writes atomically.
+//! `Settings::load(path)` / `load_full`: missing → the defaults; field by field, an invalid or
+//! ill-typed value takes its default and the others are kept (each problem said once on stderr,
+//! and listed for the Settings page); unknown keys (e.g. the old client's `upload_server`) are
+//! ignored. `from_fields` checks values from the Settings page with the same rules, field by
+//! field; `save(path)` writes atomically, changing only what changed.
 //! `StartAtLogin` turns the systemd user service on or off (`SystemdUnit` is the real one).
 
 use std::path::Path;
@@ -72,78 +74,170 @@ impl Default for Settings {
     }
 }
 
+/// How each field is checked (the same rules for the file and for the Settings page).
+enum Kind {
+    Text,
+    Bool,
+    Number { int: bool, lo: f64, lo_in: bool, hi: f64, hi_in: bool },
+}
+
+struct Spec {
+    name: &'static str,
+    kind: Kind,
+    message: &'static str,
+}
+
+const fn num(name: &'static str, lo: f64, lo_in: bool, hi: f64, hi_in: bool, message: &'static str) -> Spec {
+    Spec { name, kind: Kind::Number { int: false, lo, lo_in, hi, hi_in }, message }
+}
+
+const fn int(name: &'static str, lo: f64, hi: f64, message: &'static str) -> Spec {
+    Spec { name, kind: Kind::Number { int: true, lo, lo_in: true, hi, hi_in: true }, message }
+}
+
+const DAY: &str = "must be more than 0 s and at most a day";
+
+const SPECS: &[Spec] = &[
+    Spec { name: "server", kind: Kind::Text, message: "must be an http:// or https:// address with a host (or empty to keep captures here)" },
+    num("webp_quality", 0.0, true, 100.0, true, "must be from 0 to 100"),
+    num("start_gap_s", 0.0, false, 86_400.0, true, DAY),
+    num("settle_s", 0.0, false, 86_400.0, true, DAY),
+    num("max_gap_s", 0.0, false, 86_400.0, true, DAY),
+    num("change_fraction", 0.0, false, 1.0, false, "must be more than 0 % and less than 100 %"),
+    int("change_levels", 1.0, 254.0, "must be a whole number from 1 to 254"),
+    num("passive_every_s", 0.0, false, 86_400.0, true, DAY),
+    int("passive_quiet_checks", 1.0, 1000.0, "must be a whole number from 1 to 1000"),
+    int("max_interaction_mib", 1.0, 45.0, "must be a whole number from 1 to 45 MiB (the server takes at most 50 MiB)"),
+    num("disk_warning_gb", 0.0, true, 10_000.0, true, "must be from 0 to 10000 GB"),
+    Spec { name: "start_at_login", kind: Kind::Bool, message: "must be on or off" },
+];
+
+fn field_ok(spec: &Spec, v: &serde_json::Value) -> bool {
+    match (&spec.kind, v) {
+        (Kind::Bool, serde_json::Value::Bool(_)) => true,
+        (Kind::Text, serde_json::Value::String(s)) => {
+            let s = s.trim();
+            s.is_empty()
+                || ((s.starts_with("http://") || s.starts_with("https://"))
+                    && reqwest::Url::parse(s).is_ok_and(|u| u.host_str().is_some_and(|h| !h.is_empty())))
+        }
+        (Kind::Number { int, lo, lo_in, hi, hi_in }, serde_json::Value::Number(n)) => {
+            let Some(x) = n.as_f64() else { return false };
+            x.is_finite()
+                && (!int || x.fract() == 0.0)
+                && (if *lo_in { x >= *lo } else { x > *lo })
+                && (if *hi_in { x <= *hi } else { x < *hi })
+        }
+        _ => false,
+    }
+}
+
+/// A warning on stderr, said once per process (the file is read again and again).
+fn warn_once(message: String) {
+    static SAID: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    if SAID.get_or_init(Default::default).lock().unwrap().insert(message.clone()) {
+        eprintln!("vitality-client: {message}");
+    }
+}
+
+/// The settings read from the file, what was wrong in it, and the file's own table.
+#[derive(Debug, Clone, Default)]
+pub struct Loaded {
+    pub settings: Settings,
+    /// "change_levels = 300: must be a whole number from 1 to 254 (using 16)".
+    pub problems: Vec<String>,
+    pub raw: toml::Table,
+}
+
 impl Settings {
-    pub fn load(path: &Path) -> Settings {
-        let Ok(text) = std::fs::read_to_string(path) else { return Settings::default() };
-        if let Ok(table) = text.parse::<toml::Table>() {
-            let known = toml::Table::try_from(Settings::default()).unwrap_or_default();
-            for key in table.keys().filter(|k| !known.contains_key(*k)) {
-                eprintln!("vitality-client: {} has an unknown setting {key:?}; it is ignored", path.display());
+    /// The settings from `get(field)`, field by field: a missing field takes its default, an
+    /// invalid one too (and is reported).
+    pub fn from_fields(get: impl Fn(&str) -> Option<serde_json::Value>) -> (Settings, Vec<FieldError>) {
+        let defaults = serde_json::to_value(Settings::default()).expect("serialisable");
+        let mut map = defaults.as_object().cloned().unwrap_or_default();
+        let mut errors = vec![];
+        for spec in SPECS {
+            let Some(v) = get(spec.name) else { continue };
+            if field_ok(spec, &v) {
+                map.insert(spec.name.into(), v);
+            } else {
+                errors.push(FieldError { field: spec.name.into(), message: spec.message.into() });
             }
         }
-        match toml::from_str::<Settings>(&text) {
-            Ok(s) if s.validate().is_empty() => s,
-            Ok(s) => {
-                let what: Vec<String> = s.validate().into_iter().map(|e| format!("{}: {}", e.field, e.message)).collect();
-                eprintln!("vitality-client: {} has out-of-range values ({}); using the defaults", path.display(), what.join("; "));
-                Settings::default()
-            }
-            Err(e) => {
-                eprintln!("vitality-client: {} is invalid ({e}); using the defaults", path.display());
-                Settings::default()
-            }
+        let mut settings: Settings = serde_json::from_value(serde_json::Value::Object(map)).unwrap_or_default();
+        if settings.max_gap_s < settings.settle_s {
+            errors.push(FieldError { field: "max_gap_s".into(), message: "must be at least the settle time".into() });
+            (settings.max_gap_s, settings.settle_s) = (Settings::default().max_gap_s, Settings::default().settle_s);
         }
+        (settings, errors)
     }
 
-    /// Writes the settings (atomically); refuses invalid ones.
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        if !self.validate().is_empty() {
-            return Err("the settings are not valid".into());
+    /// The settings at `path` (missing → the defaults). Each invalid value takes its default,
+    /// the others are kept; unknown keys are ignored. Problems are warned about once.
+    pub fn load(path: &Path) -> Settings {
+        Settings::load_full(path).settings
+    }
+
+    pub fn load_full(path: &Path) -> Loaded {
+        let Ok(text) = std::fs::read_to_string(path) else { return Loaded::default() };
+        let raw = match text.parse::<toml::Table>() {
+            Ok(t) => t,
+            Err(e) => {
+                let problem = format!("{} is not valid TOML ({}); using the defaults", path.display(), e.message());
+                warn_once(problem.clone());
+                return Loaded { problems: vec![problem], ..Loaded::default() };
+            }
+        };
+        for key in raw.keys().filter(|k| !SPECS.iter().any(|s| s.name == k.as_str())) {
+            warn_once(format!("{} has an unknown setting {key:?}; it is ignored", path.display()));
         }
-        let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
+        let (settings, errors) = Settings::from_fields(|k| raw.get(k).and_then(|v| serde_json::to_value(v).ok()));
+        let defaults = serde_json::to_value(Settings::default()).expect("serialisable");
+        let problems: Vec<String> = errors
+            .iter()
+            .map(|e| {
+                let had = raw.get(&e.field).map(|v| v.to_string()).unwrap_or_default();
+                format!("{} = {had}: {} (using {})", e.field, e.message, defaults[&e.field])
+            })
+            .collect();
+        for p in &problems {
+            warn_once(format!("{}: {p}", path.display()));
+        }
+        Loaded { settings, problems, raw }
+    }
+
+    /// Writes the settings (atomically), keeping the file's own value for every field that was
+    /// not changed (an invalid one the owner did not touch stays as written) and its other
+    /// keys. A file that was not TOML at all is kept as `client.toml.bak`. Refuses invalid
+    /// settings.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        if let Some(e) = self.validate().first() {
+            return Err(format!("{}: {}", e.field, e.message));
+        }
+        let before = Settings::load_full(path);
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if text.parse::<toml::Table>().is_err() {
+                let _ = std::fs::copy(path, path.with_extension("toml.bak"));
+            }
+        }
+        let mut table = before.raw.clone();
+        let new = toml::Table::try_from(self).map_err(|e| e.to_string())?;
+        let old = toml::Table::try_from(&before.settings).map_err(|e| e.to_string())?;
+        for (key, value) in new {
+            let unchanged = old.get(&key) == Some(&value);
+            if !(unchanged && table.contains_key(&key)) {
+                table.insert(key, value);
+            }
+        }
+        let text = toml::to_string_pretty(&table).map_err(|e| e.to_string())?;
         let text = format!("# Vitality's desktop client: written by its Settings page.\n{text}");
         write_atomic(path, text.as_bytes()).map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 
     /// What is wrong, field by field (empty: valid).
     pub fn validate(&self) -> Vec<FieldError> {
-        let mut errors = vec![];
-        let mut bad = |field: &str, message: &str| errors.push(FieldError { field: field.into(), message: message.into() });
-        let durations = [
-            ("start_gap_s", self.start_gap_s),
-            ("settle_s", self.settle_s),
-            ("max_gap_s", self.max_gap_s),
-            ("passive_every_s", self.passive_every_s),
-        ];
-        for (field, d) in durations {
-            // Positive and at most a day (`Duration::from_secs_f64` panics on huge values).
-            if !(d.is_finite() && d > 0.0 && d <= 86_400.0) {
-                bad(field, "must be more than 0 s and at most a day");
-            }
-        }
-        if self.max_gap_s.is_finite() && self.settle_s.is_finite() && self.max_gap_s < self.settle_s {
-            bad("max_gap_s", "must be at least the settle time");
-        }
-        if !(0.0..=100.0).contains(&self.webp_quality) {
-            bad("webp_quality", "must be from 0 to 100");
-        }
-        if !(self.change_fraction > 0.0 && self.change_fraction < 1.0) {
-            bad("change_fraction", "must be more than 0 % and less than 100 %");
-        }
-        if self.passive_quiet_checks == 0 || self.passive_quiet_checks > 1000 {
-            bad("passive_quiet_checks", "must be from 1 to 1000");
-        }
-        if !(1..=45).contains(&self.max_interaction_mib) {
-            bad("max_interaction_mib", "must be from 1 to 45 MiB (the server takes at most 50 MiB)");
-        }
-        if !(self.disk_warning_gb.is_finite() && self.disk_warning_gb >= 0.0) {
-            bad("disk_warning_gb", "must be 0 or more");
-        }
-        let server = self.server.trim();
-        if !server.is_empty() && !(server.starts_with("http://") || server.starts_with("https://")) {
-            bad("server", "must start with http:// or https:// (or be empty to keep captures here)");
-        }
-        errors
+        let me = serde_json::to_value(self).expect("serialisable");
+        Settings::from_fields(|k| me.get(k).cloned()).1
     }
 
     pub fn policy(&self) -> PolicySettings {
@@ -171,9 +265,16 @@ impl Settings {
 
 /// Starting the app at login: the systemd user service, on or off.
 pub trait StartAtLogin: Send + Sync {
+    /// Whether the service is enabled; `Err(NOT_INSTALLED…)` when it is not installed.
     fn enabled(&self) -> Result<bool, String>;
     fn set(&self, on: bool) -> Result<(), String>;
+    /// Whether this session started `graphical-session.target` (which starts the service);
+    /// `None` if unknown.
+    fn session_target_active(&self) -> Option<bool>;
 }
+
+/// The start of `enabled()`'s error when the service is not installed.
+pub const NOT_INSTALLED: &str = "the service is not installed";
 
 /// `systemctl --user enable|disable vitality-client.service`.
 pub struct SystemdUnit;
@@ -182,10 +283,14 @@ impl StartAtLogin for SystemdUnit {
     fn enabled(&self) -> Result<bool, String> {
         let out = std::process::Command::new("systemctl").args(["--user", "is-enabled", SERVICE]).output().map_err(missing)?;
         let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr);
         match state.as_str() {
-            "enabled" | "enabled-runtime" | "static" | "alias" => Ok(true),
-            "disabled" | "masked" => Ok(false),
-            "" | "not-found" => Err(format!("{SERVICE} is not installed (install the package, or start Vitality from your desktop's autostart)")),
+            "enabled" | "enabled-runtime" | "static" | "alias" | "linked" | "linked-runtime" | "generated" => Ok(true),
+            "disabled" | "masked" | "masked-runtime" | "indirect" => Ok(false),
+            _ if stderr.contains("Failed to connect to bus") || stderr.contains("No medium found") => {
+                Err("the systemd user manager is not reachable from here".into())
+            }
+            "" | "not-found" => Err(format!("{NOT_INSTALLED} ({SERVICE}: install the package, or start Vitality from your desktop's autostart)")),
             other => Err(format!("{SERVICE} is {other}")),
         }
     }
@@ -197,6 +302,21 @@ impl StartAtLogin for SystemdUnit {
             Ok(())
         } else {
             Err(format!("systemctl --user {verb} {SERVICE} failed: {}", String::from_utf8_lossy(&out.stderr).trim()))
+        }
+    }
+
+    fn session_target_active(&self) -> Option<bool> {
+        SystemdUnit::is_active("graphical-session.target")
+    }
+}
+
+impl SystemdUnit {
+    fn is_active(unit: &str) -> Option<bool> {
+        let out = std::process::Command::new("systemctl").args(["--user", "is-active", unit]).output().ok()?;
+        match String::from_utf8_lossy(&out.stdout).trim() {
+            "active" => Some(true),
+            "inactive" | "failed" => Some(false),
+            _ => None,
         }
     }
 }
@@ -219,12 +339,13 @@ pub mod tests {
     pub struct FakeLogin {
         pub on: Mutex<Option<bool>>,
         pub missing: bool,
+        pub target: Option<bool>,
     }
 
     impl StartAtLogin for FakeLogin {
         fn enabled(&self) -> Result<bool, String> {
             if self.missing {
-                return Err("systemd is not available here".into());
+                return Err(format!("{NOT_INSTALLED} (fake)"));
             }
             Ok(self.on.lock().unwrap().unwrap_or(false))
         }
@@ -234,6 +355,9 @@ pub mod tests {
             }
             *self.on.lock().unwrap() = Some(on);
             Ok(())
+        }
+        fn session_target_active(&self) -> Option<bool> {
+            self.target
         }
     }
 
@@ -270,33 +394,65 @@ pub mod tests {
     }
 
     #[test]
-    fn invalid_values_fall_back_to_the_defaults() {
+    fn an_invalid_value_falls_back_alone_and_the_rest_is_kept() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("client.toml");
-        for bad in ["settle_s = 0", "max_gap_s = -1", "settle_s = 1e30", "webp_quality = 200", "max_interaction_mib = 60", "server = 3"] {
-            std::fs::write(&path, bad).unwrap();
-            assert_eq!(Settings::load(&path), Settings::default(), "{bad}");
+        for bad in ["settle_s = 0", "settle_s = 1e30", "webp_quality = 200", "max_interaction_mib = 60", "server = 3", "change_levels = 300",
+                    "server = \"box:8100\"", "server = \"http://\"", "passive_quiet_checks = 2.5", "start_at_login = 1"] {
+            std::fs::write(&path, format!("disk_warning_gb = 2.5\n{bad}\n")).unwrap();
+            let loaded = Settings::load_full(&path);
+            assert_eq!(loaded.settings, Settings { disk_warning_gb: 2.5, ..Settings::default() }, "{bad}");
+            assert_eq!(loaded.problems.len(), 1, "{bad}: {:?}", loaded.problems);
         }
+        std::fs::write(&path, "change_levels = 300\n").unwrap();
+        assert_eq!(Settings::load_full(&path).problems, ["change_levels = 300: must be a whole number from 1 to 254 (using 16)"]);
+        std::fs::write(&path, "max_gap_s = 1.0\nsettle_s = 3.0\n").unwrap();
+        assert_eq!(Settings::load(&path), Settings::default(), "inconsistent pair: both back to defaults");
+        std::fs::write(&path, "not toml [").unwrap();
+        assert_eq!(Settings::load_full(&path).problems.len(), 1);
     }
 
     #[test]
-    fn validation_names_each_field_and_refuses_zero_or_negative_durations() {
-        let s = Settings {
-            start_gap_s: 0.0,
-            settle_s: -2.0,
-            passive_every_s: f64::NAN,
-            passive_quiet_checks: 0,
-            change_fraction: 0.0,
-            server: "vitality-librarian:8100".into(),
-            ..Settings::default()
-        };
-        let fields: Vec<String> = s.validate().into_iter().map(|e| e.field).collect();
-        assert_eq!(fields, ["start_gap_s", "settle_s", "passive_every_s", "change_fraction", "passive_quiet_checks", "server"]);
-        assert!(s.save(std::path::Path::new("/nonexistent/x.toml")).is_err());
-        let short = Settings { max_gap_s: 1.0, ..Settings::default() };
-        assert_eq!(short.validate()[0].field, "max_gap_s");
-        assert!(Settings::default().validate().is_empty());
-        assert!(Settings { server: "".into(), ..Settings::default() }.validate().is_empty());
+    fn save_changes_only_what_changed_and_keeps_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.toml");
+        std::fs::write(&path, "upload_server = \"http://old\"\nchange_levels = 300\nserver = \"http://box:8100\"\n").unwrap();
+        let loaded = Settings::load(&path);
+        Settings { settle_s: 3.0, ..loaded.clone() }.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let table: toml::Table = text.parse().unwrap();
+        assert_eq!(table["settle_s"].as_float(), Some(3.0));
+        assert_eq!(table["change_levels"].as_integer(), Some(300), "an invalid value the owner did not touch stays");
+        assert_eq!(table["server"].as_str(), Some("http://box:8100"));
+        assert_eq!(table["upload_server"].as_str(), Some("http://old"), "unknown keys stay");
+        // Editing the invalid field replaces it.
+        Settings { change_levels: 20, ..Settings::load(&path) }.save(&path).unwrap();
+        assert_eq!(Settings::load_full(&path).problems.len(), 0);
+        assert_eq!(Settings::load(&path).change_levels, 20);
+    }
+
+    #[test]
+    fn a_file_that_is_not_toml_is_kept_aside_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.toml");
+        std::fs::write(&path, "server = [broken").unwrap();
+        Settings::default().save(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(path.with_extension("toml.bak")).unwrap(), "server = [broken");
+        assert_eq!(Settings::load(&path), Settings::default());
+    }
+
+    #[test]
+    fn page_values_are_checked_field_by_field_with_types() {
+        let page = serde_json::json!({
+            "server": "http://box:8100", "webp_quality": 80, "start_gap_s": null, "settle_s": 2,
+            "max_gap_s": 10, "change_fraction": 0.005, "change_levels": 0, "passive_every_s": 45,
+            "passive_quiet_checks": 2.5, "max_interaction_mib": 40, "disk_warning_gb": 5, "start_at_login": true,
+        });
+        let (s, errors) = Settings::from_fields(|k| page.get(k).cloned());
+        let fields: Vec<&str> = errors.iter().map(|e| e.field.as_str()).collect();
+        assert_eq!(fields, ["start_gap_s", "change_levels", "passive_quiet_checks"], "empty, 0 and a fraction are errors");
+        assert_eq!(s.webp_quality, 80.0);
+        assert!(Settings::from_fields(|k| serde_json::to_value(Settings::default()).unwrap().get(k).cloned()).1.is_empty());
     }
 
     #[test]
@@ -304,6 +460,6 @@ pub mod tests {
         let login = FakeLogin::default();
         login.set(true).unwrap();
         assert!(login.enabled().unwrap());
-        assert!(FakeLogin { missing: true, ..Default::default() }.set(true).unwrap_err().contains("systemd"));
+        assert!(FakeLogin { missing: true, ..Default::default() }.enabled().unwrap_err().starts_with(NOT_INSTALLED));
     }
 }

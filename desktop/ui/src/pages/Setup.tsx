@@ -2,7 +2,8 @@
 // essential check fails. Steps: Welcome, Input access, Server, Screens, Start at login, Done;
 // each ticks as soon as its check passes (the checks refresh live). `onDone` leaves Setup.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CaptureState } from "../components/CaptureState";
 import { core, type Check } from "../core";
 import { CheckLine } from "../components/CheckLine";
 import { Switch } from "../components/Switch";
@@ -23,7 +24,7 @@ export function Setup({ onDone, initialStep = 0 }: { onDone: () => void; initial
   const done = [
     step > 0,
     passed("input_access"),
-    skippedServer || SERVER_PARTS.every((id) => !check(checks, id) || passed(id)),
+    skippedServer || check(checks, "server")?.ok === true || SERVER_PARTS.every((id) => !check(checks, id) || passed(id)),
     passed("screens_open") && (status?.screens ?? 0) > 0,
     passed("start_at_login"),
     false,
@@ -44,6 +45,8 @@ export function Setup({ onDone, initialStep = 0 }: { onDone: () => void; initial
             </li>
           ))}
         </ol>
+        <span className="spacer" />
+        <CaptureState />
       </aside>
       <main className="page">
         <div className="page-inner setup-page">
@@ -112,26 +115,36 @@ function InputStep({ check: c }: { check: Check | undefined }) {
   );
 }
 
-function ServerStep({ checks, onSkip }: { checks: Check[] | undefined; onSkip: () => void }) {
+function ServerStep({ checks, onSkip }: { checks: Check[] | null | undefined; onSkip: () => void }) {
   const settings = useSettings();
   const client = useQueryClient();
   const [address, setAddress] = useState("");
+  const filled = useRef(false);
   const [result, setResult] = useState<Check[] | null>(null);
+  const [skipping, setSkipping] = useState(false);
   useEffect(() => {
-    if (settings.data && !address) setAddress(settings.data.server);
-  }, [settings.data, address]);
+    // Once: an address the owner cleared stays empty.
+    if (settings.data && !filled.current) {
+      filled.current = true;
+      setAddress(settings.data.server);
+    }
+  }, [settings.data]);
   const test = useMutation({
-    mutationFn: async () => {
-      if (settings.data && address !== settings.data.server) {
-        const reply = await core.settingsSave({ ...settings.data, server: address });
-        if (reply.errors.length) throw new Error(reply.errors[0].message);
-        client.setQueryData(keys.settings, reply.settings);
-      }
-      return core.checksRun(null);
-    },
+    mutationFn: () => core.serverTest(address),
     onSuccess: (c) => {
       setResult(c.filter((x) => SERVER_PARTS.includes(x.id)));
       client.setQueryData(keys.checks, c);
+      void client.invalidateQueries({ queryKey: keys.settings });
+    },
+  });
+  // Skip keeps captures here for real: the server is cleared, uploads stop.
+  const skip = useMutation({
+    mutationFn: () => core.settingsSave({ ...settings.data!, server: "" }),
+    onSuccess: (reply) => {
+      if (reply.errors.length) return;
+      void client.invalidateQueries({ queryKey: keys.settings });
+      void client.invalidateQueries({ queryKey: keys.status });
+      onSkip();
     },
   });
   const shown = result ?? checks?.filter((x) => SERVER_PARTS.includes(x.id));
@@ -148,9 +161,19 @@ function ServerStep({ checks, onSkip }: { checks: Check[] | undefined; onSkip: (
         {test.error && <p className="field-help field-help-error">{String(test.error)}</p>}
       </div>
       {shown && shown.length > 0 && <ul className="checks">{shown.map((c) => <CheckLine key={c.id} c={c} />)}</ul>}
-      <p className="field-help">
-        No server yet? <button className="link" onClick={onSkip}>Skip this step</button>: captures then stay on this machine until you set one in Settings.
-      </p>
+      {skipping ? (
+        <div className="command">
+          <p>Keep captures on this machine? No server is set and nothing is uploaded until you set one in Settings.</p>
+          <div className="command-line">
+            <button className="button button-primary" disabled={skip.isPending} onClick={() => skip.mutate()}>Keep them here</button>
+            <button className="button" onClick={() => setSkipping(false)}>Back</button>
+          </div>
+        </div>
+      ) : (
+        <p className="field-help">
+          No server yet? <button className="link" onClick={() => setSkipping(true)}>Skip this step</button>: captures then stay on this machine.
+        </p>
+      )}
     </section>
   );
 }
@@ -162,10 +185,11 @@ function LoginStep({ check: c }: { check: Check | undefined }) {
   const save = useMutation({
     mutationFn: (on: boolean) => core.settingsSave({ ...settings.data!, start_at_login: on }),
     onSuccess: (reply) => {
-      client.setQueryData(keys.settings, reply.settings);
-      setError(reply.login_error);
+      void client.invalidateQueries({ queryKey: keys.settings });
+      setError(reply.login_error ?? reply.errors[0]?.message ?? null);
       void client.invalidateQueries({ queryKey: keys.checks });
     },
+    onError: (e) => setError(String(e)),
   });
   return (
     <section>
@@ -181,17 +205,20 @@ function LoginStep({ check: c }: { check: Check | undefined }) {
 }
 
 function DoneStep({ checks, onDone }: { checks: Check[]; onDone: () => void }) {
+  const client = useQueryClient();
+  const again = useMutation({ mutationFn: core.checksRun, onSuccess: (c) => client.setQueryData(keys.checks, c) });
   const essentialMissing = checks.some((c) => c.essential && !c.ok);
   return (
     <section>
       <h1>{essentialMissing ? "Almost there" : "All set"}</h1>
       <p className="lede">
         {essentialMissing
-          ? "Something essential still needs attention: capture starts as soon as it passes."
-          : "Capture starts now. You can pause it at any time from the tray icon."}
+          ? "Something essential still needs attention. Fix it, then check again."
+          : "Capture is running (it has been since Vitality started). You can pause it at any time from the tray icon or this window."}
       </p>
       <ul className="checks">{checks.map((c) => <CheckLine key={c.id} c={c} />)}</ul>
       <footer className="setup-nav">
+        <button className="button" disabled={again.isPending} onClick={() => again.mutate()}>{again.isPending ? "Checking…" : "Check again"}</button>
         <span className="spacer" />
         <button className="button button-primary" disabled={essentialMissing} onClick={onDone}>Done</button>
       </footer>

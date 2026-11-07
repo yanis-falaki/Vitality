@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::settings::tests::FakeLogin;
+use crate::settings::NOT_INSTALLED;
 use crate::types::ScreenId;
 
 struct Fake {
@@ -36,7 +37,7 @@ impl Fake {
             health: Ok(200),
             post: Ok(422),
             disk: Some(80_000_000_000),
-            login: FakeLogin { on: Mutex::new(Some(true)), missing: false },
+            login: FakeLogin { on: Mutex::new(Some(true)), missing: false, target: Some(true) },
             posted: Mutex::new(vec![]),
         }
     }
@@ -72,13 +73,13 @@ impl HealthEnv for Fake {
     fn disk_free(&self) -> Option<u64> {
         self.disk
     }
-    fn start_at_login(&self) -> &dyn StartAtLogin {
-        &self.login
+    async fn login(&self) -> (Result<bool, String>, Option<bool>) {
+        (self.login.enabled(), self.login.session_target_active())
     }
 }
 
 async fn run(f: &Fake) -> Vec<Check> {
-    checks(f, &Settings::default()).await
+    checks(f, &Settings::default(), Device::Probe).await
 }
 
 fn by_id<'a>(checks: &'a [Check], id: &str) -> &'a Check {
@@ -136,10 +137,11 @@ async fn portal_missing() {
 async fn screens_none_one_stuck_or_unknown() {
     let f = Fake { screens: Ok(vec![]), ..Fake::good() };
     assert_eq!(by_id(&run(&f).await, "screens_open").fix.as_deref(), Some("Open Screens and add a screen."));
+    assert!(essential_failure(&run(&Fake { screens: Ok(vec![]), ..Fake::good() }).await), "no screen at all: Setup");
     let f = Fake { screens: Ok(vec![screen("Main", ScreenState::Live), screen("Side", ScreenState::NeedsPick)]), ..Fake::good() };
     let c = run(&f).await;
     assert_eq!(by_id(&c, "screens_open").detail, "Side is not live");
-    assert!(essential_failure(&c));
+    assert!(!essential_failure(&c), "a configured screen that is not live is a warning, not Setup");
     let f = Fake { screens: Err("Vitality isn't running".into()), ..Fake::good() };
     assert!(!by_id(&run(&f).await, "screens_open").ok);
 }
@@ -157,14 +159,17 @@ async fn the_server_in_three_parts() {
     let c = run(&f).await;
     let d = by_id(&c, "device_accepted");
     assert_eq!((d.ok, d.fix.as_deref()), (false, Some("On the server, add \"desktop\" to allowed_clients.")));
-    let f = Fake { post: Ok(411), ..Fake::good() };
-    assert!(by_id(&run(&f).await, "device_accepted").ok);
+    for code in [411, 413, 500] {
+        let f = Fake { post: Ok(code), ..Fake::good() };
+        let d = by_id(&run(&f).await, "device_accepted").clone();
+        assert!(!d.ok && d.detail.starts_with("cannot tell"), "{code}: only 422 proves acceptance");
+    }
 }
 
 #[tokio::test]
 async fn no_server_set_is_one_passing_check() {
     let f = Fake::good();
-    let c = checks(&f, &Settings { server: "".into(), ..Settings::default() }).await;
+    let c = checks(&f, &Settings { server: "".into(), ..Settings::default() }, Device::Probe).await;
     assert!(by_id(&c, "server").ok);
     assert!(c.iter().all(|c| c.id != "tailscale"));
     assert!(f.posted.lock().unwrap().is_empty());
@@ -175,10 +180,19 @@ async fn disk_space_and_start_at_login() {
     let f = Fake { disk: Some(1_000_000_000), ..Fake::good() };
     let c = run(&f).await;
     assert!(!by_id(&c, "disk_space").ok && by_id(&c, "disk_space").detail.contains("under the warning level"));
-    let f = Fake { login: FakeLogin { on: Mutex::new(Some(false)), missing: false }, ..Fake::good() };
+    let f = Fake { login: FakeLogin { on: Mutex::new(Some(false)), missing: false, target: Some(true) }, ..Fake::good() };
     assert!(!by_id(&run(&f).await, "start_at_login").ok);
-    let f = Fake { login: FakeLogin { on: Mutex::new(None), missing: true }, ..Fake::good() };
-    assert!(by_id(&run(&f).await, "start_at_login").detail.contains("systemd"));
+    let f = Fake { login: FakeLogin { on: Mutex::new(None), missing: true, target: None }, ..Fake::good() };
+    let c = by_id(&run(&f).await, "start_at_login").clone();
+    assert!(!c.ok && !c.essential && c.detail.starts_with(NOT_INSTALLED));
+    // The setting off and the service not installed: nothing to fix.
+    let off = Settings { start_at_login: false, ..Settings::default() };
+    assert!(by_id(&checks(&f, &off, Device::Probe).await, "start_at_login").ok);
+    // Enabled, but the session never starts graphical-session.target (Hyprland without uwsm).
+    let f = Fake { login: FakeLogin { on: Mutex::new(Some(true)), missing: false, target: Some(false) }, ..Fake::good() };
+    let c = by_id(&run(&f).await, "start_at_login").clone();
+    assert!(!c.ok && !c.essential && c.detail.contains("graphical-session.target"));
+    assert!(c.fix.unwrap().contains("exec-once = systemctl --user start vitality-client"));
 }
 
 #[tokio::test]
@@ -205,4 +219,46 @@ fn tailscale_status_json() {
     let t = parse_tailscale(br#"{"BackendState":"NeedsLogin","Self":{"HostName":"laptop","DNSName":""}}"#).unwrap();
     assert_eq!((t.running, t.device.as_deref()), (false, Some("laptop")));
     assert!(parse_tailscale(b"").is_err());
+}
+
+#[tokio::test]
+async fn the_device_probe_runs_only_when_asked() {
+    let f = Fake::good();
+    let earlier = run(&f).await;
+    assert_eq!(f.posted.lock().unwrap().len(), 1);
+    let previous = by_id(&earlier, "device_accepted").clone();
+    let again = checks(&f, &Settings::default(), Device::Reuse(Some(previous.clone()))).await;
+    assert_eq!(f.posted.lock().unwrap().len(), 1, "not probed again");
+    assert_eq!(by_id(&again, "device_accepted"), &previous);
+    let never = checks(&f, &Settings::default(), Device::Reuse(None)).await;
+    assert_eq!(by_id(&never, "device_accepted").detail, "not tested yet");
+}
+
+/// A portal on a private D-Bus connection that has only the lower-case `version` property,
+/// as the real ScreenCast portal does.
+struct FakeScreenCast;
+
+#[zbus::interface(name = "org.freedesktop.portal.ScreenCast")]
+impl FakeScreenCast {
+    #[zbus(property, name = "version")]
+    fn version(&self) -> u32 {
+        5
+    }
+}
+
+#[tokio::test]
+async fn the_portal_version_is_read_from_its_lower_case_property() {
+    let (a, b) = tokio::net::UnixStream::pair().unwrap();
+    let guid = zbus::Guid::generate();
+    let server = zbus::connection::Builder::unix_stream(a)
+        .server(guid)
+        .unwrap()
+        .p2p()
+        .serve_at("/org/freedesktop/portal/desktop", FakeScreenCast)
+        .unwrap()
+        .build();
+    let client = zbus::connection::Builder::unix_stream(b).p2p().build();
+    let (server, client) = tokio::join!(server, client);
+    let (_server, client) = (server.unwrap(), client.unwrap());
+    assert_eq!(portal_version(&client).await, Ok(5));
 }

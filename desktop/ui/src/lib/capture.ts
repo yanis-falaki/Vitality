@@ -23,7 +23,7 @@ export function captureLine(s: StatusView, now: number): CaptureLine {
     case "active":
       return {
         text: `Active interaction since ${clock(c.since!)} · ${plural(c.shots, "shot")}`,
-        detail: "You are using the keyboard or mouse: a shot after each pause in input, and at least every 10 s.",
+        detail: "You are using the keyboard or mouse: a shot after each pause in input, and regularly while you keep going (R2, R3).",
         tone: "busy",
       };
     case "passive":

@@ -68,6 +68,8 @@
   background: var(--striving-soft); border: 1px solid var(--line-2); color: var(--ink); font-size: var(--text-sm);
 }
 .note { margin: 0 0 var(--s4); color: var(--ink-3); font-size: var(--text-sm); }
+.note-error { color: var(--bad); }
+.problems { margin: var(--s2) 0; padding-left: var(--s5); font-family: var(--mono); font-size: var(--text-xs); }
 
 /* -- Screen cards ----------------------------------------------------------------------------- */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s4); }
@@ -188,14 +190,14 @@ code { font-family: var(--mono); font-size: 0.92em; background: var(--hover); pa
 
 /* -- Setup ------------------------------------------------------------------------------------ */
 .setup { height: 100%; display: grid; grid-template-columns: 216px minmax(0, 1fr); }
-.setup-steps { background: var(--panel); border-right: 1px solid var(--line); padding: var(--s5) var(--s3); }
+.setup-steps { display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); padding: var(--s5) var(--s3) var(--s4); }
 .setup-caption { margin: 0 var(--s3) var(--s3); font: 600 var(--text-xs)/1.4 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
 .setup-steps ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.setup-steps button {
+.setup-steps ol button {
   display: flex; align-items: center; gap: var(--s3); width: 100%; text-align: left; border: 0; background: none;
   padding: 7px var(--s3); border-radius: var(--r-sm); font-size: var(--text); font-weight: 500; color: var(--ink-2); cursor: pointer;
 }
-.setup-steps button.on { background: var(--hover); color: var(--ink); }
+.setup-steps ol button.on { background: var(--hover); color: var(--ink); }
 .step-mark {
   flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: var(--text-xs);
   border: 1.5px solid var(--line-2); color: var(--ink-3);

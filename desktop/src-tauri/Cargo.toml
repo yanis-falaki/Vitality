@@ -36,6 +36,8 @@ chrono = { version = "0.4", features = ["serde"] }
 [dev-dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 tempfile = "3"
+# p2p: a private D-Bus connection for the portal check's test.
+zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }
 
 [features]
 # Set by `tauri build`: serve the built interface from inside the binary.

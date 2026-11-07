@@ -26,7 +26,9 @@ npm run tauri build -- --no-bundle   # target/release/vitality-client
 ```
 
 Tests: `cargo test` and `cargo clippy -- -D warnings` in `desktop/`; `npm run typecheck` in
-`desktop/ui`. The interface also runs in a browser against a fake core: `npm run dev` in
+`desktop/ui`; `python3 ui/tests/ui_test.py [SCREENSHOT_DIR]` (needs node on PATH and the Python
+`playwright` package with Chromium) checks the interface against the fake core: when Setup is
+shown, Done, Skip, Settings' errors. The interface also runs in a browser against a fake core: `npm run dev` in
 `desktop/ui`, then <http://localhost:5173/mock.html?scenario=two> (`duplicate`, `needs-pick`,
 `empty`, `paused`).
 
@@ -43,8 +45,10 @@ the interface). Each file starts with its contract.
 `resume` (through the running app's socket) and `doctor`: every health check (input access, the
 desktop session, the screen-share portal, the screens, Tailscale, the server and whether it
 accepts this device, disk space, start at login) with ✓/✗ and a fix for each failure; it exits 1
-when an essential one fails. The same checks drive Setup (shown while no screen is set up or an
-essential check fails) and the warnings on Status.
+when an essential one fails. While the app runs, `doctor` prints the app's own results (its
+session, not the terminal's: it works over SSH); otherwise it runs them in the terminal. The same
+checks drive Setup (on the first run, and later while an essential check fails) and the warnings
+on Status and the tray.
 
 ## Settings
 

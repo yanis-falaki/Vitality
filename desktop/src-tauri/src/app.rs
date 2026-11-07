@@ -18,8 +18,9 @@ use crate::screens::portal::XdgPortal;
 use crate::settings::Settings;
 use crate::state::PauseFor;
 use crate::tray::{self, TrayAction};
-use crate::commands::{refresh_checks, AppState};
-use crate::settings::SystemdUnit;
+use crate::commands::AppState;
+use crate::health::service::HealthService;
+use crate::settings::{StartAtLogin, SystemdUnit};
 use crate::upload::UploadTimings;
 
 pub fn run() {
@@ -50,18 +51,17 @@ pub fn run() {
             crate::commands::how_it_works,
             crate::commands::checks,
             crate::commands::checks_run,
+            crate::commands::server_test,
+            crate::commands::setup_finish,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
-            let settings = Settings::load(&paths.settings);
-            let core = tauri::async_runtime::block_on(start(paths.clone(), settings.clone(), handle.clone()))?;
+            let settings = Arc::new(std::sync::Mutex::new(Settings::load(&paths.settings)));
+            let login: Arc<dyn StartAtLogin> = Arc::new(SystemdUnit);
+            let (core, health) = tauri::async_runtime::block_on(start(paths.clone(), settings.clone(), login.clone(), handle.clone()))?;
             app.manage(core.clone());
-            app.manage(AppState {
-                settings: std::sync::Mutex::new(settings),
-                settings_path: paths.settings.clone(),
-                login: Box::new(SystemdUnit),
-            });
-            if core.screens.count() == 0 {
+            app.manage(AppState { settings, settings_path: paths.settings.clone(), login, health, saving: Default::default() });
+            if core.screens.count() == 0 || !core.status().setup_done {
                 show(&handle);
             }
             Ok(())
@@ -77,7 +77,13 @@ pub fn run() {
 }
 
 /// Starts the core and everything around it (inside the async runtime).
-async fn start(paths: Paths, settings: Settings, handle: AppHandle) -> Result<Arc<Core>, Box<dyn std::error::Error>> {
+async fn start(
+    paths: Paths,
+    shared: Arc<std::sync::Mutex<Settings>>,
+    login: Arc<dyn StartAtLogin>,
+    handle: AppHandle,
+) -> Result<(Arc<Core>, Arc<HealthService>), Box<dyn std::error::Error>> {
+    let settings = shared.lock().unwrap().clone();
     let feeds = GstFeeds::new()?;
     let core = Runtime::start(Parts {
         paths: paths.clone(),
@@ -92,17 +98,19 @@ async fn start(paths: Paths, settings: Settings, handle: AppHandle) -> Result<Ar
         suspend_clock: Arc::new(crate::runtime::suspended_time),
     });
     core.apply_settings(&settings);
-    // The health checks: once the saved screens have been reopened, then every 30 s.
+    // The health checks: once the saved screens have been reopened (with the device probe),
+    // then every 30 s (reusing the probe's result).
+    let health = HealthService::new(core.clone(), shared, login);
     tokio::spawn({
-        let core = core.clone();
-        let settings_path = paths.settings.clone();
+        let (core, health) = (core.clone(), health.clone());
         async move {
             while !core.screens.opened_all() {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
+            health.refresh(true).await;
             loop {
-                refresh_checks(core.clone(), Settings::load(&settings_path), None).await;
                 tokio::time::sleep(Duration::from_secs(30)).await;
+                health.refresh(false).await;
             }
         }
     });
@@ -127,7 +135,7 @@ async fn start(paths: Paths, settings: Settings, handle: AppHandle) -> Result<Ar
         Arc::new(move |action| on_tray(core.clone(), handle.clone(), action))
     };
     tokio::spawn(tray::start(core.clone(), act));
-    Ok(core)
+    Ok((core, health))
 }
 
 fn on_tray(core: Arc<Core>, handle: AppHandle, action: TrayAction) {

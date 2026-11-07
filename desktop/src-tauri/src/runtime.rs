@@ -68,6 +68,7 @@ enum Request {
     Quit(oneshot::Sender<()>),
     ForgetScreen(ScreenId),
     Settings(PolicySettings),
+    FinishSetup(oneshot::Sender<()>),
 }
 
 /// The running core, shared by the interface, the tray and the control socket.
@@ -80,7 +81,7 @@ pub struct Core {
     snapshot: Mutex<StatusView>,
     changed: broadcast::Sender<()>,
     log: Mutex<DecisionLog>,
-    checks: Mutex<Vec<Check>>,
+    checks: Mutex<Option<Vec<Check>>>,
     details: Mutex<Option<(Instant, TodayCounts, DiskView)>>,
     /// Free space under this many bytes is a warning.
     pub disk_warning: Mutex<u64>,
@@ -129,16 +130,30 @@ impl Core {
     }
 
     /// The health checks, as last run (`set_checks`).
-    pub fn checks(&self) -> Vec<Check> {
+    /// The health checks as last run; `None` before the first run (which waits for the saved
+    /// screens to reopen, so their opening is never judged).
+    pub fn checks(&self) -> Option<Vec<Check>> {
         self.checks.lock().unwrap().clone()
     }
 
+    /// Keeps new check results; tells the interface only when a check passed or failed
+    /// differently (not when a detail such as free space moved).
     pub fn set_checks(&self, checks: Vec<Check>) {
-        let changed = *self.checks.lock().unwrap() != checks;
-        *self.checks.lock().unwrap() = checks;
+        let key = |c: &[Check]| c.iter().map(|c| (c.id.clone(), c.ok)).collect::<Vec<_>>();
+        let changed = {
+            let mut kept = self.checks.lock().unwrap();
+            let changed = kept.as_deref().map(key) != Some(key(&checks));
+            *kept = Some(checks);
+            changed
+        };
         if changed {
             self.notify_changed();
         }
+    }
+
+    /// Setup has been finished once (kept in `state.json`).
+    pub async fn finish_setup(&self) {
+        self.ask(Request::FinishSetup).await;
     }
 
     /// Everything the Status page shows. Today's counts and disk use are recounted at most
@@ -156,7 +171,7 @@ impl Core {
                 }
             }
         };
-        StatusPage { status: self.status(), today, disk, checks: self.checks(), recent_decisions: self.recent_decisions(50) }
+        StatusPage { status: self.status(), today, disk, checks: self.checks().unwrap_or_default(), recent_decisions: self.recent_decisions(50) }
     }
 
     /// Drop the cached counts (an interaction just ended, or space was freed).
@@ -235,7 +250,7 @@ impl Runtime {
             snapshot: Mutex::new(blank_status()),
             changed: broadcast::channel(16).0,
             log: Mutex::new(DecisionLog::open(&parts.paths.log)),
-            checks: Mutex::new(vec![]),
+            checks: Mutex::new(None),
             details: Mutex::new(None),
             disk_warning: Mutex::new(5 * 1024 * 1024 * 1024),
             on_show: Mutex::new(None),
@@ -341,6 +356,13 @@ impl Runtime {
                 let _ = done.send(());
             }
             Request::ForgetScreen(id) => self.policy.forget_screen(&id),
+            Request::FinishSetup(done) => {
+                let p = PauseState { setup_done: true, ..self.pause.clone() };
+                p.save(&self.pause_path);
+                self.pause = p;
+                self.publish();
+                let _ = done.send(());
+            }
             Request::Settings(p) => {
                 self.log("settings changed");
                 self.policy.set_settings(p);
@@ -348,7 +370,8 @@ impl Runtime {
         }
     }
 
-    fn set_pause(&mut self, p: PauseState) {
+    fn set_pause(&mut self, mut p: PauseState) {
+        p.setup_done = self.pause.setup_done;
         p.save(&self.pause_path);
         self.pause = p;
     }
@@ -521,6 +544,8 @@ fn blank_status() -> StatusView {
         screens: 0,
         screens_live: 0,
         screens_attention: vec![],
+        health_warnings: vec![],
+        setup_done: false,
         input: "ok".into(),
     }
 }
@@ -540,6 +565,8 @@ fn status_view(state: &PolicyState, pause: &PauseState, core: &Core) -> StatusVi
         screens: statuses.len() as u32,
         screens_live: statuses.iter().filter(|s| s.state == ScreenState::Live).count() as u32,
         screens_attention: core.screens.needing_attention(),
+        health_warnings: core.checks().unwrap_or_default().iter().filter(|c| !c.ok).map(|c| format!("{}: {}", c.title, c.detail)).collect(),
+        setup_done: pause.setup_done,
         input: core.input.accessible().as_str().into(),
     }
 }

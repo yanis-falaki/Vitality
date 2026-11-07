@@ -1,5 +1,6 @@
 // A fake core for screenshots and manual checks in a browser (`npm run dev`, then
-// /mock.html?scenario=two|duplicate|needs-pick|stopped|empty|paused): answers the app's Tauri commands
+// /mock.html?scenario=two|duplicate|needs-pick|stopped|empty|paused|idle|offline|rejected|setup|
+// setup-done|health-fail|screen-not-live|loading, and &page=…, &step=…, &setup=1): answers the app's Tauri commands
 // from the fixtures (fixtures.ts, written from the Rust types) and draws made-up previews.
 // Never shipped: only mock.html loads it.
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -7,7 +8,7 @@ import type { ScreensView, StatusView } from "../core";
 import { freed, rules, settings as defaultSettings, statusActive, statusIdle, statusPage, statusPaused } from "../fixtures";
 import type { Check, Settings } from "../core";
 
-type Scenario = "two" | "duplicate" | "needs-pick" | "empty" | "paused" | "stopped" | "idle" | "offline" | "rejected" | "setup" | "setup-done" | "health-fail";
+type Scenario = "two" | "duplicate" | "needs-pick" | "empty" | "paused" | "stopped" | "idle" | "offline" | "rejected" | "setup" | "setup-done" | "health-fail" | "screen-not-live" | "loading";
 
 const ck = (id: string, ok: boolean, essential: boolean, title: string, detail: string, fix: string | null = null): Check => ({ id, ok, essential, title, detail, fix: ok ? null : fix });
 
@@ -32,10 +33,6 @@ function allChecks(s: Scenario, screens: number): Check[] {
   ];
 }
 
-/** The checks a scenario shows: only the failing ones matter to Status. */
-function scenarioChecks(s: Scenario) {
-  return s === "needs-pick" || s === "stopped" ? statusPage.checks : statusPage.checks.filter((c) => c.ok);
-}
 
 /** A made-up desktop: a window with a title bar and lines of "text", in the given hue. */
 function fakeScreen(hue: number, seed: number): string {
@@ -71,6 +68,8 @@ function screensFor(s: Scenario): ScreensView {
       return { screens: [live("s1", "Main"), live("s2", "Screen 2", 0.6)], duplicates: [["s1", "s2"]] };
     case "stopped":
       return { screens: [live("s1", "Main"), { id: "s2", name: "Side", state: "stopped", last_frame_age_s: null }], duplicates: [] };
+    case "screen-not-live":
+      return { screens: [live("s1", "Main"), { id: "s2", name: "Side", state: "needs_pick", last_frame_age_s: null }], duplicates: [] };
     case "needs-pick":
       return {
         screens: [live("s1", "Main"), { id: "s2", name: "Side", state: "needs_pick", last_frame_age_s: null }, live("s3", "Laptop", 42)],
@@ -84,12 +83,28 @@ function screensFor(s: Scenario): ScreensView {
 export function installFakeCore(scenario: Scenario) {
   let screens = screensFor(scenario);
   let settings: Settings = { ...defaultSettings };
+  const problems = new URLSearchParams(location.search).has("problems") ? ["change_levels = 300: must be a whole number from 1 to 254 (using 16)"] : [];
+  const live = () => screens.screens.filter((x) => x.state === "live").length;
+  const checksNow = () => {
+    const c = allChecks(scenario, live());
+    // A configured screen that is not live: a warning, not essential.
+    return screens.screens.length > 0 && live() < screens.screens.length
+      ? c.map((x) => (x.id === "screens_open" ? { ...x, ok: false, essential: false, detail: "Side is not live", fix: "Open Screens and pick Side again." } : x))
+      : c;
+  };
   const attention = screens.screens.filter((s) => s.state === "needs_pick" || s.state === "stopped").map((s) => s.name);
-  const base = { ...statusActive, screens: screens.screens.length, screens_live: screens.screens.length - attention.length, screens_attention: attention };
+  const base = {
+    ...statusActive,
+    screens: screens.screens.length,
+    screens_live: screens.screens.length - attention.length,
+    screens_attention: attention,
+    health_warnings: attention.map((n) => `Screens: ${n} is not live`),
+    setup_done: scenario !== "setup" && scenario !== "empty",
+  };
   const soon = (s: number) => new Date(Date.now() + s * 1000).toISOString();
   let status: StatusView =
     scenario === "paused"
-      ? { ...statusPaused, pause: { paused: true, until: null } }
+      ? { ...statusPaused, setup_done: true, pause: { paused: true, until: null } }
       : scenario === "idle"
         ? { ...base, capture: { ...statusIdle.capture, next_check_at: soon(31) } }
         : scenario === "offline"
@@ -109,16 +124,25 @@ export function installFakeCore(scenario: Scenario) {
         case "status":
           return status;
         case "status_page":
-          return { ...statusPage, status, checks: scenario === "two" ? allChecks(scenario, 2) : scenarioChecks(scenario) };
+          return { ...statusPage, status, checks: checksNow() };
         case "checks":
+          return scenario === "loading" ? null : checksNow();
         case "checks_run":
-          return allChecks(scenario, screens.screens.filter((x) => x.state === "live").length);
+        case "server_test":
+          return checksNow();
+        case "setup_finish":
+          status = { ...status, setup_done: true };
+          return status;
         case "settings_get":
-          return settings;
+          return { settings, problems };
         case "settings_save": {
           const next = a.settings as Settings;
-          if (next.settle_s <= 0) return { errors: [{ field: "settle_s", message: "must be more than 0 s and at most a day" }], settings, login_error: null };
+          const errors = [];
+          if (!(next.settle_s > 0)) errors.push({ field: "settle_s", message: "must be more than 0 s and at most a day" });
+          if (!(next.change_levels >= 1 && next.change_levels <= 254)) errors.push({ field: "change_levels", message: "must be a whole number from 1 to 254" });
+          if (errors.length) return { errors, settings, login_error: null };
           settings = next;
+          (window as unknown as { savedSettings: Settings }).savedSettings = settings;
           return { errors: [], settings, login_error: null };
         }
         case "free_up_space":

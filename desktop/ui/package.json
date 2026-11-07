@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:ui": "python3 tests/ui_test.py"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.1.0",

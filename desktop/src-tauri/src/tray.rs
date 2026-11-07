@@ -36,7 +36,9 @@ pub enum TrayAction {
 /// What needs the owner, if anything (the first of: input, screens, the server).
 pub fn attention(s: &StatusView) -> Option<String> {
     let names = s.screens_attention.join(", ");
-    attention_kind(s).map(|why| if why.starts_with("a screen") && !names.is_empty() { format!("{names}: pick again in Vitality") } else { why.to_string() })
+    attention_kind(s)
+        .map(|why| if why.starts_with("a screen") && !names.is_empty() { format!("{names}: pick again in Vitality") } else { why.to_string() })
+        .or_else(|| s.health_warnings.first().cloned())
 }
 
 fn attention_kind(s: &StatusView) -> Option<&'static str> {
@@ -229,8 +231,11 @@ mod tests {
     #[test]
     fn the_icon_and_line_follow_the_status() {
         let mut s = samples::status();
-        (s.screens_live, s.screens_attention) = (2, vec![]);
+        (s.screens_live, s.screens_attention, s.health_warnings) = (2, vec![], vec![]);
         assert_eq!(look(&s, 214), (TrayIcon::Recording, "Recording · 214 shots today".into()));
+        let mut warned = s.clone();
+        warned.health_warnings = vec!["Disk space: 1.2 GB free, under the warning level of 5 GB".into()];
+        assert_eq!(look(&warned, 0).1, "Needs attention: Disk space: 1.2 GB free, under the warning level of 5 GB", "health warnings reach the tray");
         assert_eq!(look(&s, 1).1, "Recording · 1 shot today");
         let paused = samples::status_paused();
         let (icon, line) = look(&paused, 0);
@@ -242,7 +247,7 @@ mod tests {
         assert_eq!(look(&idle, 0).1, "Needs attention: no screen set up");
         assert_eq!(look(&samples::status(), 0).1, "Needs attention: Screen 2: pick again in Vitality");
         let mut s = samples::status();
-        (s.screens_live, s.screens_attention) = (2, vec![]);
+        (s.screens_live, s.screens_attention, s.health_warnings) = (2, vec![], vec![]);
         s.upload.last_failure = Some("x: too large for the server (413)".into());
         assert_eq!(look(&s, 0).1, "Needs attention: the server refused an interaction for good");
     }

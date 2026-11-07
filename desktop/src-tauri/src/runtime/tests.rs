@@ -185,7 +185,7 @@ async fn a_saved_pause_holds_after_a_restart() {
 async fn a_timed_pause_ends_by_itself() {
     let dir = tempfile::tempdir().unwrap();
     let soon = Utc::now() + chrono::Duration::milliseconds(400);
-    PauseState { paused: true, paused_until: Some(soon) }.save(&dir.path().join("state.json"));
+    PauseState { paused: true, paused_until: Some(soon), ..Default::default() }.save(&dir.path().join("state.json"));
     let r = rig_in(dir).await;
     assert_eq!(r.core.status().capture.stopped_by, Some(StopReason::Paused));
     eventually("the pause ran out", || r.core.status().capture.mode == CaptureMode::Idle).await;
@@ -297,4 +297,29 @@ async fn after_a_suspend_the_waking_input_starts_a_fresh_interaction() {
     let i = log.iter().position(|l| l.starts_with("the machine was suspended")).expect("logged");
     assert!(log[i + 1].starts_with("R5 end"), "{log:?}");
     assert!(log[i + 2].starts_with("start active"), "{log:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn setup_done_is_remembered_through_pauses() {
+    let r = rig().await;
+    assert!(!r.core.status().setup_done, "a first run");
+    r.core.finish_setup().await;
+    r.core.pause(PauseFor::Minutes(5)).await;
+    r.core.resume().await;
+    assert!(r.core.status().setup_done);
+    assert!(PauseState::load(&r.paths.state).setup_done, "kept in state.json");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checks_are_absent_until_the_first_run_and_only_pass_or_fail_changes_notify() {
+    use crate::types::samples_page::check;
+    let r = rig().await;
+    assert!(r.core.checks().is_none());
+    let mut changes = r.core.subscribe();
+    r.core.set_checks(vec![check("disk_space", true, false, "Disk space", "96.0 GB free", None)]);
+    assert!(changes.try_recv().is_ok());
+    while changes.try_recv().is_ok() {}
+    r.core.set_checks(vec![check("disk_space", true, false, "Disk space", "95.9 GB free", None)]);
+    assert!(changes.try_recv().is_err(), "a detail moving is not a change");
+    assert_eq!(r.core.checks().unwrap()[0].detail, "95.9 GB free");
 }

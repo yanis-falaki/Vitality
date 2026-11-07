@@ -1,5 +1,5 @@
 //! The pause the owner asked for, kept in `state.json` so it survives a restart:
-//! `{"paused": true, "paused_until": "2026-11-07T21:00:00Z"}` (`paused_until: null` = until
+//! `{"paused": true, "paused_until": "2026-11-07T21:00:00Z", "setup_done": true}` (`paused_until: null` = until
 //! resumed). `PauseState::load/save`, `active(now)` (expired pauses are over), and
 //! `tomorrow_morning(now)`: 06:00 local time the next day, for "Pause until tomorrow".
 
@@ -15,6 +15,10 @@ use crate::types::PauseView;
 pub struct PauseState {
     pub paused: bool,
     pub paused_until: Option<DateTime<Utc>>,
+    /// Setup has been finished once: from then on it is shown only when an essential check
+    /// fails.
+    #[serde(default)]
+    pub setup_done: bool,
 }
 
 /// How long to pause.
@@ -43,7 +47,7 @@ impl PauseState {
             PauseFor::Minutes(m) => Some(now + Duration::minutes(m as i64)),
             PauseFor::UntilTomorrow => Some(tomorrow_morning(now)),
         };
-        PauseState { paused: true, paused_until: until }
+        PauseState { paused: true, paused_until: until, setup_done: false }
     }
 
     /// Whether the pause still holds at `now`.

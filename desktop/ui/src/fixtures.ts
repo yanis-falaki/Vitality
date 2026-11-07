@@ -46,6 +46,9 @@ export const statusActive: StatusView = {
     "since": "2026-11-07T20:02:00Z",
     "stopped_by": null
   },
+  "health_warnings": [
+    "Screens: Screen 2 is not live"
+  ],
   "input": "ok",
   "pause": {
     "paused": false,
@@ -56,6 +59,7 @@ export const statusActive: StatusView = {
     "Screen 2"
   ],
   "screens_live": 1,
+  "setup_done": true,
   "upload": {
     "failed": 0,
     "last_failure": null,
@@ -73,6 +77,9 @@ export const statusPaused: StatusView = {
     "since": null,
     "stopped_by": "paused"
   },
+  "health_warnings": [
+    "Keyboard and mouse: not allowed to read /dev/input: you are not in the input group"
+  ],
   "input": "permission_denied",
   "pause": {
     "paused": true,
@@ -81,6 +88,7 @@ export const statusPaused: StatusView = {
   "screens": 2,
   "screens_attention": [],
   "screens_live": 2,
+  "setup_done": true,
   "upload": {
     "device": "desktop",
     "failed": 1,
@@ -99,6 +107,7 @@ export const statusIdle: StatusView = {
     "since": null,
     "stopped_by": null
   },
+  "health_warnings": [],
   "input": "no_devices",
   "pause": {
     "paused": false,
@@ -107,6 +116,7 @@ export const statusIdle: StatusView = {
   "screens": 0,
   "screens_attention": [],
   "screens_live": 0,
+  "setup_done": false,
   "upload": {
     "failed": 0,
     "last_failure": null,
@@ -170,6 +180,9 @@ export const statusPage: StatusPage = {
       "since": "2026-11-07T20:02:00Z",
       "stopped_by": null
     },
+    "health_warnings": [
+      "Screens: Screen 2 is not live"
+    ],
     "input": "ok",
     "pause": {
       "paused": false,
@@ -180,6 +193,7 @@ export const statusPage: StatusPage = {
       "Screen 2"
     ],
     "screens_live": 1,
+    "setup_done": true,
     "upload": {
       "failed": 0,
       "last_failure": null,

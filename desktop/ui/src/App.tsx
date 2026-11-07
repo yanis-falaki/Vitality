@@ -1,10 +1,12 @@
 // The window: Setup while no screen is set up or an essential check fails (spec §8), else the
 // sidebar (pages, and capture's state with Pause/Resume at the bottom) and the page shown,
-// Status first. Once Setup has started it stays until its Done, even if the checks pass midway.
+// Status first. Setup shows on the first run and later only while an essential check fails;
+// once open it stays until its Done, even if the checks pass midway.
 import { useEffect, useState } from "react";
 import { CaptureState } from "./components/CaptureState";
 import { useChecks, useCoreEvents, useStatus } from "./lib/queries";
-import { needsSetup } from "./lib/setup";
+import { firstFailingStep, needsSetup } from "./lib/setup";
+import { core } from "./core";
 import { HowItWorks } from "./pages/HowItWorks";
 import { Screens } from "./pages/Screens";
 import { Settings } from "./pages/Settings";
@@ -27,7 +29,12 @@ export function App() {
   }, [needed]);
   if (needed === undefined) return <div className="app-loading" />;
   if (needed || inSetup)
-    return <Setup initialStep={Number(params.get("step") ?? 0)} onDone={() => { setInSetup(false); setPage("status"); }} />;
+    return (
+      <Setup
+        initialStep={Number(params.get("step") ?? firstFailingStep(status, checks))}
+        onDone={() => void core.setupFinish().then(() => { setInSetup(false); setPage("status"); })}
+      />
+    );
   return (
     <div className="app">
       <aside className="sidebar">

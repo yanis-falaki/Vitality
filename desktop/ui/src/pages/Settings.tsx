@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { core, type FieldError, type Freed, type Settings as S } from "../core";
 import { Switch } from "../components/Switch";
 import { bytes, plural } from "../lib/format";
-import { keys, useSettings } from "../lib/queries";
+import { keys, useSettingsView } from "../lib/queries";
 
 type NumberKey = { [K in keyof S]: S[K] extends number ? K : never }[keyof S];
 
@@ -37,7 +37,8 @@ const STORAGE: Field[] = [
 ];
 
 export function Settings() {
-  const stored = useSettings();
+  const view = useSettingsView();
+  const stored = { data: view.data?.settings };
   const client = useQueryClient();
   const [draft, setDraft] = useState<S | null>(null);
   const [errors, setErrors] = useState<FieldError[]>([]);
@@ -50,7 +51,7 @@ export function Settings() {
     onSuccess: (reply) => {
       setErrors(reply.errors);
       if (reply.errors.length) return setNote(null);
-      client.setQueryData(keys.settings, reply.settings);
+      void client.invalidateQueries({ queryKey: keys.settings });
       setDraft(reply.settings);
       void client.invalidateQueries({ queryKey: keys.rules });
       void client.invalidateQueries({ queryKey: keys.checks });
@@ -63,6 +64,13 @@ export function Settings() {
     setNote(null);
   };
   const errorOf = (k: string) => errors.find((e) => e.field === k)?.message;
+  const known = new Set<string>(["server", "start_at_login", ...RULES.map((f) => f.key), ...STORAGE.map((f) => f.key)]);
+  // Errors no field shows (the file could not be written…), and a failed call.
+  const general = [
+    ...errors.filter((e) => !known.has(e.field)).map((e) => (e.field === "file" ? e.message : `${e.field}: ${e.message}`)),
+    ...(save.error ? [`Not saved: ${String(save.error)}`] : []),
+  ];
+  const fieldErrors = errors.filter((e) => known.has(e.field)).length;
   const changed = JSON.stringify(draft) !== JSON.stringify(stored.data);
 
   const number = (f: Field) => (
@@ -94,6 +102,15 @@ export function Settings() {
         </button>
       </header>
       {note && <p className="note" role="status">{note}</p>}
+      {fieldErrors > 0 && <p className="note note-error" role="alert">Not saved: {fieldErrors === 1 ? "one value needs" : `${fieldErrors} values need`} fixing below.</p>}
+      {general.map((g) => <p key={g} className="note note-error" role="alert">{g}</p>)}
+      {(view.data?.problems.length ?? 0) > 0 && (
+        <div className="banner" role="status">
+          <strong>Some values in client.toml were not valid and use their defaults:</strong>
+          <ul className="problems">{view.data!.problems.map((p) => <li key={p}>{p}</li>)}</ul>
+          Saving keeps them as written unless you change them here.
+        </div>
+      )}
 
       <section className="panel">
         <h2 className="section-title">General</h2>

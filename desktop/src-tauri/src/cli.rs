@@ -75,29 +75,65 @@ fn run(command: Command) -> i32 {
     }
 }
 
-/// `doctor`: every health check on this machine, ✓/✗ with fixes; exit 1 if an essential one
-/// fails. Screens are asked of the running app (they fail when it is not running).
+/// Where `doctor`'s results come from.
+#[derive(Debug, PartialEq)]
+pub enum DoctorSource {
+    /// The running app's own checks (its environment, not this terminal's).
+    App(Vec<crate::types::Check>),
+    /// The app runs but has not finished its first checks.
+    NotYet,
+    /// Run them here; the note says why.
+    Here(String),
+}
+
+/// Decides from the app's answer to `{"cmd":"checks"}`.
+pub fn doctor_source(reply: std::io::Result<ControlReply>) -> DoctorSource {
+    use std::io::ErrorKind::{ConnectionRefused, NotFound};
+    match reply {
+        Ok(ControlReply { ok: true, checks: Some(c), .. }) => DoctorSource::App(c),
+        Ok(ControlReply { ok: true, .. }) => DoctorSource::NotYet,
+        Err(e) if matches!(e.kind(), NotFound | ConnectionRefused) => {
+            DoctorSource::Here("Vitality isn't running: judging from this terminal's environment.".into())
+        }
+        _ => DoctorSource::Here(
+            "The running app did not give its checks (an older version? restart it): judging from this terminal's environment.".into(),
+        ),
+    }
+}
+
+/// `doctor`: every health check with ✓/✗ and fixes; exit 1 if an essential one fails. When the
+/// app is running these are its own results (its session, not this terminal's: `doctor` over
+/// SSH has no display); otherwise they are run here.
 fn doctor() -> i32 {
     use crate::activity::{EvdevInput, SystemDevices};
-    use crate::health::{report, MachineEnv};
+    use crate::health::{report, Device, MachineEnv};
     use crate::settings::{Settings, SystemdUnit};
     let paths = Paths::from_env();
-    let settings = Settings::load(&paths.settings);
-    let socket = paths.socket.clone();
-    let screens = move || match control::request(&socket, &ControlRequest::Screens) {
-        Ok(ControlReply { screens: Some(view), .. }) => Ok(view.screens),
-        _ => Err("Vitality isn't running, so its screens are not open".to_string()),
-    };
-    let input = std::sync::Arc::new(EvdevInput::start(Box::new(SystemDevices), std::time::Duration::from_secs(3600)));
-    let env = MachineEnv::new(input, Box::new(screens), paths.captures.clone(), Box::new(SystemdUnit));
-    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("vitality-client: {e}");
+    let checks = match doctor_source(control::request(&paths.socket, &ControlRequest::Checks)) {
+        DoctorSource::App(checks) => {
+            println!("(results from the running app)");
+            checks
+        }
+        DoctorSource::NotYet => {
+            println!("Vitality is starting and has not finished its first checks; try again in a few seconds.");
             return 1;
         }
+        DoctorSource::Here(note) => {
+            println!("({note})");
+            let settings = Settings::load(&paths.settings);
+            let screens = || Err("Vitality isn't running, so its screens are not open".to_string());
+            let input = std::sync::Arc::new(EvdevInput::start(Box::new(SystemDevices), std::time::Duration::from_secs(3600)));
+            let env = MachineEnv::new(input, Box::new(screens), paths.captures.clone(), std::sync::Arc::new(SystemdUnit));
+            let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("vitality-client: {e}");
+                    return 1;
+                }
+            };
+            runtime.block_on(crate::health::checks(&env, &settings, Device::Probe))
+        }
     };
-    let checks = runtime.block_on(crate::health::checks(&env, &settings));
     let (text, code) = report(&checks);
     print!("{text}");
     code
@@ -184,6 +220,20 @@ mod tests {
         assert!(parse(&args(&["status", "now"])).is_err());
         assert!(parse(&args(&["record"])).is_err());
         assert_eq!(main(&args(&["record"])), 2);
+    }
+
+    #[test]
+    fn doctor_reports_the_apps_checks_when_it_runs() {
+        use std::io::{Error, ErrorKind};
+        let checks = vec![crate::types::samples_page::check("input_access", true, true, "Keyboard and mouse", "ok", None)];
+        let reply = ControlReply { ok: true, checks: Some(checks.clone()), ..ControlReply::default() };
+        assert_eq!(doctor_source(Ok(reply)), DoctorSource::App(checks));
+        assert_eq!(doctor_source(Ok(ControlReply { ok: true, ..ControlReply::default() })), DoctorSource::NotYet);
+        for kind in [ErrorKind::NotFound, ErrorKind::ConnectionRefused] {
+            assert!(matches!(doctor_source(Err(Error::from(kind))), DoctorSource::Here(n) if n.starts_with("Vitality isn't running")));
+        }
+        let old_app = ControlReply { ok: false, error: Some("bad request".into()), ..ControlReply::default() };
+        assert!(matches!(doctor_source(Ok(old_app)), DoctorSource::Here(n) if n.contains("older version")));
     }
 
     #[test]

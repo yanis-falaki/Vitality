@@ -1,7 +1,7 @@
 //! The Tauri commands the interface calls (typed in `ui/src/core.ts`): `status`, `pause`,
 //! `resume`, `status_page`, `screens_list`, `screens_add`, `screens_repick`, `screens_rename`,
 //! `screens_remove`, `screen_preview`, `settings_get`, `settings_save`, `free_up_space`,
-//! `how_it_works`, `checks`, `checks_run`. Each is a thin call into the `Core`; errors come back
+//! `how_it_works`, `checks`, `checks_run`, `server_test`, `setup_finish`. Each is a thin call into the `Core`; errors come back
 //! as their message. The `state-changed` event is sent by the app (see `app.rs`).
 
 use std::sync::Arc;
@@ -11,8 +11,8 @@ use tauri::State;
 
 use crate::runtime::Core;
 use crate::state::PauseFor;
-use crate::health::{self, MachineEnv};
-use crate::settings::{FieldError, Settings, StartAtLogin, SystemdUnit};
+use crate::health::service::HealthService;
+use crate::settings::{FieldError, Settings, StartAtLogin};
 use crate::types::{Check, Freed, RuleText, ScreenId, ScreensView, StatusPage, StatusView};
 
 type CoreState<'a> = State<'a, Arc<Core>>;
@@ -48,16 +48,19 @@ pub fn screens_list(core: CoreState<'_>) -> ScreensView {
 }
 
 #[tauri::command]
-pub async fn screens_add(core: CoreState<'_>) -> Result<ScreensView, String> {
+pub async fn screens_add(core: CoreState<'_>, app: App<'_>) -> Result<ScreensView, String> {
     let added = core.screens.add().await;
     core.notify_changed();
+    app.health.refresh_soon();
     added.map_err(|e| e.to_string())?;
     Ok(core.screens.view())
 }
 
 #[tauri::command]
-pub async fn screens_repick(core: CoreState<'_>, id: ScreenId) -> Result<ScreensView, String> {
-    core.screens.repick(&id).await.map_err(|e| e.to_string())?;
+pub async fn screens_repick(core: CoreState<'_>, app: App<'_>, id: ScreenId) -> Result<ScreensView, String> {
+    let picked = core.screens.repick(&id).await;
+    app.health.refresh_soon();
+    picked.map_err(|e| e.to_string())?;
     core.forget_screen(&id); // a new share: its next shot is a fresh start
     Ok(core.screens.view())
 }
@@ -70,8 +73,9 @@ pub fn screens_rename(core: CoreState<'_>, id: ScreenId, name: String) -> Result
 
 /// Async so the share is closed on the runtime, not on the interface's thread.
 #[tauri::command]
-pub async fn screens_remove(core: CoreState<'_>, id: ScreenId) -> Result<ScreensView, String> {
+pub async fn screens_remove(core: CoreState<'_>, app: App<'_>, id: ScreenId) -> Result<ScreensView, String> {
     core.screens.remove(&id).map_err(|e| e.to_string())?;
+    app.health.refresh_soon();
     core.forget_screen(&id);
     Ok(core.screens.view())
 }
@@ -86,20 +90,33 @@ pub async fn screen_preview(core: CoreState<'_>, id: ScreenId) -> Result<Option<
 
 /// What the Settings and Setup commands need besides the core.
 pub struct AppState {
-    pub settings: std::sync::Mutex<Settings>,
+    /// The settings the app runs with (shared with the health checks).
+    pub settings: Arc<std::sync::Mutex<Settings>>,
     pub settings_path: std::path::PathBuf,
-    pub login: Box<dyn StartAtLogin>,
+    pub login: Arc<dyn StartAtLogin>,
+    pub health: Arc<HealthService>,
+    /// One save at a time.
+    pub saving: tokio::sync::Mutex<()>,
 }
 
 type App<'a> = State<'a, AppState>;
 
-#[tauri::command]
-pub fn settings_get(app: App<'_>) -> Settings {
-    app.settings.lock().unwrap().clone()
+/// The settings, and what was wrong in `client.toml` (those fields use their defaults).
+#[derive(serde::Serialize)]
+pub struct SettingsView {
+    pub settings: Settings,
+    pub problems: Vec<String>,
 }
 
-/// The reply of `settings_save`: what is wrong (nothing saved then), or the saved settings and,
-/// if start at login could not be changed, why.
+#[tauri::command]
+pub fn settings_get(app: App<'_>) -> SettingsView {
+    let problems = Settings::load_full(&app.settings_path).problems;
+    SettingsView { settings: app.settings.lock().unwrap().clone(), problems }
+}
+
+/// The reply of `settings_save`: what is wrong (then nothing was saved; `field` is a setting's
+/// name, or "file" when it could not be written), or the saved settings and, if start at login
+/// could not be changed, why.
 #[derive(serde::Serialize)]
 pub struct SaveReply {
     pub errors: Vec<FieldError>,
@@ -107,21 +124,37 @@ pub struct SaveReply {
     pub login_error: Option<String>,
 }
 
+/// Saves settings from the Settings page (each field checked, types included: an empty field is
+/// an error) and applies them. Returns as soon as the file is written; the checks rerun in the
+/// background.
 #[tauri::command]
-pub async fn settings_save(core: CoreState<'_>, app: App<'_>, settings: Settings) -> Result<SaveReply, String> {
-    let errors = settings.validate();
+pub async fn settings_save(core: CoreState<'_>, app: App<'_>, settings: serde_json::Value) -> Result<SaveReply, String> {
+    Ok(save(&core, &app, settings).await)
+}
+
+async fn save(core: &Arc<Core>, app: &AppState, value: serde_json::Value) -> SaveReply {
+    let _one = app.saving.lock().await;
+    let current = app.settings.lock().unwrap().clone();
+    let (settings, errors) = Settings::from_fields(|k| value.get(k).cloned());
     if !errors.is_empty() {
-        return Ok(SaveReply { errors, settings: app.settings.lock().unwrap().clone(), login_error: None });
+        return SaveReply { errors, settings: current, login_error: None };
     }
-    settings.save(&app.settings_path)?;
-    let login_error = match app.login.enabled() {
-        Ok(on) if on == settings.start_at_login => None,
-        _ => app.login.set(settings.start_at_login).err(),
+    let path = app.settings_path.clone();
+    let to_save = settings.clone();
+    let written = tauri::async_runtime::spawn_blocking(move || to_save.save(&path)).await.map_err(|e| e.to_string()).and_then(|r| r);
+    if let Err(message) = written {
+        return SaveReply { errors: vec![FieldError { field: "file".into(), message }], settings: current, login_error: None };
+    }
+    let login_error = if settings.start_at_login != current.start_at_login {
+        let (login, on) = (app.login.clone(), settings.start_at_login);
+        tauri::async_runtime::spawn_blocking(move || login.set(on)).await.map_err(|e| e.to_string()).and_then(|r| r).err()
+    } else {
+        None
     };
     core.apply_settings(&settings);
     *app.settings.lock().unwrap() = settings.clone();
-    refresh_checks(core.inner().clone(), settings.clone(), None).await;
-    Ok(SaveReply { errors: vec![], settings, login_error })
+    app.health.refresh_soon();
+    SaveReply { errors: vec![], settings, login_error }
 }
 
 /// Deletes the local copies of interactions already uploaded.
@@ -144,36 +177,36 @@ pub fn how_it_works(app: App<'_>) -> Vec<RuleText> {
     crate::policy::explain::explain(&app.settings.lock().unwrap().policy())
 }
 
-/// The health checks as last run (run now if they never were).
+/// The health checks as last run; null until the first run (after the saved screens reopened).
 #[tauri::command]
-pub async fn checks(core: CoreState<'_>, app: App<'_>) -> Result<Vec<Check>, String> {
-    let cached = core.checks();
-    if !cached.is_empty() {
-        return Ok(cached);
-    }
-    let settings = app.settings.lock().unwrap().clone();
-    Ok(refresh_checks(core.inner().clone(), settings, None).await)
+pub fn checks(core: CoreState<'_>) -> Option<Vec<Check>> {
+    core.checks()
 }
 
-/// Runs the checks now; with `server`, the server parts test that address instead (Setup's
-/// Test button) and the result is not kept.
+/// Runs the checks now, probing the server for this device too.
 #[tauri::command]
-pub async fn checks_run(core: CoreState<'_>, app: App<'_>, server: Option<String>) -> Result<Vec<Check>, String> {
-    let settings = app.settings.lock().unwrap().clone();
-    Ok(refresh_checks(core.inner().clone(), settings, server).await)
+pub async fn checks_run(app: App<'_>) -> Result<Vec<Check>, String> {
+    Ok(app.health.refresh(true).await)
 }
 
-/// Runs the checks on this machine (kept in the core unless `server` overrides the address).
-pub async fn refresh_checks(core: Arc<Core>, mut settings: Settings, server: Option<String>) -> Vec<Check> {
-    let keep = server.is_none();
-    if let Some(s) = server {
-        settings.server = s;
+/// Setup's Test: saves `server` as the address (if it changed), then runs the checks with the
+/// device probe. Errors are the address's.
+#[tauri::command]
+pub async fn server_test(core: CoreState<'_>, app: App<'_>, server: String) -> Result<Vec<Check>, String> {
+    let mut value = serde_json::to_value(app.settings.lock().unwrap().clone()).map_err(|e| e.to_string())?;
+    if value["server"] != server.as_str() {
+        value["server"] = server.into();
+        let reply = save(&core, &app, value).await;
+        if let Some(e) = reply.errors.first() {
+            return Err(e.message.clone());
+        }
     }
-    let screens = core.screens.clone();
-    let env = MachineEnv::new(core.input.clone(), Box::new(move || Ok(screens.statuses())), core.store.root().to_path_buf(), Box::new(SystemdUnit));
-    let checks = health::checks(&env, &settings).await;
-    if keep {
-        core.set_checks(checks.clone());
-    }
-    checks
+    Ok(app.health.refresh(true).await)
+}
+
+/// Setup's Done: remembered, so Setup is shown again only when an essential check fails.
+#[tauri::command]
+pub async fn setup_finish(core: CoreState<'_>) -> Result<StatusView, String> {
+    core.finish_setup().await;
+    Ok(core.status())
 }

@@ -1,19 +1,23 @@
 //! The health checks (spec §8): one list behind Setup, Status and `vitality-client doctor`.
 //!
-//! `checks(env, settings)` runs them all through `HealthEnv` (the machine, so tests use fakes)
-//! and returns `Check`s in a fixed order, each with a fix text when it fails:
-//! `input_access`, `desktop_session`, `portal_available`, `screens_open` (the essential ones:
-//! Setup is shown while one fails), then the server in three parts, `tailscale` (running, and
-//! this device's name), `server_health` (`GET /health` answers 200) and `device_accepted` (a
-//! `POST /interactions` with an empty body: 403 = this device is not accepted, 411/422 =
-//! accepted; nothing is stored either way), then `disk_space` and `start_at_login`.
+//! `checks(env, settings, device)` runs them all through `HealthEnv` (the machine, so tests use
+//! fakes) and returns `Check`s in a fixed order, each with a fix text when it fails:
+//! `input_access`, `desktop_session`, `portal_available` (essential: Setup is shown while one
+//! fails), `screens_open` (essential only while no screen is set up; a configured screen that
+//! is not live is a warning), then the server in three parts: `tailscale` (running, and this
+//! device's name; 3 s at most), `server_health` (`GET /health` answers 200) and
+//! `device_accepted` (a `POST /interactions` with an empty body: 422 = accepted, 403 = not
+//! accepted, anything else = cannot tell; nothing is stored). That probe is logged on the
+//! server, so it runs only when `device` is `Probe` (Setup's Test, app start, a new server);
+//! otherwise the last result is passed in (`Reuse`). Then `disk_space` and `start_at_login`
+//! (also: enabled but the session never starts `graphical-session.target`).
 //! With no server set, the three server parts are one `server` check that passes.
 //! `report(checks)` is `doctor`'s text and exit code. `MachineEnv` is the real environment.
 
 use async_trait::async_trait;
 
 use crate::activity::Access;
-use crate::settings::{Settings, StartAtLogin};
+use crate::settings::{Settings, StartAtLogin, NOT_INSTALLED};
 use crate::types::{Check, ScreenState, ScreenStatus};
 
 pub const INPUT_FIX: &str = "Run `sudo usermod -aG input $USER`, then log out and in again.";
@@ -43,18 +47,26 @@ pub trait HealthEnv: Send + Sync {
     async fn get(&self, url: &str) -> Result<u16, String>;
     async fn post_empty(&self, url: &str) -> Result<u16, String>;
     fn disk_free(&self) -> Option<u64>;
-    fn start_at_login(&self) -> &dyn StartAtLogin;
+    /// The service's state and whether the session starts `graphical-session.target`.
+    async fn login(&self) -> (Result<bool, String>, Option<bool>);
+}
+
+/// Whether to probe the server for this device's acceptance, or reuse an earlier result.
+pub enum Device {
+    Probe,
+    Reuse(Option<Check>),
 }
 
 fn check(id: &str, ok: bool, essential: bool, title: &str, detail: String, fix: Option<String>) -> Check {
     Check { id: id.into(), ok, essential, title: title.into(), detail, fix: if ok { None } else { fix } }
 }
 
-pub async fn checks(env: &dyn HealthEnv, settings: &Settings) -> Vec<Check> {
-    let mut out = vec![input_access(env), desktop_session(env), portal_available(env).await, screens_open(env)];
-    out.extend(server(env, settings).await);
+pub async fn checks(env: &dyn HealthEnv, settings: &Settings, device: Device) -> Vec<Check> {
+    let (portal, server, login) = tokio::join!(portal_available(env), server(env, settings, device), start_at_login(env, settings));
+    let mut out = vec![input_access(env), desktop_session(env), portal, screens_open(env)];
+    out.extend(server);
     out.push(disk_space(env, settings));
-    out.push(start_at_login(env, settings));
+    out.push(login);
     out
 }
 
@@ -114,6 +126,7 @@ fn screens_open(env: &dyn HealthEnv) -> Check {
     match env.screens() {
         Err(why) => check("screens_open", false, true, title, why, Some("Start Vitality: `systemctl --user start vitality-client`.".into())),
         Ok(s) if s.is_empty() => check("screens_open", false, true, title, "no screen set up".into(), Some("Open Screens and add a screen.".into())),
+        // A configured screen that is not live is a warning (Status, tray), not Setup.
         Ok(s) => {
             let stuck: Vec<&str> = s.iter().filter(|x| x.state != ScreenState::Live).map(|x| x.name.as_str()).collect();
             if stuck.is_empty() {
@@ -122,24 +135,25 @@ fn screens_open(env: &dyn HealthEnv) -> Check {
             } else {
                 let names = stuck.join(", ");
                 let verb = if stuck.len() == 1 { "is" } else { "are" };
-                check("screens_open", false, true, title, format!("{names} {verb} not live"), Some(format!("Open Screens and pick {names} again.")))
+                check("screens_open", false, false, title, format!("{names} {verb} not live"), Some(format!("Open Screens and pick {names} again.")))
             }
         }
     }
 }
 
-async fn server(env: &dyn HealthEnv, settings: &Settings) -> Vec<Check> {
+async fn server(env: &dyn HealthEnv, settings: &Settings, device: Device) -> Vec<Check> {
     let Some(server) = settings.server() else {
         return vec![check("server", true, false, "Server", "no server set: captures stay on this machine".into(), None)];
     };
-    let ts = env.tailscale().await;
-    let device = ts.as_ref().ok().and_then(|t| t.device.clone());
+    let health_url = format!("{server}/health");
+    let (ts, health) = tokio::join!(env.tailscale(), env.get(&health_url));
+    let device_name = ts.as_ref().ok().and_then(|t| t.device.clone());
     let tailscale = match &ts {
-        Ok(t) if t.running => check("tailscale", true, false, "Tailscale", format!("running{}", device.as_ref().map(|d| format!(" as \"{d}\"")).unwrap_or_default()), None),
+        Ok(t) if t.running => check("tailscale", true, false, "Tailscale", format!("running{}", device_name.as_ref().map(|d| format!(" as \"{d}\"")).unwrap_or_default()), None),
         Ok(t) => check("tailscale", false, false, "Tailscale", format!("not running ({})", t.state), Some("Start Tailscale: `sudo tailscale up`.".into())),
         Err(why) => check("tailscale", false, false, "Tailscale", why.clone(), Some("Install and start Tailscale (`sudo systemctl enable --now tailscaled`, then `sudo tailscale up`).".into())),
     };
-    let health = match env.get(&format!("{server}/health")).await {
+    let health = match health {
         Ok(200) => check("server_health", true, false, "Server answers", format!("{server} is up"), None),
         Ok(code) => check("server_health", false, false, "Server answers", format!("{server}/health answered {code}"), Some("Check the server (`vitality-server status` on it).".into())),
         Err(why) => check(
@@ -151,9 +165,20 @@ async fn server(env: &dyn HealthEnv, settings: &Settings) -> Vec<Check> {
             Some("Check the address, and that this machine and the server are on the same tailnet.".into()),
         ),
     };
-    let name = device.clone().unwrap_or_else(crate::upload::device_name);
-    let accepted = match env.post_empty(&format!("{server}{}", crate::upload::INTERACTIONS_PATH)).await {
-        Ok(411 | 422) => check("device_accepted", true, false, "This device accepted", format!("the server accepts \"{name}\""), None),
+    let name = device_name.clone().unwrap_or_else(crate::upload::device_name);
+    let probe = match device {
+        Device::Reuse(previous) => {
+            let reused = previous.unwrap_or_else(|| {
+                check("device_accepted", false, false, "This device accepted", "not tested yet".into(), Some("Test the server in Setup.".into()))
+            });
+            return vec![tailscale, health, reused];
+        }
+        Device::Probe => env.post_empty(&format!("{server}{}", crate::upload::INTERACTIONS_PATH)).await,
+    };
+    // Only 422 proves the device passed: the server checks the size headers (411, 413) before
+    // the device (403), and the body (422) after.
+    let accepted = match probe {
+        Ok(422) => check("device_accepted", true, false, "This device accepted", format!("the server accepts \"{name}\""), None),
         Ok(403) => check(
             "device_accepted",
             false,
@@ -162,7 +187,14 @@ async fn server(env: &dyn HealthEnv, settings: &Settings) -> Vec<Check> {
             format!("the server does not accept \"{name}\""),
             Some(format!("On the server, add \"{name}\" to allowed_clients.")),
         ),
-        Ok(code) => check("device_accepted", false, false, "This device accepted", format!("the server answered {code}"), Some("Check the server's log.".into())),
+        Ok(code) => check(
+            "device_accepted",
+            false,
+            false,
+            "This device accepted",
+            format!("cannot tell: the server answered {code}"),
+            Some("Test again; if it stays, check the server's log.".into()),
+        ),
         Err(why) => check("device_accepted", false, false, "This device accepted", format!("not tested: {why}"), Some("Make the server reachable first.".into())),
     };
     vec![tailscale, health, accepted]
@@ -187,21 +219,25 @@ fn disk_space(env: &dyn HealthEnv, settings: &Settings) -> Check {
     }
 }
 
-fn start_at_login(env: &dyn HealthEnv, settings: &Settings) -> Check {
+async fn start_at_login(env: &dyn HealthEnv, settings: &Settings) -> Check {
     let title = "Start at login";
-    match env.start_at_login().enabled() {
-        Ok(on) if on == settings.start_at_login => {
-            check("start_at_login", true, false, title, if on { "on".into() } else { "off, as set".into() }, None)
-        }
-        Ok(on) => check(
-            "start_at_login",
+    let id = "start_at_login";
+    let (enabled, target) = env.login().await;
+    match (settings.start_at_login, enabled) {
+        (false, Ok(false)) => check(id, true, false, title, "off, as set".into(), None),
+        (false, Err(why)) if why.starts_with(NOT_INSTALLED) => check(id, true, false, title, "off, as set (the service is not installed)".into(), None),
+        (false, Ok(true)) => check(id, false, false, title, "the service is on but the setting says off".into(), Some("Turn Start at login on and off again (in Settings) to apply it.".into())),
+        (true, Ok(true)) if target == Some(false) => check(
+            id,
             false,
             false,
             title,
-            format!("the service is {} but the setting says {}", if on { "on" } else { "off" }, if settings.start_at_login { "on" } else { "off" }),
-            Some("Turn Start at login off and on again (in Settings) to apply it.".into()),
+            "the service is on, but this session does not start graphical-session.target, so it will not start at login".into(),
+            Some("Start Vitality from your compositor or desktop's autostart instead; on Hyprland, for example: `exec-once = systemctl --user start vitality-client`.".into()),
         ),
-        Err(why) => check("start_at_login", false, false, title, why, Some("Start Vitality from your desktop's autostart instead.".into())),
+        (true, Ok(true)) => check(id, true, false, title, "on".into(), None),
+        (true, Ok(false)) => check(id, false, false, title, "the service is off but the setting says on".into(), Some("Turn Start at login off and on again (in Settings) to apply it.".into())),
+        (_, Err(why)) => check(id, false, false, title, why, Some("Start Vitality from your desktop's autostart instead.".into())),
     }
 }
 
@@ -234,7 +270,7 @@ pub struct MachineEnv {
     pub input: std::sync::Arc<dyn crate::activity::InputSource>,
     pub screens: Box<dyn Fn() -> Result<Vec<ScreenStatus>, String> + Send + Sync>,
     pub captures: std::path::PathBuf,
-    pub login: Box<dyn StartAtLogin>,
+    pub login: std::sync::Arc<dyn StartAtLogin>,
     http: reqwest::Client,
 }
 
@@ -243,7 +279,7 @@ impl MachineEnv {
         input: std::sync::Arc<dyn crate::activity::InputSource>,
         screens: Box<dyn Fn() -> Result<Vec<ScreenStatus>, String> + Send + Sync>,
         captures: std::path::PathBuf,
-        login: Box<dyn StartAtLogin>,
+        login: std::sync::Arc<dyn StartAtLogin>,
     ) -> MachineEnv {
         let http = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -260,8 +296,21 @@ impl MachineEnv {
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait ScreenCastPortal {
-    #[zbus(property)]
+    /// The portal names its property in lower case (`version`), not zbus's default `Version`.
+    #[zbus(property, name = "version")]
     fn version(&self) -> zbus::Result<u32>;
+}
+
+/// The ScreenCast portal's version over `conn` (5 s at most).
+pub async fn portal_version(conn: &zbus::Connection) -> Result<u32, String> {
+    let ask = async {
+        let proxy = ScreenCastPortalProxy::new(conn).await.map_err(|e| e.to_string())?;
+        proxy.version().await.map_err(|e| format!("no ScreenCast portal on the session bus ({e})"))
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(5), ask).await {
+        Ok(r) => r,
+        Err(_) => Err("the screen-share portal did not answer within 5 s".into()),
+    }
 }
 
 #[async_trait]
@@ -279,14 +328,11 @@ impl HealthEnv for MachineEnv {
     }
 
     async fn portal(&self) -> Result<u32, String> {
-        let conn = zbus::Connection::session().await.map_err(|e| format!("no session D-Bus: {e}"))?;
-        let proxy = ScreenCastPortalProxy::new(&conn).await.map_err(|e| e.to_string())?;
-        // The portal may be started on demand; give up after 5 s rather than D-Bus's 2 min.
-        match tokio::time::timeout(std::time::Duration::from_secs(5), proxy.version()).await {
-            Ok(Ok(v)) => Ok(v),
-            Ok(Err(e)) => Err(format!("no ScreenCast portal on the session bus ({e})")),
-            Err(_) => Err("the screen-share portal did not answer within 5 s".into()),
-        }
+        let conn = tokio::time::timeout(std::time::Duration::from_secs(5), zbus::Connection::session())
+            .await
+            .map_err(|_| "the session D-Bus did not answer within 5 s".to_string())?
+            .map_err(|e| format!("no session D-Bus: {e}"))?;
+        portal_version(&conn).await
     }
 
     fn screens(&self) -> Result<Vec<ScreenStatus>, String> {
@@ -294,13 +340,17 @@ impl HealthEnv for MachineEnv {
     }
 
     async fn tailscale(&self) -> Result<Tailscale, String> {
-        let out = tokio::process::Command::new("tailscale").args(["status", "--json"]).output().await.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                "Tailscale is not installed".to_string()
-            } else {
-                format!("cannot run tailscale: {e}")
-            }
-        })?;
+        let run = tokio::process::Command::new("tailscale").args(["status", "--json"]).kill_on_drop(true).output();
+        let out = tokio::time::timeout(std::time::Duration::from_secs(3), run)
+            .await
+            .map_err(|_| "tailscale did not answer within 3 s".to_string())?
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    "Tailscale is not installed".to_string()
+                } else {
+                    format!("cannot run tailscale: {e}")
+                }
+            })?;
         parse_tailscale(&out.stdout)
     }
 
@@ -317,8 +367,11 @@ impl HealthEnv for MachineEnv {
         crate::paths::free_bytes(&self.captures)
     }
 
-    fn start_at_login(&self) -> &dyn StartAtLogin {
-        self.login.as_ref()
+    async fn login(&self) -> (Result<bool, String>, Option<bool>) {
+        let login = self.login.clone();
+        tokio::task::spawn_blocking(move || (login.enabled(), login.session_target_active()))
+            .await
+            .unwrap_or_else(|e| (Err(e.to_string()), None))
     }
 }
 
@@ -347,28 +400,35 @@ pub fn parse_tailscale(json: &[u8]) -> Result<Tailscale, String> {
     Ok(Tailscale { running: state == "Running", device, state })
 }
 
-/// Whether this user belongs to `group` (by the group database).
+/// Whether this user belongs to `group` in the user database (NSS: files, sssd, userdb…),
+/// primary group included; a new membership shows here before the session has it.
 fn in_group(group: &str) -> bool {
     let Ok(name) = std::ffi::CString::new(group) else { return false };
-    // SAFETY: getgrnam returns a pointer into static storage or null; read at once.
-    let gid = unsafe {
+    // SAFETY: getgrnam and getpwuid return pointers into static storage or null, read at once;
+    // getgrouplist fills a buffer of the size it is given.
+    unsafe {
         let g = libc::getgrnam(name.as_ptr());
         if g.is_null() {
             return false;
         }
-        (*g).gr_gid
-    };
-    let user = std::env::var("USER").unwrap_or_default();
-    std::fs::read_to_string("/etc/group")
-        .map(|t| {
-            t.lines().any(|l| {
-                let f: Vec<&str> = l.split(':').collect();
-                f.len() >= 4 && f[2].parse::<u32>().ok() == Some(gid) && f[3].split(',').any(|m| m == user)
-            })
-        })
-        .unwrap_or(false)
-        || unsafe { libc::getegid() } == gid
+        let gid = (*g).gr_gid;
+        let pw = libc::getpwuid(libc::getuid());
+        if pw.is_null() {
+            return false;
+        }
+        let mut groups = vec![0 as libc::gid_t; 256];
+        let mut n = groups.len() as libc::c_int;
+        if libc::getgrouplist((*pw).pw_name, (*pw).pw_gid, groups.as_mut_ptr(), &mut n) < 0 {
+            groups.resize(n.max(0) as usize, 0);
+            if libc::getgrouplist((*pw).pw_name, (*pw).pw_gid, groups.as_mut_ptr(), &mut n) < 0 {
+                return false;
+            }
+        }
+        groups[..n.max(0) as usize].contains(&gid)
+    }
 }
+
+pub mod service;
 
 #[cfg(test)]
 mod tests;

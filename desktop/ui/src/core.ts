@@ -62,6 +62,10 @@ export interface StatusView {
   screens_live: number;
   /** Names of the screens to pick again, or stopped. */
   screens_attention: string[];
+  /** Failing health checks, "title: detail". */
+  health_warnings: string[];
+  /** Setup has been finished once (else this is the first run). */
+  setup_done: boolean;
   input: "ok" | "no_devices" | "permission_denied";
 }
 
@@ -123,7 +127,13 @@ export interface FieldError {
   message: string;
 }
 
-/** `settings_save`'s reply: errors (nothing saved), or the saved settings; `login_error` if start at login could not change. */
+/** `settings_get`'s reply: the settings, and what was wrong in client.toml (those fields use their defaults). */
+export interface SettingsView {
+  settings: Settings;
+  problems: string[];
+}
+
+/** `settings_save`'s reply: errors (nothing saved; `field` is a setting or "file"), or the saved settings; `login_error` if start at login could not change. */
 export interface SaveReply {
   errors: FieldError[];
   settings: Settings;
@@ -152,14 +162,19 @@ export const core = {
   screensRepick: (id: ScreenId) => invoke<ScreensView>("screens_repick", { id }),
   screensRename: (id: ScreenId, name: string) => invoke<ScreensView>("screens_rename", { id, name }),
   screensRemove: (id: ScreenId) => invoke<ScreensView>("screens_remove", { id }),
-  settingsGet: () => invoke<Settings>("settings_get"),
+  settingsGet: () => invoke<SettingsView>("settings_get"),
+  /** Each field is checked by the core (an empty number arrives as null and is an error). */
   settingsSave: (settings: Settings) => invoke<SaveReply>("settings_save", { settings }),
   freeUpSpace: () => invoke<Freed>("free_up_space"),
   howItWorks: () => invoke<RuleText[]>("how_it_works"),
-  /** The health checks as last run. */
-  checks: () => invoke<Check[]>("checks"),
-  /** Runs them now; with `server`, the server parts test that address (not saved). */
-  checksRun: (server: string | null) => invoke<Check[]>("checks_run", { server }),
+  /** The health checks as last run; null until the first run (after the saved screens reopened). */
+  checks: () => invoke<Check[] | null>("checks"),
+  /** Runs them now, probing the server for this device too. */
+  checksRun: () => invoke<Check[]>("checks_run"),
+  /** Setup's Test: saves the address if it changed, then runs the checks with the device probe. */
+  serverTest: (server: string) => invoke<Check[]>("server_test", { server }),
+  /** Setup's Done (remembered). */
+  setupFinish: () => invoke<StatusView>("setup_finish"),
   /** A `data:image/jpeg` URL of the screen's newest frame, about 480 px wide, or null. */
   screenPreview: (id: ScreenId) => invoke<string | null>("screen_preview", { id }),
 };
