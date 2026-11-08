@@ -1,4 +1,6 @@
-//! The app: one instance per session (a second start shows the first one's window and exits),
+//! The app: one instance per session (a second start shows the first one's window and exits;
+//! the installed app started outside its service, as from the app launcher, starts the service
+//! instead and shows its window, so the copy that runs is always the supervised one),
 //! the core with the real input, portal and frames, the control socket, the tray icon,
 //! and the window (hidden at start unless no screen is set up; closing it only hides it).
 //!
@@ -15,7 +17,7 @@ use crate::paths::Paths;
 use crate::runtime::{Core, Parts, Runtime};
 use crate::screens::feed::GstFeeds;
 use crate::screens::portal::XdgPortal;
-use crate::settings::Settings;
+use crate::settings::{self, Settings};
 use crate::state::PauseFor;
 use crate::tray::{self, TrayAction};
 use crate::commands::AppState;
@@ -25,6 +27,13 @@ use crate::upload::UploadTimings;
 
 pub fn run() {
     let paths = Paths::from_env();
+    let exe = std::env::current_exe().unwrap_or_default();
+    if settings::hand_to_service(&exe, SystemdUnit.running_as_service()) {
+        match SystemdUnit::start() {
+            Ok(()) => return show_when_up(&paths.socket),
+            Err(why) => eprintln!("vitality-client: {why}; running without the service"),
+        }
+    }
     let _instance = match control::lock_instance(&paths.socket) {
         Ok(lock) => lock,
         Err(_) => {
@@ -160,4 +169,16 @@ fn show(handle: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+
+/// Asks the running app to show its window, waiting up to 10 s for its socket to answer.
+fn show_when_up(socket: &std::path::Path) {
+    for _ in 0..50 {
+        if control::request(socket, &ControlRequest::Show).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    eprintln!("vitality-client: the service started but did not answer; see `journalctl --user -u vitality-client`");
 }

@@ -23,6 +23,10 @@ logins when Start at login is on):
 systemctl --user enable --now vitality-client
 ```
 
+The installed app always runs as this service: opened from the launcher (or `vitality-client`
+with no arguments) outside it, it starts the service, or finds it running, and shows its window.
+A copy run from source runs on its own.
+
 On **Hyprland** (or any session that does not start `graphical-session.target`, i.e. without
 uwsm), add to `~/.config/hypr/hyprland.conf`:
 

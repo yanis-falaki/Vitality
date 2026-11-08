@@ -267,6 +267,16 @@ pub trait StartAtLogin: Send + Sync {
     fn running_as_service(&self) -> bool;
 }
 
+/// Where the package installs the app; the service runs this file.
+pub const INSTALLED_EXE: &str = "/usr/bin/vitality-client";
+
+/// Whether starting the app from `exe` should hand over to the service instead (the
+/// installed app, started outside the service, e.g. from the app launcher), so that one copy
+/// runs, supervised, however it was started. A copy run from source runs on its own.
+pub fn hand_to_service(exe: &Path, as_service: bool) -> bool {
+    !as_service && exe == Path::new(INSTALLED_EXE)
+}
+
 /// The start of `enabled()`'s error when the service is not installed.
 pub const NOT_INSTALLED: &str = "the service is not installed";
 
@@ -316,6 +326,16 @@ pub fn in_unit_cgroup(cgroup: &str) -> bool {
 }
 
 impl SystemdUnit {
+    /// `systemctl --user start vitality-client.service` (nothing changes if it is running).
+    pub fn start() -> Result<(), String> {
+        let out = std::process::Command::new("systemctl").args(["--user", "start", SERVICE]).output().map_err(missing)?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!("systemctl --user start {SERVICE} failed: {}", String::from_utf8_lossy(&out.stderr).trim()))
+        }
+    }
+
     fn is_active(unit: &str) -> Option<bool> {
         let out = std::process::Command::new("systemctl").args(["--user", "is-active", unit]).output().ok()?;
         match String::from_utf8_lossy(&out.stdout).trim() {
@@ -466,6 +486,14 @@ pub mod tests {
     fn the_service_is_recognised_from_its_cgroup() {
         assert!(in_unit_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/vitality-client.service\n"));
         assert!(!in_unit_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-hyprland.scope\n"));
+    }
+
+    #[test]
+    fn only_the_installed_app_started_outside_the_service_hands_over() {
+        let installed = Path::new(INSTALLED_EXE);
+        assert!(hand_to_service(installed, false), "from the app launcher");
+        assert!(!hand_to_service(installed, true), "the service itself runs the app");
+        assert!(!hand_to_service(Path::new("/home/me/Vitality/desktop/target/debug/vitality-client"), false), "from source");
     }
 
     #[test]
