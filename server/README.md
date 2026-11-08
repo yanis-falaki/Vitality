@@ -40,7 +40,7 @@ disk: 19.7 GB free
 ```
 
 `status` shows the last time each device uploaded in local time (`HH:MM:SS` for today,
-otherwise the date), and exits 1 if it cannot read the data folder or the index.
+otherwise the date), and exits 1 if it cannot read the data folder.
 
 ## Is it working
 
@@ -65,7 +65,6 @@ restarts it with a fresh mount. One such restart after a Tailscale restart is ex
 In the container, `/data` is `~/vitality-data/server` on the VM:
 
 ```
-index.sqlite                      one row per interaction and per shot
 tmp/                              uploads being written; cleaned at startup
 captures/<client>/                <client> is the Tailscale device name, e.g. laptop
   2026-10-25/17-00-00/            the interaction, named by its UTC start time

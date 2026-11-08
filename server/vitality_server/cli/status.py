@@ -1,7 +1,6 @@
 """`vitality-server status`: what each device has uploaded, and the free disk space."""
 
 import shutil
-import sqlite3
 import sys
 from datetime import datetime
 
@@ -14,25 +13,24 @@ OWNER_HINT = "does VITALITY_UID own the data folder?"
 
 
 def status(config: ServerConfig) -> int:
-    """Print one line per device in the index (sorted by name), then the free disk space;
-    return the exit code.
+    """Print one line per device with stored interactions (sorted by name), then the free disk
+    space; return the exit code.
 
         laptop: 595 interactions · 1835 shots · 201.0 MB · last received 21:30:37
         disk: 19.7 GB free
 
-    Sizes come from the index, not from walking the folders. `last received` is shown in
+    Counts and sizes come from the stored folders. `last received` is shown in
     local time, as `HH:MM:SS` if today, else `YYYY-MM-DD HH:MM`. With nothing stored it prints
     `no interactions stored yet`. Changes nothing on disk.
 
-    Returns 0, or 1 if the data folder or index cannot be read (`cannot read <path>:
+    Returns 0, or 1 if the data folder cannot be read (`cannot read <path>:
     <reason>` on stderr; the free space is still printed where known).
     """
-    index = config.data_dir / "index.sqlite"
     ok = True
     try:
         devices = read_summary(config.data_dir)
-    except (OSError, sqlite3.Error) as exc:
-        print(f"cannot read {index}: {_reason(exc)}", file=sys.stderr)
+    except OSError as exc:
+        print(f"cannot read {exc.filename or config.data_dir}: {_reason(exc)}", file=sys.stderr)
         ok = False
     else:
         now = _now()
@@ -43,7 +41,7 @@ def status(config: ServerConfig) -> int:
     try:
         print(f"disk: {format_bytes(shutil.disk_usage(config.data_dir).free)} free")
     except OSError as exc:
-        if ok:  # the index was read, so say what is wrong with the folder
+        if ok:  # the folders were read, so say what is wrong with the disk
             print(f"cannot read {config.data_dir}: {_reason(exc)}", file=sys.stderr)
             ok = False
     return 0 if ok else 1

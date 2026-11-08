@@ -109,7 +109,7 @@ Everything is plain files under one folder, `~/vitality-data` by default, owned 
 
 ```
 ~/vitality-data/
-  server/      captures/<device>/<day>/<time>/ (the interactions), tmp/, index.sqlite
+  server/      captures/<device>/<day>/<time>/ (the interactions), tmp/
   model/       a git repo (started by ./vitality setup, commit "model: start")
     observations/<device>/<day>/<time>.md   transcript of each interaction (the observer)
     operations/<device>/<day>/<time>.md     the operations in it, each with a confidence (the observer)

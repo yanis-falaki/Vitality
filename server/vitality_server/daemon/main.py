@@ -34,15 +34,14 @@ def serve(config: ServerConfig, *,
     Sets up logging to stderr (INFO), then, in order:
 
         1. Open the store in `config.data_dir`.
-        2. Recover: delete leftover tmp/ folders and index complete interactions the
-           index lacks.
+        2. Recover: delete leftover tmp/ folders and the index older servers kept.
         3. Warn if `allowed_clients` is empty (every upload will then be refused).
         4. Find this machine's Tailscale IPv4 address with `ipv4`; the server listens only
            there, never on every interface.
         5. Serve there, and alongside it, every `check_interval_s` seconds, ask `ipv4` again
            (the watchdog). Serving ends when the server is stopped (a signal), or when the
            watchdog gives up: `failure_limit` failed checks in a row (a success resets the
-           count), or a different address than the one being served. Then close the store.
+           count), or a different address than the one being served.
 
     Why the watchdog: the host's tailscaled deletes and recreates /run/tailscale whenever it
     restarts, which leaves the container's mount of it pointing at the deleted folder, so no
@@ -65,31 +64,28 @@ def serve(config: ServerConfig, *,
         return 1
 
     try:
-        try:
-            recovered = store.recover()
-        except OSError as e:
-            print(f"vitality-server: {e}", file=sys.stderr)
-            return 1
-        if recovered:
-            log.info("recovery indexed %d interactions the index was missing", recovered)
-        if not config.allowed_clients:
-            log.warning("SERVER_ALLOWED_CLIENTS is empty: every upload will be refused")
-        try:
-            ip = asyncio.run(ipv4())
-        except RuntimeError as e:  # never fall back to listening on every interface
-            print(f"vitality-server: cannot find the Tailscale address: {e}", file=sys.stderr)
-            return 1
-        log.info("serving on %s:%d for %s", ip, config.port, ", ".join(config.allowed_clients) or "nobody")
-        uvicorn_config = uvicorn.Config(
-            create_app(store, TailscaleIdentity(), config.allowed_clients),
-            host=ip, port=config.port,
-            proxy_headers=False)  # identity is the socket's address; never a header's
-        server = uvicorn.Server(uvicorn_config)
-        watchdog = _watch_tailscale(ip, ipv4, check_interval_s, failure_limit)
-        return asyncio.run(_serve_until_stopped(server, watchdog),
-                           loop_factory=uvicorn_config.get_loop_factory())
-    finally:
-        store.close()
+        recovered = store.recover()
+    except OSError as e:
+        print(f"vitality-server: {e}", file=sys.stderr)
+        return 1
+    if recovered:
+        log.info("removed %d unfinished uploads left by a crash", recovered)
+    if not config.allowed_clients:
+        log.warning("SERVER_ALLOWED_CLIENTS is empty: every upload will be refused")
+    try:
+        ip = asyncio.run(ipv4())
+    except RuntimeError as e:  # never fall back to listening on every interface
+        print(f"vitality-server: cannot find the Tailscale address: {e}", file=sys.stderr)
+        return 1
+    log.info("serving on %s:%d for %s", ip, config.port, ", ".join(config.allowed_clients) or "nobody")
+    uvicorn_config = uvicorn.Config(
+        create_app(store, TailscaleIdentity(), config.allowed_clients),
+        host=ip, port=config.port,
+        proxy_headers=False)  # identity is the socket's address; never a header's
+    server = uvicorn.Server(uvicorn_config)
+    watchdog = _watch_tailscale(ip, ipv4, check_interval_s, failure_limit)
+    return asyncio.run(_serve_until_stopped(server, watchdog),
+                       loop_factory=uvicorn_config.get_loop_factory())
 
 
 async def _serve_until_stopped(server: uvicorn.Server, watchdog: Coroutine[Any, Any, str]) -> int:

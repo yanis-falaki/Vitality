@@ -1,19 +1,15 @@
 """Implements `InteractionStore` (see interface.py).
 
-Interaction storage on the local filesystem, indexed in SQLite. Besides the Protocol's
-methods, `FileStore` has only its constructor, `FileStore(data_dir, clock=time.time)`; the
-`clock` stamps `received_at` in the index. The layout it writes is described in
-`vitality_server.shared.storage`.
+Interaction storage on the local filesystem: the folders are the whole record. Besides the
+Protocol's methods, `FileStore` has only its constructor, `FileStore(data_dir)`. The layout it
+writes is described in `vitality_server.shared.storage`.
 """
 
 import os
 import shutil
-import sqlite3
 import threading
-import time
 import uuid
-from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -23,52 +19,19 @@ from vitality_protocol.messages import Interaction
 
 from vitality_server.shared.storage.interface import ConflictingUpload, InteractionStore, InvalidUpload
 
-_SHOTS_TABLE = """
-CREATE TABLE IF NOT EXISTS shots (
-    client      TEXT NOT NULL,
-    interaction TEXT NOT NULL,
-    file        TEXT NOT NULL,
-    ts          TEXT NOT NULL,
-    trigger     TEXT NOT NULL CHECK (trigger IN ('activity','manual','passive')),
-    width       INTEGER NOT NULL,
-    height      INTEGER NOT NULL,
-    bytes       INTEGER NOT NULL,
-    screen_name TEXT,
-    PRIMARY KEY (client, interaction, file),
-    FOREIGN KEY (client, interaction) REFERENCES interactions(client, name)
-)"""
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS interactions (
-    client       TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    source       TEXT NOT NULL,
-    start        TEXT NOT NULL,
-    end          TEXT NOT NULL,
-    local_start  TEXT NOT NULL,
-    tz           TEXT NOT NULL,
-    received_at  TEXT NOT NULL,
-    PRIMARY KEY (client, name)
-);
-""" + _SHOTS_TABLE + """;
-CREATE INDEX IF NOT EXISTS idx_shots_ts ON shots(ts);
-"""
+# Older servers kept an index of the folders in SQLite; `recover` deletes it.
+OLD_INDEX_FILES = ("index.sqlite", "index.sqlite-wal", "index.sqlite-shm")
 
 
 class FileStore(InteractionStore):
     """Thread-safe: uploads arrive on a threadpool, so `put` runs one at a time."""
 
-    def __init__(self, data_dir: Path, clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, data_dir: Path) -> None:
         self._data_dir = Path(data_dir)
         self._captures = self._data_dir / "captures"
         self._tmp = self._data_dir / "tmp"
-        self._clock = clock
         self._tmp.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self._data_dir / "index.sqlite", check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        _upgrade_shots_table(self._conn)
-        self._conn.executescript(_SCHEMA)
 
     def put(self, client: str, interaction: Interaction,
             files: Mapping[str, bytes]) -> Literal["new", "existing"]:
@@ -77,7 +40,6 @@ class FileStore(InteractionStore):
         with self._lock:  # the whole of put, so two uploads of one interaction cannot both rename
             if folder.exists():
                 self._check_same(folder, interaction)
-                self._index(client, interaction)  # in case a crash came before indexing
                 return "existing"
             staging = self._tmp / uuid.uuid4().hex
             staging.mkdir(parents=True)
@@ -92,7 +54,6 @@ class FileStore(InteractionStore):
             except BaseException:
                 shutil.rmtree(staging, ignore_errors=True)
                 raise
-            self._index(client, interaction)
             return "new"
 
     def disk_free_bytes(self) -> int:
@@ -100,24 +61,12 @@ class FileStore(InteractionStore):
 
     def recover(self) -> int:
         with self._lock:
-            for leftover in self._tmp.iterdir():
+            leftovers = list(self._tmp.iterdir())
+            for leftover in leftovers:
                 shutil.rmtree(leftover, ignore_errors=True)
-            indexed = 0
-            for path in sorted(self._captures.glob(f"*/*/*/{INTERACTION_FILE}")):
-                client = path.parts[-4]
-                try:
-                    interaction = Interaction.model_validate_json(path.read_text())
-                except (OSError, ValueError, ValidationError):
-                    continue  # unreadable: leave it for a human, do not index it
-                if path.parent != self._captures / client / interaction.name:
-                    continue  # the folder does not match what it says it is
-                if self._index(client, interaction):
-                    indexed += 1
-            return indexed
-
-    def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+            for name in OLD_INDEX_FILES:
+                (self._data_dir / name).unlink(missing_ok=True)
+            return len(leftovers)
 
     def _check_same(self, folder: Path, interaction: Interaction) -> None:
         """Raise ConflictingUpload unless the stored interaction.json says the same thing."""
@@ -130,63 +79,6 @@ class FileStore(InteractionStore):
         if stored != interaction:
             raise ConflictingUpload(
                 f"{interaction.name} is already stored with different content")
-
-    def _index(self, client: str, interaction: Interaction) -> bool:
-        """Add the interaction to the index if absent; whether it was added. Caller holds the lock."""
-        received_at = _format_ts(self._clock())
-        i = interaction.model_dump(mode="json")
-        with self._conn:
-            added = self._conn.execute(
-                "INSERT OR IGNORE INTO interactions "
-                "(client, name, source, start, end, local_start, tz, received_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (client, i["name"], i["source"], i["start"], i["end"], i["local_start"],
-                 i["tz"], received_at),
-            ).rowcount == 1
-            if added:
-                self._conn.executemany(
-                    "INSERT INTO shots (client, interaction, file, ts, trigger, width, height, "
-                    "bytes, screen_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [(client, i["name"], s["file"], s["ts"], s["trigger"], s["width"],
-                      s["height"], s["bytes"], s["screen_name"]) for s in i["shots"]],
-                )
-        return added
-
-
-def _upgrade_shots_table(conn: sqlite3.Connection) -> None:
-    """Rebuild a `shots` table made before passive shots and screen names, keeping its rows.
-
-    Its CHECK would refuse `passive`, and SQLite cannot change a CHECK in place. All in one
-    transaction; rows left in `shots_before_passive` by an older, interrupted upgrade are moved
-    over too.
-    """
-    def table_sql(name: str) -> str | None:
-        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
-        return None if row is None else row[0]
-
-    shots = table_sql("shots")
-    leftover = table_sql("shots_before_passive") is not None
-    if not leftover and (shots is None or "'passive'" in shots):
-        return
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        if shots is not None and "'passive'" not in shots:
-            if leftover:
-                conn.execute("INSERT INTO shots_before_passive SELECT client, interaction, file, ts, "
-                             "trigger, width, height, bytes FROM shots")
-                conn.execute("DROP TABLE shots")
-            else:
-                conn.execute("ALTER TABLE shots RENAME TO shots_before_passive")
-        conn.execute(_SHOTS_TABLE)
-        conn.execute(
-            "INSERT OR IGNORE INTO shots (client, interaction, file, ts, trigger, width, height, bytes) "
-            "SELECT client, interaction, file, ts, trigger, width, height, bytes "
-            "FROM shots_before_passive")
-        conn.execute("DROP TABLE shots_before_passive")
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
 
 
 def _validate(client: str, interaction: Interaction, files: Mapping[str, bytes]) -> None:
@@ -209,9 +101,3 @@ def _validate(client: str, interaction: Interaction, files: Mapping[str, bytes])
                 f"{shot.file}: size is {len(data)} bytes but the interaction says {shot.bytes}")
         if data[0:4] != b"RIFF" or data[8:12] != b"WEBP":
             raise InvalidUpload(f"{shot.file} is not a WebP image")
-
-
-def _format_ts(epoch: float) -> str:
-    """UTC ISO 8601 with milliseconds, e.g. 2026-10-25T17:00:00.449Z."""
-    text = datetime.fromtimestamp(epoch, UTC).isoformat(timespec="milliseconds")
-    return text.removesuffix("+00:00") + "Z"

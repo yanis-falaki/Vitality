@@ -14,13 +14,14 @@ META = Interaction.model_validate({
 FILES = {"0000.webp": WEBP}
 
 
-def test_put_stores_folder_and_index(tmp_path):
+def test_put_stores_the_folder_and_nothing_else(tmp_path):
     s = FileStore(tmp_path)
     assert s.put("laptop", META, FILES) == "new"
     folder = tmp_path / "captures/laptop/2026-10-25/17-00-00"
     assert (folder / "0000.webp").read_bytes() == WEBP
     assert Interaction.model_validate_json((folder / "interaction.json").read_text()) == META
     assert not any((tmp_path / "tmp").iterdir())
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["captures", "tmp"]
 
 
 def test_identical_repeat_is_existing(tmp_path):
@@ -59,38 +60,16 @@ def test_invalid_uploads_rejected(tmp_path, meta, files, reason):
     assert not (tmp_path / "captures").exists()
 
 
-def test_recover_cleans_tmp_and_indexes_unindexed_folders(tmp_path):
-    s = FileStore(tmp_path); s.put("laptop", META, FILES); s.close()
-    (tmp_path / "index.sqlite").unlink()
-    (tmp_path / "tmp/abc").mkdir(parents=True); (tmp_path / "tmp/abc/0000.webp").write_bytes(WEBP)
-    s2 = FileStore(tmp_path)
-    assert s2.recover() == 1 and not (tmp_path / "tmp/abc").exists()
-    assert s2.put("laptop", META, FILES) == "existing"
-
-
-# --- beyond the brief ---
-
-def _rows(tmp_path, sql):
-    import sqlite3
-    conn = sqlite3.connect(tmp_path / "index.sqlite")
-    try:
-        return conn.execute(sql).fetchall()
-    finally:
-        conn.close()
-
-
-def test_index_rows_have_client_and_received_at(tmp_path):
-    s = FileStore(tmp_path, clock=lambda: 1761411600.5)  # 2025-10-25T17:00:00.5Z
-    s.put("laptop", META, FILES)
-    assert _rows(tmp_path, "SELECT client, name, source, start, end, local_start, tz, received_at "
-                           "FROM interactions") == [
-        ("laptop", "2026-10-25/17-00-00", "screen", "2026-10-25T17:00:00.449Z",
-         "2026-10-25T17:00:04.120Z", "2026-10-25T10:00:00.449-07:00", "America/Vancouver",
-         "2025-10-25T17:00:00.500Z")]
-    assert _rows(tmp_path, "SELECT client, interaction, file, ts, trigger, width, height, bytes "
-                           "FROM shots") == [
-        ("laptop", "2026-10-25/17-00-00", "0000.webp", "2026-10-25T17:00:00.449Z", "activity",
-         8, 8, len(WEBP))]
+def test_recover_removes_unfinished_uploads_and_an_old_index(tmp_path):
+    s = FileStore(tmp_path); s.put("laptop", META, FILES)
+    (tmp_path / "tmp/abc").mkdir(); (tmp_path / "tmp/abc/0000.webp").write_bytes(WEBP)
+    (tmp_path / "tmp/def").mkdir()
+    for name in ("index.sqlite", "index.sqlite-wal", "index.sqlite-shm"):  # left by older servers
+        (tmp_path / name).write_bytes(b"x")
+    assert s.recover() == 2
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["captures", "tmp"]
+    assert not any((tmp_path / "tmp").iterdir())
+    assert s.put("laptop", META, FILES) == "existing"
 
 
 def test_same_name_from_two_clients_is_stored_separately(tmp_path):
@@ -98,11 +77,6 @@ def test_same_name_from_two_clients_is_stored_separately(tmp_path):
     assert s.put("laptop", META, FILES) == "new"
     assert s.put("desktop", META, FILES) == "new"
     assert (tmp_path / "captures/desktop/2026-10-25/17-00-00/interaction.json").exists()
-
-
-def test_index_is_in_wal_mode(tmp_path):
-    FileStore(tmp_path)
-    assert _rows(tmp_path, "PRAGMA journal_mode") == [("wal",)]
 
 
 @pytest.mark.parametrize("client", ["", "..", "../x", "a/b", "a..b", "/abs", "a\\b", "a\x00b"])
@@ -136,29 +110,6 @@ def test_failed_write_leaves_nothing_behind(tmp_path, monkeypatch):
     assert not (tmp_path / "captures/laptop/2026-10-25/17-00-00").exists()
 
 
-def test_repeat_after_crash_before_indexing_reindexes(tmp_path):
-    s = FileStore(tmp_path); s.put("laptop", META, FILES)
-    import sqlite3
-    conn = sqlite3.connect(tmp_path / "index.sqlite")
-    conn.execute("DELETE FROM shots"); conn.execute("DELETE FROM interactions"); conn.commit()
-    conn.close()
-    assert s.put("laptop", META, FILES) == "existing"
-    assert _rows(tmp_path, "SELECT COUNT(*) FROM shots") == [(1,)]
-
-
-def test_recover_does_not_count_already_indexed_folders(tmp_path):
-    s = FileStore(tmp_path); s.put("laptop", META, FILES)
-    (tmp_path / "tmp/abc").mkdir()
-    assert s.recover() == 0
-    assert not (tmp_path / "tmp/abc").exists()
-
-
-def test_recover_skips_folders_without_interaction_json(tmp_path):
-    s = FileStore(tmp_path)
-    (tmp_path / "captures/laptop/2026-10-25/17-00-00").mkdir(parents=True)
-    assert s.recover() == 0
-
-
 def test_disk_free_bytes_is_positive(tmp_path):
     assert FileStore(tmp_path).disk_free_bytes() > 0
 
@@ -183,14 +134,6 @@ def test_concurrent_identical_uploads_store_once(tmp_path):
     assert sorted(results) == ["existing"] * 7 + ["new"]
 
 
-def test_recover_skips_folder_whose_json_names_another_interaction(tmp_path):
-    s = FileStore(tmp_path)
-    folder = tmp_path / "captures/laptop/2026-10-25/18-00-00"
-    folder.mkdir(parents=True)
-    (folder / "interaction.json").write_text(META.model_dump_json())
-    assert s.recover() == 0
-
-
 # --- passive shots and screen names (desktop client) ---
 
 TWO_SCREENS = Interaction.model_validate({
@@ -201,13 +144,11 @@ TWO_SCREENS = Interaction.model_validate({
                "width": 8, "height": 8, "bytes": len(WEBP), "screen_name": "Side"}]})
 
 
-def test_two_screen_passive_interaction_is_stored_and_indexed(tmp_path):
+def test_two_screen_passive_interaction_is_stored(tmp_path):
     s = FileStore(tmp_path)
     assert s.put("desktop", TWO_SCREENS, {"0000.webp": WEBP, "0000-2.webp": WEBP}) == "new"
     folder = tmp_path / "captures/desktop/2026-10-25/17-00-00"
     assert Interaction.model_validate_json((folder / "interaction.json").read_text()) == TWO_SCREENS
-    assert _rows(tmp_path, "SELECT file, trigger, screen_name FROM shots ORDER BY file") == [
-        ("0000-2.webp", "passive", "Side"), ("0000.webp", "passive", "Main")]
 
 
 def test_old_style_interaction_json_has_no_new_fields(tmp_path):
@@ -216,45 +157,3 @@ def test_old_style_interaction_json_has_no_new_fields(tmp_path):
     written = json.loads((tmp_path / "captures/laptop/2026-10-25/17-00-00/interaction.json").read_text())
     assert written == META.model_dump(mode="json", exclude_none=True)
     assert "screen_name" not in written["shots"][0]
-
-
-def test_index_from_before_passive_shots_is_upgraded(tmp_path):
-    import sqlite3
-    conn = sqlite3.connect(tmp_path / "index.sqlite")
-    conn.executescript("""
-CREATE TABLE interactions (client TEXT NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL,
-    start TEXT NOT NULL, end TEXT NOT NULL, local_start TEXT NOT NULL, tz TEXT NOT NULL,
-    received_at TEXT NOT NULL, PRIMARY KEY (client, name));
-CREATE TABLE shots (client TEXT NOT NULL, interaction TEXT NOT NULL, file TEXT NOT NULL,
-    ts TEXT NOT NULL, trigger TEXT NOT NULL CHECK (trigger IN ('activity','manual')),
-    width INTEGER NOT NULL, height INTEGER NOT NULL, bytes INTEGER NOT NULL,
-    PRIMARY KEY (client, interaction, file),
-    FOREIGN KEY (client, interaction) REFERENCES interactions(client, name));
-INSERT INTO interactions VALUES ('laptop','2026-10-24/10-00-00','screen','a','b','c','UTC','d');
-INSERT INTO shots VALUES ('laptop','2026-10-24/10-00-00','0000.webp','a','activity',1,1,1);
-""")
-    conn.close()
-    s = FileStore(tmp_path)
-    assert s.put("desktop", TWO_SCREENS, {"0000.webp": WEBP, "0000-2.webp": WEBP}) == "new"
-    assert _rows(tmp_path, "SELECT client, file, trigger, screen_name FROM shots ORDER BY client, file") == [
-        ("desktop", "0000-2.webp", "passive", "Side"), ("desktop", "0000.webp", "passive", "Main"),
-        ("laptop", "0000.webp", "activity", None)]
-
-
-def test_an_interrupted_upgrade_is_finished_with_its_rows(tmp_path):
-    # An older upgrade stopped after renaming: the rows wait in shots_before_passive and an
-    # empty new-style shots table exists.
-    import sqlite3
-    FileStore(tmp_path).close()
-    conn = sqlite3.connect(tmp_path / "index.sqlite")
-    conn.executescript("""
-CREATE TABLE shots_before_passive (client TEXT NOT NULL, interaction TEXT NOT NULL, file TEXT NOT NULL,
-    ts TEXT NOT NULL, trigger TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
-    bytes INTEGER NOT NULL);
-INSERT INTO interactions VALUES ('laptop','2026-10-24/10-00-00','screen','a','b','c','UTC','d');
-INSERT INTO shots_before_passive VALUES ('laptop','2026-10-24/10-00-00','0000.webp','a','activity',1,1,1);
-""")
-    conn.close()
-    FileStore(tmp_path).close()
-    assert _rows(tmp_path, "SELECT client, file, trigger FROM shots") == [("laptop", "0000.webp", "activity")]
-    assert _rows(tmp_path, "SELECT name FROM sqlite_master WHERE name='shots_before_passive'") == []

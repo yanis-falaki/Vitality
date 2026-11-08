@@ -95,8 +95,6 @@ def test_recover_failure_returns_1(tmp_path, capsys, monkeypatch, fake_server):
 # -- serving and the watchdog -------------------------------------------------------------------
 
 def test_serves_on_the_tailscale_address_until_stopped(tmp_path, monkeypatch, fake_server, caplog):
-    closed = []
-    monkeypatch.setattr(server_main.FileStore, "close", lambda self: closed.append(True))
     ipv4 = ScriptedIPv4(IP)
     with caplog.at_level(logging.WARNING):
         code = run_serve(tmp_path, ipv4, fake_server, stop_after_calls=10, port=9123,
@@ -106,19 +104,15 @@ def test_serves_on_the_tailscale_address_until_stopped(tmp_path, monkeypatch, fa
     assert (server.config.host, server.config.port, server.config.proxy_headers) == (IP, 9123, False)
     assert not server.stopped_by_watchdog
     assert ipv4.calls >= 10  # the watchdog kept checking while serving
-    assert closed == [True]
     assert caplog.text == ""
 
 
 def test_exits_after_three_failures_in_a_row(tmp_path, monkeypatch, fake_server, caplog):
-    closed = []
-    monkeypatch.setattr(server_main.FileStore, "close", lambda self: closed.append(True))
     ipv4 = ScriptedIPv4(IP, DOWN)  # found at start, then down for good
     with caplog.at_level(logging.WARNING):
         assert run_serve(tmp_path, ipv4, fake_server, allowed_clients=("laptop",)) == 1
     assert ipv4.calls == 1 + 3
     assert fake_server.made[0].stopped_by_watchdog
-    assert closed == [True]
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "Tailscale unreachable" in warnings[0] and "fresh /var/run/tailscale" in warnings[0]

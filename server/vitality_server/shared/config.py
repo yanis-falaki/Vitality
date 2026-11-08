@@ -1,7 +1,7 @@
 """The server's settings, read from environment variables.
 
 Variable                  Default   Meaning
-SERVER_DATA_DIR           /data     Directory holding captures/, tmp/ and index.sqlite. If set,
+SERVER_DATA_DIR           /data     Directory holding captures/ and tmp/. If set,
                                     it must not be empty.
 SERVER_PORT               8100      TCP port to listen on, an integer from 1 to 65535. Empty
                                     means the default.
@@ -21,7 +21,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class ServerConfig:
-    data_dir: Path = Path("/data")              # holds captures/, tmp/ and index.sqlite
+    data_dir: Path = Path("/data")              # holds captures/ and tmp/
     port: int = 8100
     allowed_clients: tuple[str, ...] = ()       # Tailscale device names allowed to upload
 

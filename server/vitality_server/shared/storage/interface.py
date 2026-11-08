@@ -17,7 +17,7 @@ class ConflictingUpload(Exception):
 
 
 class InteractionStore(Protocol):
-    """Interactions received from clients, saved on disk and indexed. Thread-safe."""
+    """Interactions received from clients, saved on disk. Thread-safe."""
 
     def put(self, client: str, interaction: Interaction,
             files: Mapping[str, bytes]) -> Literal["new", "existing"]:
@@ -35,8 +35,6 @@ class InteractionStore(Protocol):
         ...
 
     def recover(self) -> int:
-        """Startup only: delete leftover tmp/ folders, add complete interaction folders that
-        the index lacks to the index; return how many were added."""
+        """Startup only: delete leftover tmp/ folders (uploads a crash cut short) and the index
+        older servers kept; return how many tmp/ folders were deleted."""
         ...
-
-    def close(self) -> None: ...

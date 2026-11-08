@@ -1,8 +1,8 @@
-"""Storing interactions uploaded by clients: WebP files in folders, plus a SQLite index.
+"""Storing interactions uploaded by clients: WebP files in folders, which are the whole record.
 
 Contract: `InteractionStore`, `InvalidUpload` and `ConflictingUpload` (interface.py).
 Implementation: `FileStore` (files.py).
-Reading the index without writing anything: `read_summary` and `DeviceSummary` (summary.py),
+Counting what is stored without writing anything: `read_summary` and `DeviceSummary` (summary.py),
 used by the `vitality-server` command line.
 
 Layout under the data directory (names are UTC; see `vitality_protocol.layout`):
@@ -11,9 +11,6 @@ Layout under the data directory (names are UTC; see `vitality_protocol.layout`):
       0000.webp
       interaction.json                      always present: a folder appears only when complete
     tmp/<uuid>/                             an upload being written; renamed into captures/
-    index.sqlite
-
-The index has two tables, `interactions` and `shots`, both keyed by client as well.
 """
 
 from vitality_server.shared.storage.files import FileStore

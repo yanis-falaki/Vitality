@@ -43,9 +43,8 @@ def test_sizes_use_decimal_units(tmp_path, capsys, monkeypatch):
     data = tmp_path / "data"
     store_with(data, {"laptop": [("2026-10-25T21:00:00Z", 1, datetime(2026, 10, 25, 21, 0, tzinfo=UTC))]})
     monkeypatch.setattr(status_module.shutil, "disk_usage", lambda p: type("U", (), {"free": 19_700_000_000})())
-    import sqlite3
-    with sqlite3.connect(data / "index.sqlite") as db:
-        db.execute("UPDATE shots SET bytes = 201000000")
+    with open(data / "captures/laptop/2026-10-25/21-00-00/0000.webp", "r+b") as shot:
+        shot.truncate(201_000_000)  # sparse: the size counts, not the disk used
     status(config_for(data))
     out = capsys.readouterr().out.splitlines()
     assert out[0] == "laptop: 1 interactions · 1 shots · 201.0 MB · last received 21:00:00 UTC"
@@ -62,10 +61,10 @@ def test_last_received_is_shown_in_local_time(tmp_path, capsys, monkeypatch):
     assert "last received 14:30:37 PDT" in capsys.readouterr().out
 
 
-def test_empty_index(tmp_path, capsys):
+def test_nothing_stored(tmp_path, capsys):
     from vitality_server.shared.storage import FileStore
     data = tmp_path / "data"
-    FileStore(data).close()
+    FileStore(data)
     assert status(config_for(data)) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "no interactions stored yet"
@@ -73,12 +72,11 @@ def test_empty_index(tmp_path, capsys):
     assert len(lines) == 2
 
 
-def test_missing_index_says_so_on_stderr(tmp_path, capsys):
+def test_a_data_folder_without_captures_is_nothing_stored(tmp_path, capsys):
     data = tmp_path / "data"
     data.mkdir()
-    assert status(config_for(data)) == 1
-    captured = capsys.readouterr()
-    assert captured.err.startswith(f"cannot read {data}/index.sqlite: ")
+    assert status(config_for(data)) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "no interactions stored yet"
     assert list(data.iterdir()) == []  # status creates nothing
 
 
@@ -91,23 +89,15 @@ def test_missing_data_folder_says_so_on_stderr(tmp_path, capsys):
     assert not data.exists()
 
 
-def test_corrupt_index_says_so_on_stderr(tmp_path, capsys):
-    data = tmp_path / "data"
-    data.mkdir()
-    (data / "index.sqlite").write_text("not a database")
-    assert status(config_for(data)) == 1
-    assert capsys.readouterr().err.startswith(f"cannot read {data}/index.sqlite: ")
-
-
 def test_permission_error_hints_at_the_owner(tmp_path, capsys, monkeypatch):
     data = tmp_path / "data"
     data.mkdir()
 
     def denied(data_dir):
-        raise PermissionError(13, "Permission denied", str(data_dir / "index.sqlite"))
+        raise PermissionError(13, "Permission denied", str(data_dir / "captures"))
     monkeypatch.setattr(status_module, "read_summary", denied)
     assert status(config_for(data)) == 1
     err = capsys.readouterr().err
-    assert err == (f"cannot read {data}/index.sqlite: Permission denied; "
+    assert err == (f"cannot read {data}/captures: Permission denied; "
                    "does VITALITY_UID own the data folder?\n")
     assert "sudo" not in err
