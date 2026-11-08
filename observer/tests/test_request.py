@@ -41,14 +41,14 @@ def test_params_shape(tmp_path: Path):
         "text": "Interaction laptop/2026-11-03/14-22-05 on laptop, from 2026-11-03T09:22:05-05:00 "
         "to 2026-11-03T09:22:12-05:00 (America/Toronto).",
     }
-    assert content[1] == {"type": "text", "text": "0000.webp, 0 s after the first input:"}
+    assert content[1] == {"type": "text", "text": "0000.webp, 0 s after the start:"}
     assert content[2]["type"] == "image"
     assert content[2]["source"] == {
         "type": "base64",
         "media_type": "image/webp",
         "data": base64.b64encode(b"fake-0000.webp").decode(),
     }
-    assert content[3] == {"type": "text", "text": "0007.webp, 7 s after the first input:"}
+    assert content[3] == {"type": "text", "text": "0007.webp, 7 s after the start:"}
     assert content[4]["source"]["data"] == base64.b64encode(b"fake-0007.webp").decode()
     assert len(content) == 5
 
@@ -60,7 +60,7 @@ def test_second_shot_in_same_second_uses_its_seconds(tmp_path: Path):
 
     content = build_params(item, interaction, ObserverConfig())["messages"][0]["content"]
 
-    assert content[-2]["text"] == "0014-2.webp, 14 s after the first input:"
+    assert content[-2]["text"] == "0014-2.webp, 14 s after the start:"
 
 
 def test_local_span_dst():
@@ -171,8 +171,8 @@ def test_line_names_the_screen_and_marks_passive_shots(tmp_path: Path):
 
     content = build_params(item, interaction, ObserverConfig())["messages"][0]["content"]
 
-    assert content[1]["text"] == "0000.webp, 0 s after the first input · Side:"
-    assert content[3]["text"] == "0012.webp, 12 s after the first input · Main · passive:"
+    assert content[1]["text"] == "0000.webp, 0 s after the start · Side:"
+    assert content[3]["text"] == "0012.webp, 12 s after the start · Main · passive:"
 
 
 def test_passive_shot_without_screen_name(tmp_path: Path):
@@ -183,7 +183,7 @@ def test_passive_shot_without_screen_name(tmp_path: Path):
 
     content = build_params(item, interaction, ObserverConfig())["messages"][0]["content"]
 
-    assert content[1]["text"] == "0012.webp, 12 s after the first input · passive:"
+    assert content[1]["text"] == "0012.webp, 12 s after the start · passive:"
 
 
 def test_prompt_explains_screens_and_passive_shots():

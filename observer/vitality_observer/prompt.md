@@ -1,11 +1,12 @@
 # Observe one interaction
 
-You will receive one interaction: a short burst of keyboard and mouse activity, as
-screenshots in time order, with when it happened. Reply with JSON matching the schema: a transcript
+You will receive one interaction: a short burst of keyboard and mouse activity (or, while the
+person is idle, a stretch in which a screen kept changing by itself), as screenshots in time
+order, with when it happened. Reply with JSON matching the schema: a transcript
 and the operations.
 
 When the person has several screens, each image is one screen, named by the owner after the image's
-file name ("0012.webp, 12 s after the first input · Main"). An image marked passive was taken while
+file name ("0012.webp, 12 s after the start · Main"). An image marked passive was taken while
 there was no keyboard or mouse input because the screen changed by itself, so the person was most
 likely watching or reading.
 

@@ -133,9 +133,9 @@ def parse_reply(text: str) -> Reply:
 
 
 def _shot_line(shot: Shot) -> str:
-    # "0012.webp, 12 s after the first input · Main · passive:"; the screen's name only when
+    # "0012.webp, 12 s after the start · Main · passive:"; the screen's name only when
     # the client wrote one (several screens), "passive" only for shots taken while idle.
-    parts = [f"{shot.file}, {_seconds_in(shot.file)} s after the first input"]
+    parts = [f"{shot.file}, {_seconds_in(shot.file)} s after the start"]
     if shot.screen_name is not None:
         parts.append(shot.screen_name)
     if shot.trigger == "passive":
@@ -144,7 +144,7 @@ def _shot_line(shot: Shot) -> str:
 
 
 def _seconds_in(file: str) -> int:
-    # `0007.webp` and `0007-2.webp` were both captured 7 s after the first input.
+    # `0007.webp` and `0007-2.webp` were both captured 7 s after the start.
     match = re.match(r"\d+", file)
     if match is None:   # the protocol guarantees shot files start with digits
         raise ValueError(f"screenshot file {file} does not start with digits")

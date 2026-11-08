@@ -1,9 +1,9 @@
 """How an interaction is laid out on disk, on the client and on the server.
 
     2026-10-25/17-00-00/      one interaction (the server adds a <client>/ level above)
-      0000.webp               the screen just before the first input
+      0000.webp               the screen at the start (just before the first input)
       0014.webp               a later shot, named by whole seconds since the start
-      0014-2.webp             a second shot in the same second (e.g. a manual capture)
+      0014-2.webp             another shot in the same second (another screen, or a manual capture)
       interaction.json        written when the interaction ends; present = complete
 
 Names are UTC. A name or file name that is already taken gets `-2`, `-3`, ... appended.

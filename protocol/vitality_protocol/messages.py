@@ -37,7 +37,7 @@ class Shot(_Message):
     # One screenshot of an interaction.
     file: Annotated[str, Field(pattern=SHOT_FILE_RE.pattern)]  # "0004.webp"
     ts: Timestamp  # exact time of the capture
-    trigger: Literal["activity", "manual", "passive"]  # passive: taken while idle (R6)
+    trigger: Literal["activity", "manual", "passive"]  # passive: taken while idle, because a screen changed
     width: int
     height: int
     bytes: int
@@ -49,7 +49,7 @@ class Interaction(_Message):
 
     name: Annotated[str, Field(pattern=INTERACTION_NAME_RE.pattern)]  # "2026-10-25/17-00-00"
     source: Literal["screen"]
-    start: Timestamp  # first input
+    start: Timestamp  # first input (a passive interaction: its first shot)
     end: Timestamp  # last shot
     local_start: Timestamp  # `start` in local time, with its offset
     tz: str  # IANA name, e.g. "America/Vancouver"
