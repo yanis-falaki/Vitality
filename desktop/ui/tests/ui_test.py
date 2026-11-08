@@ -103,10 +103,19 @@ def tests(ui: Ui) -> None:
     page.close()
 
     page = ui.open("scenario=setup-done&setup=1&step=5")
-    check(page.locator(".setup-nav button.button-primary").is_enabled(), "Done is ready when the essential checks pass")
-    page.click(".setup-nav button.button-primary")
+    check(page.locator(".capture-paused").count() == 1, "the first start is paused")
+    start = page.locator(".setup-nav button.button-primary")
+    check(start.inner_text() == "Start recording" and start.is_enabled(), "Start recording is ready when the essential checks pass")
+    start.click()
     page.wait_for_selector(".now")
-    check(shown(page) == "status", "Done leaves Setup for Status")
+    check(shown(page) == "status", "Start recording leaves Setup for Status")
+    check(page.locator(".capture-paused").count() == 0, "…and recording has started")
+    page.close()
+
+    page = ui.open("scenario=setup-done&setup=1&step=5")
+    page.click(".setup-nav button:has-text('Done, stay paused')")
+    page.wait_for_selector(".now")
+    check(shown(page) == "status" and page.locator(".capture-paused").count() == 1, "Done, stay paused leaves Setup still paused")
     page.close()
 
     page = ui.open("scenario=setup&step=2")

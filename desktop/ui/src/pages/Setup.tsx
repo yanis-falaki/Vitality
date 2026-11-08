@@ -1,9 +1,10 @@
 // First-run setup (spec §8), shown instead of the pages while no screen is set up or an
 // essential check fails. Steps: Welcome, Input access, Server, Screens, Start at login, Done;
-// each ticks as soon as its check passes (the checks refresh live). `onDone` leaves Setup.
+// each ticks as soon as its check passes (the checks refresh live). The very first start is
+// paused; Done offers Start recording (or Done, stay paused). `onDone` leaves Setup.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { CaptureState } from "../components/CaptureState";
+import { CaptureState, usePauseResume } from "../components/CaptureState";
 import { core, type Check } from "../core";
 import { CheckLine } from "../components/CheckLine";
 import { Switch } from "../components/Switch";
@@ -207,20 +208,33 @@ function LoginStep({ check: c }: { check: Check | undefined }) {
 function DoneStep({ checks, onDone }: { checks: Check[]; onDone: () => void }) {
   const client = useQueryClient();
   const again = useMutation({ mutationFn: core.checksRun, onSuccess: (c) => client.setQueryData(keys.checks, c) });
+  const status = useStatus();
+  const start = usePauseResume();
   const essentialMissing = checks.some((c) => c.essential && !c.ok);
+  const paused = status.data?.pause.paused ?? false;
   return (
     <section>
       <h1>{essentialMissing ? "Almost there" : "All set"}</h1>
       <p className="lede">
         {essentialMissing
           ? "Something essential still needs attention. Fix it, then check again."
-          : "Capture is running (it has been since Vitality started). You can pause it at any time from the tray icon or this window."}
+          : paused
+            ? "Vitality is paused: nothing is captured until you start recording. You can pause again at any time from the tray icon or this window."
+            : "Capture is running. You can pause it at any time from the tray icon or this window."}
       </p>
       <ul className="checks">{checks.map((c) => <CheckLine key={c.id} c={c} />)}</ul>
       <footer className="setup-nav">
         <button className="button" disabled={again.isPending} onClick={() => again.mutate()}>{again.isPending ? "Checking…" : "Check again"}</button>
         <span className="spacer" />
-        <button className="button button-primary" disabled={essentialMissing} onClick={onDone}>Done</button>
+        {paused ? (
+          <>
+            <button className="button" disabled={essentialMissing} onClick={onDone}>Done, stay paused</button>
+            <button className="button button-primary" disabled={essentialMissing || start.isPending}
+              onClick={() => start.mutate("resume", { onSuccess: onDone })}>Start recording</button>
+          </>
+        ) : (
+          <button className="button button-primary" disabled={essentialMissing} onClick={onDone}>Done</button>
+        )}
       </footer>
     </section>
   );

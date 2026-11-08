@@ -103,7 +103,9 @@ export function installFakeCore(scenario: Scenario) {
   };
   const soon = (s: number) => new Date(Date.now() + s * 1000).toISOString();
   let status: StatusView =
-    scenario === "paused"
+    scenario === "setup" || scenario === "setup-done" // a first start: paused until Start recording
+      ? { ...base, pause: { paused: true, until: null } }
+      : scenario === "paused"
       ? { ...statusPaused, setup_done: true, pause: { paused: true, until: null } }
       : scenario === "idle"
         ? { ...base, capture: { ...statusIdle.capture, next_check_at: soon(31) } }

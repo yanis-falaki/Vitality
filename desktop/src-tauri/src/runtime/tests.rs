@@ -38,9 +38,18 @@ async fn rig_with(dir: tempfile::TempDir, policy: PolicySettings) -> Rig {
     rig_full(dir, policy, Arc::new(Duration::default), Duration::from_millis(20)).await
 }
 
+/// A machine where Vitality has run before (not paused, unless the test saved a pause),
+/// unlike the very first start.
+fn set_up_before(paths: &Paths) {
+    if !paths.state.exists() {
+        crate::state::PauseState::default().save(&paths.state);
+    }
+}
+
 /// A rig with its own suspend clock and tick.
 async fn rig_full(dir: tempfile::TempDir, policy: PolicySettings, suspend_clock: SuspendClock, tick: Duration) -> Rig {
     let paths = Paths::under(dir.path());
+    set_up_before(&paths);
     let server = FakeServer::default();
     let url = server.serve().await;
     let input = Arc::new(FakeInput::default());
@@ -213,6 +222,7 @@ pub struct BareCore {
 
 pub async fn bare_core() -> BareCore {
     let dir = tempfile::tempdir().unwrap();
+    set_up_before(&Paths::under(dir.path()));
     let core = Runtime::start(Parts {
         paths: Paths::under(dir.path()),
         policy: quick(),

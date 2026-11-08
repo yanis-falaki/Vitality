@@ -30,8 +30,15 @@ pub enum PauseFor {
 }
 
 impl PauseState {
+    /// The saved state; with no file (the very first start) paused until resumed, so nothing
+    /// is captured before the owner starts it at the end of Setup.
     pub fn load(path: &Path) -> PauseState {
-        std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        match std::fs::read(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                PauseState { paused: true, paused_until: None, setup_done: false }
+            }
+            read => read.ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default(),
+        }
     }
 
     pub fn save(&self, path: &Path) {
@@ -76,10 +83,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_very_first_start_is_paused_until_resumed() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = PauseState::load(&dir.path().join("state.json"));
+        assert_eq!(first, PauseState { paused: true, paused_until: None, setup_done: false });
+        assert!(first.active(Utc::now() + Duration::days(9)));
+    }
+
+    #[test]
     fn round_trip_and_expiry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         let now = Utc.with_ymd_and_hms(2026, 11, 7, 20, 0, 0).unwrap();
+        std::fs::write(&path, b"{}").unwrap();
         assert_eq!(PauseState::load(&path), PauseState::default());
         let p = PauseState::starting(PauseFor::Minutes(30), now);
         p.save(&path);
